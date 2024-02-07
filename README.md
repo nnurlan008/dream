@@ -1,6 +1,6 @@
 # gpu_rdma_read_write
 ## TODO:
-1. change the structure of the code to have:
+1. change the structure of the code to have the following:
    1. server has the buffer
    2. client makes a read and write requests
 2. add gpu as a client:
