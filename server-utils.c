@@ -1,4 +1,4 @@
-#include "rdma-common.h"
+#include "server-utils.h"
 
 static const int RDMA_BUFFER_SIZE = 1024;
 
@@ -206,7 +206,7 @@ void on_completion(struct ibv_wc *wc)
 
     if (s_mode == M_WRITE)
       printf("received MSG_MR. writing message to remote memory...\n");
-    else
+    else // M_READ
       printf("received MSG_MR. reading message from remote memory...\n");
 
     memset(&wr, 0, sizeof(wr));
@@ -223,10 +223,10 @@ void on_completion(struct ibv_wc *wc)
     sge.length = RDMA_BUFFER_SIZE;
     sge.lkey = conn->rdma_local_mr->lkey;
 
-    TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
+    // TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
 
     conn->send_msg->type = MSG_DONE;
-    send_message(conn);
+    // send_message(conn);
 
   } else if (conn->send_state == SS_DONE_SENT && conn->recv_state == RS_DONE_RECV) {
     printf("remote buffer: %s\n", get_peer_message_region(conn));

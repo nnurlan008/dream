@@ -1,4 +1,4 @@
-#include "rdma-common.h"
+#include "server-utils.h"
 
 static int on_connect_request(struct rdma_cm_id *id);
 static int on_connection(struct rdma_cm_id *id);
@@ -26,13 +26,14 @@ int main(int argc, char **argv)
 
   memset(&addr, 0, sizeof(addr));
   addr.sin6_family = AF_INET6;
+  addr.sin6_port = htons(PORT);
 
   TEST_Z(ec = rdma_create_event_channel());
   TEST_NZ(rdma_create_id(ec, &listener, NULL, RDMA_PS_TCP));
   TEST_NZ(rdma_bind_addr(listener, (struct sockaddr *)&addr));
   TEST_NZ(rdma_listen(listener, 10)); /* backlog=10 is arbitrary */
 
-  port = ntohs(rdma_get_src_port(listener));
+  port = PORT; //ntohs(rdma_get_src_port(listener));
 
   printf("listening on port %d.\n", port);
 

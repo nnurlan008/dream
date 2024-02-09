@@ -1,5 +1,5 @@
-#ifndef RDMA_COMMON_H
-#define RDMA_COMMON_H
+#ifndef CLIENT_UTILS_H
+#define CLIENT_UTILS_H
 
 #include <netdb.h>
 #include <stdio.h>
@@ -10,6 +10,8 @@
 
 #define TEST_NZ(x) do { if ( (x)) die("error: " #x " failed (returned non-zero)." ); } while (0)
 #define TEST_Z(x)  do { if (!(x)) die("error: " #x " failed (returned zero/null)."); } while (0)
+
+#define PORT 9700
 
 enum mode {
   M_WRITE,

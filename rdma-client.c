@@ -1,4 +1,4 @@
-#include "rdma-common.h"
+#include "client-utils.h"
 
 const int TIMEOUT_IN_MS = 500; /* ms */
 
@@ -26,7 +26,7 @@ int main(int argc, char **argv)
   else
     usage(argv[0]);
 
-  TEST_NZ(getaddrinfo(argv[2], argv[3], NULL, &addr));
+  TEST_NZ(getaddrinfo(argv[2], "9700", NULL, &addr));
 
   TEST_Z(ec = rdma_create_event_channel());
   TEST_NZ(rdma_create_id(ec, &conn, NULL, RDMA_PS_TCP));
