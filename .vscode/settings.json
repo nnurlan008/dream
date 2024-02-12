@@ -2,6 +2,10 @@
     "files.associations": {
         "server-utils.h": "c",
         "client-utils.h": "c",
-        "netdb.h": "c"
+        "netdb.h": "c",
+        "types.h": "c",
+        "verbs.h": "c",
+        "gpu-utils.h": "c",
+        "socket.h": "c"
     }
 }
