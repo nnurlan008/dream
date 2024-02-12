@@ -13,7 +13,7 @@ int main(int argc, char **argv)
   struct rdma_cm_id *listener = NULL;
   struct rdma_event_channel *ec = NULL;
   uint16_t port = 0;
-
+  printf("Server side with pid %d\n", getpid());
   if (argc != 2)
     usage(argv[0]);
 

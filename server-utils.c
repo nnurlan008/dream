@@ -80,7 +80,7 @@ void build_connection(struct rdma_cm_id *id)
 
   build_context(id->verbs);
   build_qp_attr(&qp_attr);
-
+  // printf("rdma_create_qp(id, s_ctx->pd, &qp_attr): %d\n", rdma_create_qp(id, s_ctx->pd, &qp_attr));
   TEST_NZ(rdma_create_qp(id, s_ctx->pd, &qp_attr));
 
   id->context = conn = (struct connection *)malloc(sizeof(struct connection));
@@ -190,14 +190,17 @@ void on_completion(struct ibv_wc *wc)
     if (conn->recv_msg->type == MSG_MR) {
       memcpy(&conn->peer_mr, &conn->recv_msg->data.mr, sizeof(conn->peer_mr));
       post_receives(conn); /* only rearm for MSG_MR */
-
-      if (conn->send_state == SS_INIT) /* received peer's MR before sending ours, so send ours back */
+      printf("received peer's MR");
+      if (conn->send_state == SS_INIT) {/* received peer's MR before sending ours, so send ours back */
         send_mr(conn);
+        printf(" before sending ours\n");
+      }
+      else printf("\n");
     }
 
   } else {
     conn->send_state++;
-    printf("send completed successfully.\n");
+    printf("send completed successfully. wc->opcode: %d\n", wc->opcode);
   }
 
   if (conn->send_state == SS_MR_SENT && conn->recv_state == RS_MR_RECV) {
@@ -226,7 +229,7 @@ void on_completion(struct ibv_wc *wc)
     // TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
 
     conn->send_msg->type = MSG_DONE;
-    // send_message(conn);
+    send_message(conn);
 
   } else if (conn->send_state == SS_DONE_SENT && conn->recv_state == RS_DONE_RECV) {
     printf("remote buffer: %s\n", get_peer_message_region(conn));
@@ -297,13 +300,15 @@ void register_memory(struct connection *conn)
     s_ctx->pd, 
     conn->rdma_local_region, 
     RDMA_BUFFER_SIZE, 
-    ((s_mode == M_WRITE) ? 0 : IBV_ACCESS_LOCAL_WRITE)));
+    IBV_ACCESS_LOCAL_WRITE));
+    // ((s_mode == M_WRITE) ? 0 : IBV_ACCESS_LOCAL_WRITE)));
 
   TEST_Z(conn->rdma_remote_mr = ibv_reg_mr(
     s_ctx->pd, 
     conn->rdma_remote_region, 
     RDMA_BUFFER_SIZE, 
-    ((s_mode == M_WRITE) ? (IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE) : IBV_ACCESS_REMOTE_READ)));
+    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ));
+    /*((s_mode == M_WRITE) ? (IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE) : IBV_ACCESS_REMOTE_READ)));*/
 }
 
 void send_message(struct connection *conn)

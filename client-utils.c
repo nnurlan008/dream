@@ -190,14 +190,17 @@ void on_completion(struct ibv_wc *wc)
     if (conn->recv_msg->type == MSG_MR) {
       memcpy(&conn->peer_mr, &conn->recv_msg->data.mr, sizeof(conn->peer_mr));
       post_receives(conn); /* only rearm for MSG_MR */
-      
-      if (conn->send_state == SS_INIT) /* received peer's MR before sending ours, so send ours back */
+      printf("received peer's MR");
+      if (conn->send_state == SS_INIT){ /* received peer's MR before sending ours, so send ours back */
+        printf(" before sending ours\n");
         send_mr(conn);
+      }
+      else printf("\n");
     }
 
   } else {
     conn->send_state++;
-    printf("send completed successfully.\n");
+    printf("send completed successfully. conn->recv_state: %d wc->opcode: %d\n", conn->recv_state, wc->opcode);
   }
 
   if (conn->send_state == SS_MR_SENT && conn->recv_state == RS_MR_RECV) {
@@ -228,7 +231,7 @@ void on_completion(struct ibv_wc *wc)
     conn->send_msg->type = MSG_DONE;
     send_message(conn);
 
-  } else if (conn->send_state == SS_DONE_SENT && conn->recv_state == RS_DONE_RECV) {
+  } else if (conn->send_state == SS_DONE_SENT) {
     printf("remote buffer: %s\n", get_peer_message_region(conn));
     rdma_disconnect(conn->id);
   }
