@@ -16,6 +16,10 @@ gpu-client:  gpu-client.o
 	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@
 
 gpu-client.o: gpu-utils.h
+cpu-client.o: gpu-utils.h
+
+# gpu-utils.o: gpu-utils.c
+# 	$(CC) $(CFLAGS) $(LIBS) -g -c gpu-utils.c
 
 rdma-client: client-utils.o rdma-client.o
 	${LD} -o $@ $^ ${LDLIBS}
@@ -23,7 +27,7 @@ rdma-client: client-utils.o rdma-client.o
 rdma-server: server-utils.o rdma-server.o
 	${LD} -o $@ $^ ${LDLIBS}
 
-cpu-client: cpu-client.o 
+cpu-client: cpu-client.o gpu-utils.o
 	${LD} -o $@ $^ ${LDLIBS}
 
 gpu-client.o: gpu-client.cu

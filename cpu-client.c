@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <netdb.h>
 
+#include "gpu-utils.h"
+
 const int TIMEOUT_IN_MS = 500; /* ms */
 
 static int on_addr_resolved(struct rdma_cm_id *id);
@@ -17,65 +19,65 @@ static int on_route_resolved(struct rdma_cm_id *id);
 static void usage(const char *argv0);
 
 
-static const int RDMA_BUFFER_SIZE = 1024;
+// static const int RDMA_BUFFER_SIZE = 1024;
 
-struct message {
-  enum {
-    MSG_MR,
-    MSG_DONE
-  } type;
+// struct message {
+//   enum {
+//     MSG_MR,
+//     MSG_DONE
+//   } type;
 
-  union {
-    struct ibv_mr mr;
-  } data;
-};
+//   union {
+//     struct ibv_mr mr;
+//   } data;
+// };
 
-struct context {
-  struct ibv_context *ctx;
-  struct ibv_pd *pd;
-  struct ibv_cq *cq;
-  struct ibv_comp_channel *comp_channel;
+// struct context {
+//   struct ibv_context *ctx;
+//   struct ibv_pd *pd;
+//   struct ibv_cq *cq;
+//   struct ibv_comp_channel *comp_channel;
 
-  pthread_t cq_poller_thread;
-};
+//   pthread_t cq_poller_thread;
+// };
 
-struct connection {
-  struct rdma_cm_id *id;
-  struct ibv_qp *qp;
+// struct connection {
+//   struct rdma_cm_id *id;
+//   struct ibv_qp *qp;
 
-  int connected;
+//   int connected;
 
-  struct ibv_mr *recv_mr;
-  struct ibv_mr *send_mr;
-  struct ibv_mr *rdma_local_mr;
-  struct ibv_mr *rdma_remote_mr;
+//   struct ibv_mr *recv_mr;
+//   struct ibv_mr *send_mr;
+//   struct ibv_mr *rdma_local_mr;
+//   struct ibv_mr *rdma_remote_mr;
 
-  struct ibv_mr peer_mr;
+//   struct ibv_mr peer_mr;
 
-  struct message *recv_msg;
-  struct message *send_msg;
+//   struct message *recv_msg;
+//   struct message *send_msg;
 
-  char *rdma_local_region;
-  char *rdma_remote_region;
+//   char *rdma_local_region;
+//   char *rdma_remote_region;
 
-  enum {
-    SS_INIT,
-    SS_MR_SENT,
-    SS_RDMA_SENT,
-    SS_DONE_SENT
-  } send_state;
+//   enum {
+//     SS_INIT,
+//     SS_MR_SENT,
+//     SS_RDMA_SENT,
+//     SS_DONE_SENT
+//   } send_state;
 
-  enum {
-    RS_INIT,
-    RS_MR_RECV,
-    RS_DONE_RECV
-  } recv_state;
-};
+//   enum {
+//     RS_INIT,
+//     RS_MR_RECV,
+//     RS_DONE_RECV
+//   } recv_state;
+// };
 
-enum mode {
-  M_WRITE,
-  M_READ
-};
+// enum mode {
+//   M_WRITE,
+//   M_READ
+// };
 
 static struct context *s_ctx = NULL;
 static enum mode s_mode = M_WRITE;
@@ -434,7 +436,7 @@ int process_work_completion_events (struct ibv_comp_channel *comp_channel,
 
   int total_wc = 0;
   do {
-    int ret = ibv_poll_cq(cq /* the CQ, we got notification for */, 
+    int ret = cpu_poll_cq(cq /* the CQ, we got notification for */, 
       1 - total_wc /* number of remaining WC elements*/,
       wc + total_wc/* where to store */);
 
