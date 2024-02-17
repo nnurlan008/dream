@@ -198,9 +198,6 @@ void on_completion(struct ibv_wc *wc)
       else printf("\n");
     }
 
-  } else {
-    conn->send_state++;
-    printf("send completed successfully. wc->opcode: %d\n", wc->opcode);
   }
 
   if (conn->send_state == SS_MR_SENT && conn->recv_state == RS_MR_RECV) {
@@ -210,7 +207,7 @@ void on_completion(struct ibv_wc *wc)
     if (s_mode == M_WRITE)
       printf("received MSG_MR. writing message to remote memory...\n");
     else // M_READ
-      printf("received MSG_MR. reading message from remote memory...\n");
+      printf("received MSG_MR\n");
 
     memset(&wr, 0, sizeof(wr));
 
@@ -229,7 +226,7 @@ void on_completion(struct ibv_wc *wc)
     // TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
 
     conn->send_msg->type = MSG_DONE;
-    send_message(conn);
+    // send_message(conn);
 
   } else if (conn->send_state == SS_DONE_SENT && conn->recv_state == RS_DONE_RECV) {
     printf("remote buffer: %s\n", get_peer_message_region(conn));
