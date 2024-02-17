@@ -1,4 +1,3 @@
-
 #include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
 #include <sys/types.h>
@@ -158,7 +157,7 @@ void send_message(struct connection *conn)
   sge.lkey = conn->send_mr->lkey;
 
   while (!conn->connected);
-
+  printf("send message\n");
   TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
 }
 
@@ -235,9 +234,9 @@ int main(int argc, char **argv)
   }
 
   struct ibv_wc wc;
-  process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   
-  process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   struct connection *conn = (struct connection *)(uintptr_t)wc.wr_id;
   if (wc.opcode & IBV_WC_RECV){
     printf("receive completed\n");
@@ -302,9 +301,9 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)conn->rdma_local_region;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = conn->rdma_local_mr->lkey;
-  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
-  process_work_completion_events (s_ctx->comp_channel, &wc, 1);
-  printf("remote buffer: %s\n", conn->rdma_local_region);
+  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  printf("read remote buffer: %s\n", conn->rdma_local_region);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
 
   conn = (struct connection *)(uintptr_t)wc.wr_id;
@@ -320,9 +319,9 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)conn->rdma_remote_region;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = conn->rdma_remote_mr->lkey;
-  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
-  process_work_completion_events (s_ctx->comp_channel, &wc, 1);
-  printf("remote buffer: %s\n", conn->rdma_remote_region);
+  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  printf("write to remote buffer: %s\n", conn->rdma_remote_region);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
 
   conn = (struct connection *)(uintptr_t)wc.wr_id;
@@ -338,9 +337,9 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)read_after_write_mr->addr;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = read_after_write_mr->lkey;
-  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
-  process_work_completion_events (s_ctx->comp_channel, &wc, 1);
-  printf("remote buffer: %s\n", read_after_write_buffer);
+  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  printf("read remote buffer: %s\n", read_after_write_buffer);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
 
   sprintf(conn->rdma_remote_region, "I'm doing well. Hbu? with %d", getpid());
@@ -357,9 +356,9 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)conn->rdma_remote_region;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = conn->rdma_remote_mr->lkey;
-  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
-  process_work_completion_events (s_ctx->comp_channel, &wc, 1);
-  printf("remote buffer: %s\n", conn->rdma_remote_region);
+  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  printf("write to remote buffer: %s\n", conn->rdma_remote_region);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
 
   conn = (struct connection *)(uintptr_t)wc.wr_id;
@@ -375,10 +374,12 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)read_after_write_mr->addr;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = read_after_write_mr->lkey;
-  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
+  printf("ibv_post_send(conn->qp, &wr, &bad_wr): %d\n", ibv_post_send(conn->qp, &wr, &bad_wr));
+  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
+  printf("polling... \n");
   process_work_completion_events (s_ctx->comp_channel, &wc, 1);
-  printf("remote buffer: %s\n", read_after_write_buffer);
-  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  printf("read remote buffer: %s\n", read_after_write_buffer);
+  printf("final: Function name: %s, line number: %d\n", __func__, __LINE__);
   // while (rdma_get_cm_event(ec, &event) == 0) {
   //   struct rdma_cm_event event_copy;
 
@@ -426,10 +427,13 @@ int process_work_completion_events (struct ibv_comp_channel *comp_channel,
   
   struct ibv_cq *cq;
   void *context = NULL;
-
+  // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   TEST_NZ(ibv_get_cq_event(comp_channel, &cq, &context));
+  // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   ibv_ack_cq_events(cq, 1);
+  // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   TEST_NZ(ibv_req_notify_cq(cq, 0));
+  // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   // while (ibv_poll_cq(cq, 1, &wc))
   //     on_completion(&wc);
@@ -437,6 +441,53 @@ int process_work_completion_events (struct ibv_comp_channel *comp_channel,
   int total_wc = 0;
   do {
     int ret = cpu_poll_cq(cq /* the CQ, we got notification for */, 
+      1 - total_wc /* number of remaining WC elements*/,
+      wc + total_wc/* where to store */);
+    printf("ret: %d\n", ret);
+    if (ret < 0) {
+      printf("Failed to poll cq for wc due to %d \n", ret);
+      continue;
+    /* ret is errno here */
+      // return ret;
+    }
+    total_wc += ret;
+  } while (total_wc < 1);
+
+  struct connection *conn = (struct connection *)(uintptr_t)wc->wr_id;
+  // printf("wc->status: %d\n", wc->status);
+  if (wc->status != IBV_WC_SUCCESS){
+    printf("wc->status: %d\n", wc->status);
+    die("on_completion: status is not IBV_WC_SUCCESS.");
+  }
+  // if (wc->opcode & IBV_WC_RECV){
+  //   printf("receive completed\n");
+  // }
+  // if(wc->opcode == IBV_WC_SEND){
+  //   printf("send completed\n");
+  // }
+  // else printf("wc.opcode: %d\n", wc->opcode);
+  return 0;
+}
+
+int cpu_process_work_completion_events (struct ibv_comp_channel *comp_channel, 
+		struct ibv_wc *wc, int max_wc){
+  
+  struct ibv_cq *cq;
+  void *context = NULL;
+  printf("My function name: %s, line number: %d\n", __func__, __LINE__);
+  TEST_NZ(ibv_get_cq_event(comp_channel, &cq, &context));
+  printf("My function name: %s, line number: %d\n", __func__, __LINE__);
+  ibv_ack_cq_events(cq, 1);
+  printf("My function name: %s, line number: %d\n", __func__, __LINE__);
+  TEST_NZ(ibv_req_notify_cq(cq, 0));
+  printf("My function name: %s, line number: %d\n", __func__, __LINE__);
+  // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  // while (ibv_poll_cq(cq, 1, &wc))
+  //     on_completion(&wc);
+
+  int total_wc = 0;
+  do {
+    int ret = /*cpu_poll_cq*/ibv_poll_cq(cq /* the CQ, we got notification for */, 
       1 - total_wc /* number of remaining WC elements*/,
       wc + total_wc/* where to store */);
 

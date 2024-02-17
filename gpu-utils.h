@@ -21,7 +21,6 @@
 #include <rdma/mlx5-abi.h>
 #include <stddef.h>
 
-int cpu_poll_cq(struct ibv_cq *ibcq, int n, struct ibv_wc *wc);
 
 static const int RDMA_BUFFER_SIZE = 1024;
 
@@ -343,6 +342,12 @@ enum mlx5_qp_flags {
 	MLX5_QP_FLAGS_USE_UNDERLAY = 0x01,
 	MLX5_QP_FLAGS_DRAIN_SIGERR = 0x02,
 };
+
+enum {
+	MLX5_CQ_SET_CI	= 0,
+	MLX5_CQ_ARM_DB	= 1,
+};
+
 
 struct mlx5_psv {
 	uint32_t index;
@@ -777,12 +782,50 @@ struct mlx5_rwqe_sig {
 	uint8_t		rsvd1[11];
 };
 
-
 static inline struct mlx5_context *to_mctx(struct ibv_context *ibctx)
 {
 	return container_of(ibctx, struct mlx5_context, ibv_ctx.context);
 }
 
+static inline struct mlx5_qp *rsc_to_mqp(struct mlx5_resource *rsc)
+{
+	return (struct mlx5_qp *)rsc;
+}
 
+static inline struct mlx5_qp *to_mqp(struct ibv_qp *ibqp)
+{
+	struct verbs_qp *vqp = (struct verbs_qp *)ibqp;
+
+	return container_of(vqp, struct mlx5_qp, verbs_qp);
+}
+
+
+
+static inline struct mlx5_cq *to_mcq(struct ibv_cq *ibcq)
+{
+	return container_of(ibcq, struct mlx5_cq, verbs_cq.cq);
+}
+
+static inline struct mlx5_srq *to_msrq(struct ibv_srq *ibsrq)
+{
+	struct verbs_srq *vsrq = (struct verbs_srq *)ibsrq;
+
+	return container_of(vsrq, struct mlx5_srq, vsrq);
+}
+
+static inline struct mlx5_rwq *rsc_to_mrwq(struct mlx5_resource *rsc)
+{
+	return (struct mlx5_rwq *)rsc;
+}
+
+static inline struct mlx5_srq *rsc_to_msrq(struct mlx5_resource *rsc)
+{
+	return (struct mlx5_srq *)rsc;
+}
+
+int cpu_poll_cq(struct ibv_cq *ibcq, int n, struct ibv_wc *wc);
+
+int mlx5_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+				  struct ibv_send_wr **bad_wr);
 
 #endif
