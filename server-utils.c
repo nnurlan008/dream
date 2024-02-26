@@ -1,6 +1,6 @@
 #include "server-utils.h"
 
-static const int RDMA_BUFFER_SIZE = 1024;
+
 
 struct message {
   enum {
@@ -187,16 +187,16 @@ void on_completion(struct ibv_wc *wc)
   if (wc->opcode & IBV_WC_RECV) {
     conn->recv_state++;
 
-    if (conn->recv_msg->type == MSG_MR) {
+    // if (conn->recv_msg->type == MSG_MR) {
       memcpy(&conn->peer_mr, &conn->recv_msg->data.mr, sizeof(conn->peer_mr));
       post_receives(conn); /* only rearm for MSG_MR */
       printf("received peer's MR");
-      if (conn->send_state == SS_INIT) {/* received peer's MR before sending ours, so send ours back */
+      // if (conn->send_state == SS_INIT) {/* received peer's MR before sending ours, so send ours back */
         send_mr(conn);
         printf(" before sending ours\n");
-      }
-      else printf("\n");
-    }
+      // }
+      // else printf("\n");
+    // }
 
   }
 

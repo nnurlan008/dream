@@ -20,9 +20,7 @@ all: ${APPS}
 gpu-client:  gpu-client.o
 	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@ $(add_flags)
 
-gpu-utils.o: gpu-utils.h
-gpu-client.o: gpu-utils.h
-cpu-client.o: gpu-utils.h
+# gpu-client.o: gpu-utils.h
 
 # gpu-utils.o: gpu-utils.c
 # 	$(CC) $(CFLAGS) $(LIBS) -g -c gpu-utils.c

@@ -53,14 +53,56 @@ int main(int argc, char **argv)
   return 0;
 }
 
+struct connection {
+  struct rdma_cm_id *id;
+  struct ibv_qp *qp;
+
+  int connected;
+
+  struct ibv_mr *recv_mr;
+  struct ibv_mr *send_mr;
+  struct ibv_mr *rdma_local_mr;
+  struct ibv_mr *rdma_remote_mr;
+
+  struct ibv_mr peer_mr;
+
+  struct message *recv_msg;
+  struct message *send_msg;
+
+  char *rdma_local_region;
+  char *rdma_remote_region;
+
+  enum {
+    SS_INIT,
+    SS_MR_SENT,
+    SS_RDMA_SENT,
+    SS_DONE_SENT
+  } send_state;
+
+  enum {
+    RS_INIT,
+    RS_MR_RECV,
+    RS_DONE_RECV
+  } recv_state;
+};
+
 int on_connect_request(struct rdma_cm_id *id)
 {
   struct rdma_conn_param cm_params;
 
   printf("received connection request.\n");
   build_connection(id);
+  struct connection *context = (struct connection *) id->context;
+  printf("context)->rdma_remote_region: 0x%llx context)->rdma_local_region: 0x%llx\n", 
+          context->rdma_remote_region, context->rdma_local_region);
+  printf("rkey: %u", context->rdma_remote_mr->rkey);
   build_params(&cm_params);
-  sprintf(get_local_message_region(id->context), "message from passive/server side with pid %d", getpid());
+  // printf("sizeof(get_local_message_region(id->context)): %d\n", sizeof(context->rdma_remote_region));
+  context->rdma_remote_region[RDMA_BUFFER_SIZE-1] = '\n';
+  for (int i = 0; i < RDMA_BUFFER_SIZE - 1; i++){
+    context->rdma_remote_region[i] = 'a';
+  }
+  // sprintf(get_local_message_region(id->context), "message from passive/server side with pid %d", getpid());
   TEST_NZ(rdma_accept(id, &cm_params));
 
   return 0;

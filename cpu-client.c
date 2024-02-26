@@ -158,7 +158,7 @@ void send_message(struct connection *conn)
 
   while (!conn->connected);
   printf("send message\n");
-  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
+  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
 }
 
 void send_mr(void *context)
@@ -235,13 +235,13 @@ int main(int argc, char **argv)
 
   struct ibv_wc wc;
   cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
-  
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   struct connection *conn = (struct connection *)(uintptr_t)wc.wr_id;
   if (wc.opcode & IBV_WC_RECV){
     printf("receive completed\n");
     memcpy(&conn->peer_mr, &conn->recv_msg->data.mr, sizeof(conn->peer_mr));
-    post_receives(conn);
+    // post_receives(conn);
   }
 
   /*Post some requests*/
@@ -301,7 +301,7 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)conn->rdma_local_region;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = conn->rdma_local_mr->lkey;
-  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
+  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
   cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   printf("read remote buffer: %s\n", conn->rdma_local_region);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
@@ -319,7 +319,7 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)conn->rdma_remote_region;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = conn->rdma_remote_mr->lkey;
-  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
+  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
   cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   printf("write to remote buffer: %s\n", conn->rdma_remote_region);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
@@ -337,7 +337,7 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)read_after_write_mr->addr;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = read_after_write_mr->lkey;
-  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
+  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
   cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   printf("read remote buffer: %s\n", read_after_write_buffer);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
@@ -356,7 +356,7 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)conn->rdma_remote_region;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = conn->rdma_remote_mr->lkey;
-  TEST_NZ(mlx5_post_send(conn->qp, &wr, &bad_wr));
+  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
   cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   printf("write to remote buffer: %s\n", conn->rdma_remote_region);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
@@ -487,7 +487,7 @@ int cpu_process_work_completion_events (struct ibv_comp_channel *comp_channel,
 
   int total_wc = 0;
   do {
-    int ret = /*cpu_poll_cq*/ibv_poll_cq(cq /* the CQ, we got notification for */, 
+    int ret = /*cpu_poll_cq*/cpu_poll_cq(cq /* the CQ, we got notification for */, 
       1 - total_wc /* number of remaining WC elements*/,
       wc + total_wc/* where to store */);
 
@@ -552,7 +552,7 @@ void post_receives(struct connection *conn)
   sge.length = sizeof(struct message);
   sge.lkey = conn->recv_mr->lkey;
 
-  TEST_NZ(ibv_post_recv(conn->qp, &wr, &bad_wr));
+  TEST_NZ(mlx5_post_recv(conn->qp, &wr, &bad_wr));
 }
 
 void register_memory(struct connection *conn)
