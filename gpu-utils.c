@@ -71,7 +71,7 @@ int cpu_poll_cq(struct ibv_cq *ibcq, int n, struct ibv_wc *wc)
 				if(cqe_ver) {
 					int tind = rsn >> MLX5_UIDX_TABLE_SHIFT;
 					printf("Function: %s line number: %d rsn & MLX5_UIDX_TABLE_MASK: %d tind: %d\n",__func__, __LINE__, rsn & MLX5_UIDX_TABLE_MASK, tind);
-                    printf("mctx->uidx_table[tind].refcnt: %d\n", mctx->uidx_table[tind].refcnt);
+                    printf("mctx->uidx_table[tind=%d].refcnt: %d\n", tind, mctx->uidx_table[tind].refcnt);
 					if (likely(mctx->uidx_table[tind].refcnt))
 						rsc = mctx->uidx_table[tind].table[rsn & MLX5_UIDX_TABLE_MASK];
 					else rsc = NULL;
@@ -99,7 +99,8 @@ int cpu_poll_cq(struct ibv_cq *ibcq, int n, struct ibv_wc *wc)
 				(wc+npolled)->status = err;
 			wq->tail = wq->wqe_head[idx] + 1;
 			printf("Function: %s line number: %d wq->wqe_head[idx]: %d \n\n",__func__, __LINE__, wq->wqe_head[idx]);
-			break;
+			printf("idx: %d, wc->wr_id: %d, wc->status: %d, wq->tail: %d\n", idx, wc->wr_id, wc->status, wq->tail);
+            break;
 		}
 		case MLX5_CQE_RESP_SEND:
 		{
@@ -183,6 +184,59 @@ const uint32_t mlx5_ib_opcode[] = {
 	[IBV_WR_TSO]			= MLX5_OPCODE_TSO,
 	[IBV_WR_DRIVER1]		= MLX5_OPCODE_UMR,
 };
+
+int mlx5_post_recv(struct ibv_qp *ibqp, struct ibv_recv_wr *wr,
+		   struct ibv_recv_wr **bad_wr)
+{
+	struct mlx5_qp *qp = to_mqp(ibqp);
+	struct mlx5_wqe_data_seg *scat;
+	int err = 0;
+	int nreq;
+	int ind;
+	int i, j;
+	struct mlx5_rwqe_sig *sig;
+	int head = qp->rq.head;
+	
+
+	ind = head & (qp->rq.wqe_cnt - 1);
+
+	for (nreq = 0; wr; ++nreq, wr = wr->next) {
+		printf("nreq: %d\n\n\n\n\n\n\n", nreq);
+		scat = qp->buf.buf + qp->rq.offset + (ind << qp->rq.wqe_shift); 
+        printf("qp->rq.offset: %d, ind: %d, qp->rq.wqe_shift: %d\n", qp->rq.offset, ind, qp->rq.wqe_shift);
+		sig = (struct mlx5_rwqe_sig *)scat;
+
+		for (i = 0, j = 0; i < wr->num_sge; ++i) {
+			if ((!wr->sg_list[i].length))
+				continue;
+			struct mlx5_wqe_data_seg *dseg = scat ;
+			struct ibv_sge *sg = wr->sg_list;
+			int offset = 0;
+			dseg->byte_count = htonl(sg->length - offset);
+			dseg->lkey       = htonl(sg->lkey);
+			dseg->addr       = htonl64(sg->addr + offset);
+		}
+
+		qp->rq.wrid[ind] = wr->wr_id;
+
+		ind = (ind + 1) & (qp->rq.wqe_cnt - 1);
+	}
+	 printf("after for - nreq: %d\n\n\n\n\n\n\n", nreq);
+out:
+	if ((nreq)) {
+		head += nreq;
+
+        printf("out\n ");
+		if ((!((ibqp->qp_type == 8 ||
+			      qp->flags & 1) &&
+			     ibqp->state < 2))){
+			qp->db[0] = htonl(head & 0xffff);
+            printf("Function: %s line number: %d\n",__func__, __LINE__);
+        }
+	}
+
+	return err;
+}
 
 int HEYmlx5_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 				  struct ibv_send_wr **bad_wr)
@@ -640,7 +694,7 @@ static inline unsigned long DIV_ROUND_UP(unsigned long n, unsigned long d)
 	return (n + d - 1) / d;
 }
 
-int mlx5_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+int cpu_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 				  struct ibv_send_wr **bad_wr)
 {
 	struct mlx5_qp *qp = to_mqp(ibqp);
@@ -706,13 +760,13 @@ int mlx5_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
                 dpseg->byte_count = htonl((wr->sg_list + i)->length - sg_copy_ptr.offset);
                 dpseg->lkey       = htonl((wr->sg_list + i)->lkey);
                 dpseg->addr       = htonl64((wr->sg_list + i)->addr + sg_copy_ptr.offset);
-
                 size += sizeof(struct mlx5_wqe_data_seg) / 16;
             }
         }
 		
         printf("Function: %s line number: %d\n",__func__, __LINE__);
 		mlx5_opcode = mlx5_ib_opcode[wr->opcode];
+        printf("mlx5_opcode: %d, wr->opcode: %d\n\n\n",mlx5_opcode, wr->opcode);
 		ctrl->opmod_idx_opcode = htonl(((qp->sq.cur_post & 0xffff) << 8) | mlx5_opcode | (opmod << 24));
 		ctrl->qpn_ds = htonl(size | (ibqp->qp_num << 8));
 
@@ -749,7 +803,7 @@ out:
             printf("Func name: %s, line number: %d\n", __func__, __LINE__);
             /* Do 64 bytes at a time */
             addr = bf->reg + bf->offset;
-            val = *ctrl;
+            val = *src_p;
             __be32 first_dword = htonl(htonl64(val) >> 32);
             __be32 second_dword = htonl(htonl64(val));
             *(volatile uint32_t *)addr = (uint32_t)first_dword;
@@ -766,3 +820,323 @@ out:
 	return err;
 }
 
+
+int mlx5_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+				  struct ibv_send_wr **bad_wr)
+{
+
+	struct mlx5_qp *qp = to_mqp(ibqp);
+	void *seg;
+	struct mlx5_wqe_eth_seg *eseg;
+	struct mlx5_wqe_ctrl_seg *ctrl = NULL;
+	struct mlx5_wqe_data_seg *dpseg;
+	struct mlx5_sg_copy_ptr sg_copy_ptr = {.index = 0, .offset = 0};
+	int nreq = 0;
+	int inl = 0;
+	int err = 0;
+	int size = 0;
+	int i;
+	unsigned idx;
+	uint8_t opmod = 0;
+	struct mlx5_bf *bf = qp->bf;
+	void *qend = qp->sq.qend;
+	uint32_t mlx5_opcode;
+	struct mlx5_wqe_xrc_seg *xrc;
+
+    // input variables:
+    // unsigned int qpbf_bufsize = qp->bf->buf_size; // 256
+    // unsigned int qpsq_cur_post = qp->sq.cur_post;
+    // unsigned int qpsq_wqe_cnt = qp->sq.wqe_cnt;
+    // uint64_t wr_rdma_remote_addr = wr->wr.rdma.remote_addr;
+    // uint32_t wr_rdma_rkey = wr->wr.rdma.rkey;
+    // uint32_t wr_sg_length = wr->sg_list->length;
+    // uint32_t wr_sg_lkey = wr->sg_list->lkey;
+    // uint64_t wr_sg_addr = wr->sg_list->addr;
+    // int wr_opcode = wr->opcode;
+    // unsigned int qpsq_cur_post = qp->sq.cur_post;
+
+    // pointers
+    // void* qp_buf = qp->buf.buf;
+    // uint32_t *qpsq_wr_data = (uint32_t *) dev_qpsq_wr_data;//qp->sq.wr_data;
+    // unsigned int *qpsq_wqe_head = (unsigned int *) dev_qpsq_wqe_head;// qp->sq.wqe_head;
+    // struct mlx5_wq *qp_sq = (struct mlx5_wq *) dev_qp_sq; // &qp->sq;
+    // void *bf_reg = bf->reg;
+    
+
+    idx = qp->sq.cur_post & (qp->sq.wqe_cnt - 1);
+    printf("Function: %s line number: %d qp->buf.buf: 0x%llx \n",__func__, __LINE__, qp->buf.buf);
+    printf("Function: %s line number: %d qp->bf->buf_size: %d \n",__func__, __LINE__, qp->bf->buf_size);
+    printf("Function: %s line number: %d bf->reg: 0x%llx \n",__func__, __LINE__, bf->reg);
+    printf("Function: %s line number: %d qp->buf.buf: 0x%llx \n",__func__, __LINE__, qp->sq_start);
+    seg = (qp->buf.buf + qp->bf->buf_size + (idx * 64)); // mlx5_get_send_wqe(qp, idx);
+    ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+    printf("Function: %s line number: %d qp->buf.buf: 0x%llx \n",__func__, __LINE__, ctrl);
+    *(uint32_t *)(seg + 8) = 0;
+    ctrl->imm = 0; // send_ieth(wr);
+    ctrl->fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE;
+
+    seg = seg + sizeof(*ctrl);
+    size = sizeof(*ctrl) / 16;
+    qp->sq.wr_data[idx] = 0;
+    printf("ibqp->qp_type: %d \n", ibqp->qp_type);
+
+    // we generally have qp_type: IBV_QPT_RC and RDMA READ or WRITE request
+    if(wr->opcode == IBV_WR_RDMA_READ || wr->opcode == IBV_WR_RDMA_WRITE){
+        ((struct mlx5_wqe_raddr_seg *) seg)->raddr    = htonl64(wr->wr.rdma.remote_addr);
+        ((struct mlx5_wqe_raddr_seg *) seg)->rkey     = htonl(wr->wr.rdma.rkey);
+        ((struct mlx5_wqe_raddr_seg *) seg)->reserved = 0;
+        seg = seg + sizeof(struct mlx5_wqe_raddr_seg);
+        size += sizeof(struct mlx5_wqe_raddr_seg) / 16;
+    }
+
+    dpseg = (struct mlx5_wqe_data_seg *) seg;
+    // for simplicity, we'll have one sge per request/post
+    i = 0;// sg_copy_ptr.index;
+    dpseg->byte_count = htonl(wr->sg_list->length);
+    dpseg->lkey       = htonl(wr->sg_list->lkey);
+    dpseg->addr       = htonl64(wr->sg_list->addr);
+    size += sizeof(struct mlx5_wqe_data_seg) / 16;
+    // 4 -> 16, 0 -> 8
+    mlx5_opcode = wr->opcode*2 + 8 - 2*(wr->opcode == 2); // mlx5_ib_opcode[wr->opcode];
+    // printf("mlx5_opcode: %d, wr->opcode: %d wr->opcode*2 + 8 - 2*(mlx5_opcode == 2): %d\n\n\n",mlx5_opcode, wr->opcode, wr->opcode*2 + 8 - 2*(wr->opcode == 2));
+    ctrl->opmod_idx_opcode = htonl(((qp->sq.cur_post & 0xffff) << 8) | mlx5_opcode);
+    ctrl->qpn_ds = htonl(size | (ibqp->qp_num << 8));
+
+    qp->sq.wrid[idx] = wr->wr_id;
+    qp->sq.wqe_head[idx] = qp->sq.head;
+    qp->sq.cur_post += (size * 16 + 64 - 1) / 64;
+        
+    // db update:
+    qp->sq.head += 1;
+    qp->db[MLX5_SND_DBR] = htonl(qp->sq.cur_post & 0xffff);
+
+    void *addr;
+    uint64_t val;
+    /* Do 64 bytes at a time */
+    addr = bf->reg + bf->offset;
+    val = *(uint64_t *)ctrl;
+    uint32_t first_dword = htonl(htonl64(val) >> 32);
+    uint32_t second_dword = htonl(htonl64(val));
+    *(volatile uint32_t *)addr = (uint32_t)first_dword;
+    *(volatile uint32_t *)(addr+4) = (uint32_t)second_dword;
+    // bf->offset ^= bf->buf_size;
+
+	return err;
+}
+
+
+// __device__ 
+// int device_gpu_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+// 				  struct ibv_send_wr **bad_wr, unsigned int qpbf_bufsize, unsigned int qpsq_cur_post,
+//           unsigned int qpsq_wqe_cnt, uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
+//           uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, int wr_opcode, 
+//           unsigned int bf_offset, uint32_t qp_num, uint64_t wr_id, 
+//           void *qp_buf, void *dev_qpsq_wr_data, void *dev_qpsq_wqe_head, 
+//           void *dev_qp_sq, void *bf_reg, void *dev_qp_db)
+// {
+
+// 	// struct mlx5_qp *qp = to_mqp(ibqp);
+// 	void *seg;
+// 	struct mlx5_wqe_eth_seg *eseg;
+// 	struct mlx5_wqe_ctrl_seg *ctrl = NULL;
+// 	struct mlx5_wqe_data_seg *dpseg;
+// 	struct mlx5_sg_copy_ptr sg_copy_ptr = {.index = 0, .offset = 0};
+// 	int nreq = 0;
+// 	int inl = 0;
+// 	int err = 0;
+// 	int size = 0;
+// 	int i;
+// 	unsigned idx;
+// 	uint8_t opmod = 0;
+// 	// struct mlx5_bf *bf = qp->bf;
+
+// 	uint32_t mlx5_opcode;
+// 	struct mlx5_wqe_xrc_seg *xrc;
+
+//     // input variables:
+//     // unsigned int qpbf_bufsize = qp->bf->buf_size; // 256
+//     // unsigned int qpsq_cur_post = qp->sq.cur_post;
+//     // unsigned int qpsq_wqe_cnt = qp->sq.wqe_cnt;
+//     // uint64_t wr_rdma_remote_addr = wr->wr.rdma.remote_addr;
+//     // uint32_t wr_rdma_rkey = wr->wr.rdma.rkey;
+//     // uint32_t wr_sg_length = wr->sg_list->length;
+//     // uint32_t wr_sg_lkey = wr->sg_list->lkey;
+//     // uint64_t wr_sg_addr = wr->sg_list->addr;
+//     // int wr_opcode = wr->opcode;
+//     // uint32_t qp_num = ibqp->qp_num;
+//     // unsigned int bf_offset = bf->offset; 
+//     // uint64_t wr_id = wr->wr_id;
+
+//     // pointers
+//     // void* qp_buf = qp->buf.buf;
+//     uint32_t *qpsq_wr_data = (uint32_t *) dev_qpsq_wr_data;//qp->sq.wr_data;
+//     unsigned int *qpsq_wqe_head = (unsigned int *) dev_qpsq_wqe_head;// qp->sq.wqe_head;
+//     struct mlx5_wq *qp_sq = (struct mlx5_wq *) dev_qp_sq; // &qp->sq;
+//     // void *bf_reg = bf->reg;
+//     unsigned int *qp_db = (unsigned int *) dev_qp_db; // qp->db
+    
+
+//     idx = qpsq_cur_post & (qpsq_wqe_cnt - 1);
+//     printf("Function: %s line number: %d qp->buf.buf: 0x%llx \n",__func__, __LINE__, qp_buf);
+//     printf("Function: %s line number: %d qp->bf->buf_size: %d \n",__func__, __LINE__, qpbf_bufsize);
+//     printf("Function: %s line number: %d bf->reg: 0x%llx \n",__func__, __LINE__, bf_reg);
+//     // printf("Function: %s line number: %d qp->buf.buf: 0x%llx \n",__func__, __LINE__, qp->sq_start);
+//     seg = (qp_buf + qpbf_bufsize + (idx * 64)); // mlx5_get_send_wqe(qp, idx);
+//     ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+//     printf("Function: %s line number: %d qp->buf.buf: 0x%llx \n",__func__, __LINE__, ctrl);
+//     *(uint32_t *)(seg + 8) = 0;
+//     ctrl->imm = 0; // send_ieth(wr);
+//     ctrl->fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE;
+
+//     seg = seg + sizeof(*ctrl);
+//     size = sizeof(*ctrl) / 16;
+//     qp_sq->wr_data[idx] = 0;
+//     // printf("ibqp->qp_type: %d \n", ibqp->qp_type);
+
+//     // we generally have qp_type: IBV_QPT_RC and RDMA READ or WRITE request
+//     ((struct mlx5_wqe_raddr_seg *) seg)->raddr    = htonl64(wr_rdma_remote_addr);
+//     ((struct mlx5_wqe_raddr_seg *) seg)->rkey     = htonl(wr_rdma_rkey);
+//     ((struct mlx5_wqe_raddr_seg *) seg)->reserved = 0;
+//     seg = seg + sizeof(struct mlx5_wqe_raddr_seg);
+//     size += sizeof(struct mlx5_wqe_raddr_seg) / 16;
+
+//     dpseg = (struct mlx5_wqe_data_seg *) seg;
+//     // for simplicity, we'll have one sge per request/post
+//     i = 0;// sg_copy_ptr.index;
+//     dpseg->byte_count = htonl(wr_sg_length);
+//     dpseg->lkey       = htonl(wr_sg_lkey);
+//     dpseg->addr       = htonl64(wr_sg_addr);
+//     size += sizeof(struct mlx5_wqe_data_seg) / 16;
+//     // 4 -> 16, 0 -> 8
+//     mlx5_opcode = wr_opcode*2 + 8; // mlx5_ib_opcode[wr->opcode];
+//     ctrl->opmod_idx_opcode = htonl(((qpsq_cur_post & 0xffff) << 8) | mlx5_opcode);
+//     ctrl->qpn_ds = htonl(size | (qp_num << 8));
+
+//     qp_sq->wrid[idx] = wr_id;
+//     qp_sq->wqe_head[idx] = qp_sq->head;
+//     qp_sq->cur_post += (size * 16 + 64 - 1) / 64;
+        
+//     // db update:
+//     qp_sq->head += 1;
+//     qp_db[MLX5_SND_DBR] = htonl(qpsq_cur_post & 0xffff);
+
+//     void *addr;
+//     uint64_t val;
+//     /* Do 64 bytes at a time */
+//     addr = bf_reg + bf_offset;
+//     val = *(uint64_t *) ctrl;
+//     uint32_t first_dword = htonl(htonl64(val) >> 32);
+//     uint32_t second_dword = htonl(htonl64(val));
+//     *(volatile uint32_t *)addr = (uint32_t)first_dword;
+//     *(volatile uint32_t *)(addr+4) = (uint32_t)second_dword;
+//     // bf->offset ^= bf->buf_size;
+
+// 	return err;
+// }
+
+// __global__
+// void global_gpu_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+// 				  struct ibv_send_wr **bad_wr, unsigned int qpbf_bufsize, unsigned int qpsq_cur_post,
+//           unsigned int qpsq_wqe_cnt, uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
+//           uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, int wr_opcode, 
+//           unsigned int bf_offset, uint32_t qp_num, uint64_t wr_id,
+//           void *qp_buf, void *dev_qpsq_wr_data, void *dev_qpsq_wqe_head, 
+//           void *dev_qp_sq, void *bf_reg, void *dev_qp_db, int *ret){
+
+//   *ret = device_gpu_post_send(ibqp, wr,
+// 				  bad_wr, qpbf_bufsize, qpsq_cur_post,
+//           qpsq_wqe_cnt, wr_rdma_remote_addr, wr_rdma_rkey,
+//           wr_sg_length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
+//           bf_offset, qp_num, wr_id, qp_buf, dev_qpsq_wr_data, 
+//           dev_qpsq_wqe_head, dev_qp_sq, bf_reg, dev_qp_db);
+
+// }
+
+// int gpu_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr, struct ibv_send_wr **bad_wr){
+
+//   int ret;
+//   struct mlx5_qp *qp = to_mqp(ibqp);
+//   struct mlx5_bf *bf = qp->bf;
+
+//   // input variables:
+//   unsigned int qpbf_bufsize = qp->bf->buf_size; // 256
+//   unsigned int qpsq_cur_post = qp->sq.cur_post;
+//   unsigned int qpsq_wqe_cnt = qp->sq.wqe_cnt;
+//   uint64_t wr_rdma_remote_addr = wr->wr.rdma.remote_addr;
+//   uint32_t wr_rdma_rkey = wr->wr.rdma.rkey;
+//   uint32_t wr_sg_length = wr->sg_list->length;
+//   uint32_t wr_sg_lkey = wr->sg_list->lkey;
+//   uint64_t wr_sg_addr = wr->sg_list->addr;
+//   int wr_opcode = wr->opcode;
+//   uint32_t qp_num = ibqp->qp_num;
+//   unsigned int bf_offset = bf->offset; 
+//   uint64_t wr_id = wr->wr_id;
+
+//   // pointers
+//   void *qp_buf = qp->buf.buf;
+//   void *dev_qpsq_wr_data; //qp->sq.wr_data;
+//   void *dev_qpsq_wqe_head;// qp->sq.wqe_head;
+//   void *dev_qp_sq; // &qp->sq;
+//   void *bf_reg; // bf->reg;
+//   void *dev_qp_db; // qp->db
+//   int *dev_ret; // &ret
+
+//   // pin host memory and get device pointer:
+
+//   if(cudaHostRegister(qp->buf.buf, sizeof(qp->buf.buf), cudaHostRegisterMapped) !=  cudaSuccess)
+//         exit(0);
+//   // get GPU pointer for qp_buf
+//   if(cudaHostGetDevicePointer(&qp_buf, qp->buf.buf, 0) != cudaSuccess)
+//       exit(0);
+
+//   if(cudaHostRegister(qp->sq.wr_data, sizeof(qp->sq.wr_data), cudaHostRegisterMapped) !=  cudaSuccess)
+//         exit(0);
+//   // get GPU pointer for qp->sq.wr_data
+//   if(cudaHostGetDevicePointer(&dev_qpsq_wr_data, qp->sq.wr_data, 0) != cudaSuccess)
+//       exit(0);
+
+//   if(cudaHostRegister(qp->sq.wqe_head, sizeof(qp->sq.wqe_head), cudaHostRegisterMapped) !=  cudaSuccess)
+//         exit(0);
+//   // get GPU pointer for qp->sq.wqe_head
+//   if(cudaHostGetDevicePointer(&dev_qpsq_wqe_head, qp->sq.wqe_head, 0) != cudaSuccess)
+//       exit(0);
+
+//   if(cudaHostRegister(&qp->sq, sizeof(qp->sq), cudaHostRegisterMapped) !=  cudaSuccess)
+//         exit(0);
+//   // get GPU pointer for qp->sq
+//   if(cudaHostGetDevicePointer(&dev_qp_sq, &qp->sq, 0) != cudaSuccess)
+//       exit(0);
+
+//   if(cudaHostRegister(bf->reg, sizeof(bf->reg), cudaHostRegisterMapped) !=  cudaSuccess)
+//         exit(0);
+//   // get GPU pointer for bf->reg
+//   if(cudaHostGetDevicePointer(&bf_reg, bf->reg, 0) != cudaSuccess)
+//       exit(0);
+
+//   if(cudaHostRegister(qp->db, sizeof(qp->db), cudaHostRegisterMapped) !=  cudaSuccess)
+//         exit(0);
+//   // get GPU pointer for qp->db
+//   if(cudaHostGetDevicePointer(&dev_qp_db, qp->db, 0) != cudaSuccess)
+//       exit(0);
+
+//   if(cudaHostRegister(&ret, sizeof(ret), cudaHostRegisterMapped) !=  cudaSuccess)
+//         exit(0);
+//   // get GPU pointer for qp->db
+//   if(cudaHostGetDevicePointer(&dev_ret, &ret, 0) != cudaSuccess)
+//       exit(0);
+
+//   if (cudaDeviceSynchronize() != 0) exit(0);
+
+//   global_gpu_post_send<<<1,1>>>(ibqp, wr,
+// 				  bad_wr, qpbf_bufsize, qpsq_cur_post, qpsq_wqe_cnt, 
+//           wr_rdma_remote_addr, wr_rdma_rkey,
+//           wr_sg_length,
+//           wr_sg_lkey, wr_sg_addr, wr_opcode, 
+//           bf_offset, qp_num, wr_id, qp_buf, dev_qpsq_wr_data, 
+//           dev_qpsq_wqe_head, dev_qp_sq, bf_reg, dev_qp_db, dev_ret);
+
+//   if (cudaDeviceSynchronize() != 0) exit(0);
+
+//   return ret;
+
+// }

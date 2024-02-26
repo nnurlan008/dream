@@ -22,7 +22,7 @@
 #include <stddef.h>
 
 
-static const int RDMA_BUFFER_SIZE = 1024;
+static const int RDMA_BUFFER_SIZE = 1024*1024*200;
 
 struct message {
   enum {
@@ -827,5 +827,8 @@ int cpu_poll_cq(struct ibv_cq *ibcq, int n, struct ibv_wc *wc);
 
 int mlx5_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 				  struct ibv_send_wr **bad_wr);
+
+int mlx5_post_recv(struct ibv_qp *ibqp, struct ibv_recv_wr *wr,
+		   struct ibv_recv_wr **bad_wr);
 
 #endif

@@ -11,6 +11,11 @@
         "string_view": "c",
         "initializer_list": "c",
         "utility": "c",
-        "string.h": "c"
+        "string.h": "c",
+        "mlx5dv.h": "c",
+        "deque": "cpp",
+        "string": "cpp",
+        "vector": "cpp",
+        "iterator": "cpp"
     }
 }
