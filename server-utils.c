@@ -39,7 +39,7 @@ struct connection {
   struct message *send_msg;
 
   char *rdma_local_region;
-  char *rdma_remote_region;
+  int *rdma_remote_region;
 
   enum {
     SS_INIT,
@@ -279,7 +279,7 @@ void register_memory(struct connection *conn)
   conn->recv_msg = malloc(sizeof(struct message));
 
   conn->rdma_local_region = malloc(RDMA_BUFFER_SIZE);
-  conn->rdma_remote_region = malloc(RDMA_BUFFER_SIZE);
+  conn->rdma_remote_region = malloc(RDMA_BUFFER_SIZE * sizeof(int));
 
   TEST_Z(conn->send_mr = ibv_reg_mr(
     s_ctx->pd, 
@@ -303,7 +303,7 @@ void register_memory(struct connection *conn)
   TEST_Z(conn->rdma_remote_mr = ibv_reg_mr(
     s_ctx->pd, 
     conn->rdma_remote_region, 
-    RDMA_BUFFER_SIZE, 
+    RDMA_BUFFER_SIZE*sizeof(int), 
     IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ));
     /*((s_mode == M_WRITE) ? (IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE) : IBV_ACCESS_REMOTE_READ)));*/
 }

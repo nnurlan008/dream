@@ -23,14 +23,18 @@ int main(int argc, char **argv)
     set_mode(M_READ);
   else
     usage(argv[0]);
-
+  
   memset(&addr, 0, sizeof(addr));
   addr.sin6_family = AF_INET6;
   addr.sin6_port = htons(PORT);
+  
 
   TEST_Z(ec = rdma_create_event_channel());
-  TEST_NZ(rdma_create_id(ec, &listener, NULL, RDMA_PS_TCP));
+  TEST_NZ(rdma_create_id(ec, &listener, NULL, RDMA_PS_IB));
+  // printf("rdma_bind_addr(listener, (struct sockaddr *)&addr): %d\n", rdma_bind_addr(listener, (struct sockaddr *)&addr));
+  
   TEST_NZ(rdma_bind_addr(listener, (struct sockaddr *)&addr));
+  printf("errno:%d \n", errno);
   TEST_NZ(rdma_listen(listener, 10)); /* backlog=10 is arbitrary */
 
   port = PORT; //ntohs(rdma_get_src_port(listener));
@@ -70,7 +74,7 @@ struct connection {
   struct message *send_msg;
 
   char *rdma_local_region;
-  char *rdma_remote_region;
+  int *rdma_remote_region;
 
   enum {
     SS_INIT,
@@ -98,10 +102,17 @@ int on_connect_request(struct rdma_cm_id *id)
   printf("rkey: %u", context->rdma_remote_mr->rkey);
   build_params(&cm_params);
   // printf("sizeof(get_local_message_region(id->context)): %d\n", sizeof(context->rdma_remote_region));
-  context->rdma_remote_region[RDMA_BUFFER_SIZE-1] = '\n';
-  for (int i = 0; i < RDMA_BUFFER_SIZE - 1; i++){
-    context->rdma_remote_region[i] = 'a';
+  // context->rdma_remote_region[RDMA_BUFFER_SIZE-1] = '\n';
+  // printf("Function: %s line number: %d\n",__func__, __LINE__);
+  for (int i = 0; i < RDMA_BUFFER_SIZE; i++){
+    context->rdma_remote_region[i] = 2;
+    // printf("Function: %s line number: %d i: %d\n",__func__, __LINE__, i);
   }
+  // for (int i = 0; i < RDMA_BUFFER_SIZE; i++)
+  //   printf("%d ", context->rdma_remote_region[i]);
+  
+  // memset(context->rdma_remote_region, 1, RDMA_BUFFER_SIZE*sizeof(int) );
+  // printf("Function: %s line number: %d\n",__func__, __LINE__);
   // sprintf(get_local_message_region(id->context), "message from passive/server side with pid %d", getpid());
   TEST_NZ(rdma_accept(id, &cm_params));
 
