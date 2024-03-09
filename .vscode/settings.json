@@ -16,6 +16,16 @@
         "deque": "cpp",
         "string": "cpp",
         "vector": "cpp",
-        "iterator": "cpp"
+        "iterator": "cpp",
+        "typeinfo": "c",
+        "unordered_map": "cpp",
+        "exception": "cpp",
+        "functional": "cpp",
+        "new": "cpp",
+        "stdexcept": "cpp",
+        "tuple": "cpp",
+        "type_traits": "cpp",
+        "random": "cpp",
+        "rdma_cma.h": "c"
     }
 }

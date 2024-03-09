@@ -22,7 +22,7 @@
 #include <stddef.h>
 
 
-static const int RDMA_BUFFER_SIZE = 1024*1024*200;
+static const int RDMA_BUFFER_SIZE = 1024*64;
 
 struct message {
   enum {

@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <endian.h>
 
+#include <pthread.h>
 #include "gpu-utils.h"
 
 int cpu_poll_cq(struct ibv_cq *ibcq, int n, struct ibv_wc *wc) 
@@ -45,6 +46,7 @@ int cpu_poll_cq(struct ibv_cq *ibcq, int n, struct ibv_wc *wc)
 		cqe = cq->active_buf->buf + (cq->cons_index & cq->verbs_cq.cq.cqe) * cq->cqe_sz;
         printf("Function name: %s, line number: %d\n", __func__, __LINE__);
 		cqe64 = (cq->cqe_sz == 64) ? cqe : cqe + 64;
+		printf("Function name: %s, line number: %d cqe64->op_own >> 4: %d\n", __func__, __LINE__, cqe64->op_own >> 4);
 		if ((cqe64->op_own >> 4 != MLX5_CQE_INVALID) &&
 			!((cqe64->op_own & MLX5_CQE_OWNER_MASK) ^ !!(n & (cq->verbs_cq.cq.cqe + 1)))) {
 			++cq->cons_index;
@@ -639,55 +641,55 @@ static uint8_t wq_sig(struct mlx5_wqe_ctrl_seg *ctrl)
 	return calc_sig(ctrl, (be32toh(ctrl->qpn_ds) & 0x3f) << 4);
 }
 
-static inline void post_send_db(struct mlx5_qp *qp, struct mlx5_bf *bf,
-				int nreq, int inl, int size, void *ctrl)
-{
-	struct mlx5_context *ctx;
+// static inline void post_send_db(struct mlx5_qp *qp, struct mlx5_bf *bf,
+// 				int nreq, int inl, int size, void *ctrl)
+// {
+// 	struct mlx5_context *ctx;
 
-	if ((!nreq))
-		return;
+// 	if ((!nreq))
+// 		return;
 
-	qp->sq.head += nreq;
+// 	qp->sq.head += nreq;
 
-	/*
-	 * Make sure that descriptors are written before
-	 * updating doorbell record and ringing the doorbell
-	 */
-	udma_to_device_barrier();
-	qp->db[MLX5_SND_DBR] = htobe32(qp->sq.cur_post & 0xffff);
+// 	/*
+// 	 * Make sure that descriptors are written before
+// 	 * updating doorbell record and ringing the doorbell
+// 	 */
+// 	udma_to_device_barrier();
+// 	qp->db[MLX5_SND_DBR] = htobe32(qp->sq.cur_post & 0xffff);
 
-	/* Make sure that the doorbell write happens before the memcpy
-	 * to WC memory below
-	 */
-	ctx = to_mctx(qp->ibv_qp->context);
-	if (bf->need_lock)
-		mmio_wc_spinlock(&bf->lock.lock);
-	else
-		mmio_wc_start();
+// 	/* Make sure that the doorbell write happens before the memcpy
+// 	 * to WC memory below
+// 	 */
+// 	ctx = to_mctx(qp->ibv_qp->context);
+// 	if (bf->need_lock)
+// 		mmio_wc_spinlock(&bf->lock.lock);
+// 	else
+// 		mmio_wc_start();
 
-	if (!ctx->shut_up_bf && nreq == 1 && bf->uuarn &&
-	    (inl || ctx->prefer_bf) && size > 1 &&
-	    size <= bf->buf_size / 16)
-		mlx5_bf_copy(bf->reg + bf->offset, ctrl,
-			     align(size * 16, 64), qp);
-	else
-		mmio_write64_be(bf->reg + bf->offset, *(__be64 *)ctrl);
+// 	if (!ctx->shut_up_bf && nreq == 1 && bf->uuarn &&
+// 	    (inl || ctx->prefer_bf) && size > 1 &&
+// 	    size <= bf->buf_size / 16)
+// 		mlx5_bf_copy(bf->reg + bf->offset, ctrl,
+// 			     align(size * 16, 64), qp);
+// 	else
+// 		mmio_write64_be(bf->reg + bf->offset, *(__be64 *)ctrl);
 
-	/*
-	 * use mmio_flush_writes() to ensure write combining buffers are
-	 * flushed out of the running CPU. This must be carried inside
-	 * the spinlock. Otherwise, there is a potential race. In the
-	 * race, CPU A writes doorbell 1, which is waiting in the WC
-	 * buffer. CPU B writes doorbell 2, and it's write is flushed
-	 * earlier. Since the mmio_flush_writes is CPU local, this will
-	 * result in the HCA seeing doorbell 2, followed by doorbell 1.
-	 * Flush before toggling bf_offset to be latency oriented.
-	 */
-	mmio_flush_writes();
-	bf->offset ^= bf->buf_size;
-	if (bf->need_lock)
-		mlx5_spin_unlock(&bf->lock);
-}
+// 	/*
+// 	 * use mmio_flush_writes() to ensure write combining buffers are
+// 	 * flushed out of the running CPU. This must be carried inside
+// 	 * the spinlock. Otherwise, there is a potential race. In the
+// 	 * race, CPU A writes doorbell 1, which is waiting in the WC
+// 	 * buffer. CPU B writes doorbell 2, and it's write is flushed
+// 	 * earlier. Since the mmio_flush_writes is CPU local, this will
+// 	 * result in the HCA seeing doorbell 2, followed by doorbell 1.
+// 	 * Flush before toggling bf_offset to be latency oriented.
+// 	 */
+// 	mmio_flush_writes();
+// 	bf->offset ^= bf->buf_size;
+// 	if (bf->need_lock)
+// 		mlx5_spin_unlock(&bf->lock);
+// }
 
 static inline unsigned long DIV_ROUND_UP(unsigned long n, unsigned long d)
 {
@@ -919,10 +921,266 @@ int mlx5_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
     uint32_t second_dword = htonl(htonl64(val));
     *(volatile uint32_t *)addr = (uint32_t)first_dword;
     *(volatile uint32_t *)(addr+4) = (uint32_t)second_dword;
-    // bf->offset ^= bf->buf_size;
+    bf->offset ^= bf->buf_size;
 
 	return err;
 }
+
+static inline int mlx5_spin_lock(struct mlx5_spinlock *lock)
+{
+	if (lock->need_lock)
+		return pthread_spin_lock(&lock->lock);
+
+	if (unlikely(lock->in_use)) {
+		fprintf(stderr, "*** ERROR: multithreading violation ***\n"
+			"You are running a multithreaded application but\n"
+			"you set MLX5_SINGLE_THREADED=1. Please unset it.\n");
+		abort();
+	} else {
+		lock->in_use = 1;
+		/*
+		 * This fence is not at all correct, but it increases the
+		 * chance that in_use is detected by another thread without
+		 * much runtime cost. */
+		atomic_thread_fence(memory_order_acq_rel);
+	}
+
+	return 0;
+}
+
+static inline int mlx5_spin_unlock(struct mlx5_spinlock *lock)
+{
+	if (lock->need_lock)
+		return pthread_spin_unlock(&lock->lock);
+
+	lock->in_use = 0;
+
+	return 0;
+}
+
+void mmio_wc_spinlock(pthread_spinlock_t *lock)
+{
+	pthread_spin_lock(lock);
+#if !defined(__i386__) && !defined(__x86_64__)
+	/* For x86 the serialization within the spin lock is enough to
+	 * strongly order WC and other memory types. */
+	mmio_wc_start();
+#endif
+}
+
+void mlx5_bf_copy(uint64_t *dst, const uint64_t *src, unsigned bytecnt,
+			 struct mlx5_qp *qp)
+{
+	do {
+		// mmio_memcpy_x64(dst, src, 64);
+
+
+		uintptr_t *dst_p = dst;
+
+		/* Caller must guarantee:
+			assert(bytecnt != 0);
+			assert((bytecnt % 64) == 0);
+			assert(((uintptr_t)dest) % __alignof__(*dst) == 0);
+			assert(((uintptr_t)src) % __alignof__(*dst) == 0);
+		*/
+
+		/* Use the native word size for the copy */
+		// if (sizeof(*dst_p) == 8) {
+		// 	const __be64 *src_p = src;
+		// 	void *addr;
+		// 	__be64 val;
+
+		// 	do {
+		// 		/* Do 64 bytes at a time */
+		// 		addr = dst_p++;
+		// 		val = *src_p++;
+		// 		__be32 first_dword = htonl(htonl64(val) >> 32);
+		// 		__be32 second_dword = htonl(htonl64(val));
+
+		// 		*(volatile uint32_t *)addr = (uint32_t)first_dword;
+		// 		*(volatile uint32_t *)(addr+4) = (uint32_t)second_dword;
+
+		// 		bytecnt -= sizeof(*dst_p);
+		// 	} while (bytecnt > 0);
+		// } 
+
+
+		bytecnt -= 64;
+		dst += 8;
+		src += 8;
+		if (unlikely(src == qp->sq.qend))
+			src = qp->sq_start;
+	} while (bytecnt > 0);
+}
+
+void mmio_memcpy_x64(void *dest, const void *src, size_t bytecnt)
+{
+	uintptr_t *dst_p = dest;
+
+	/* Caller must guarantee:
+	    assert(bytecnt != 0);
+	    assert((bytecnt % 64) == 0);
+	    assert(((uintptr_t)dest) % __alignof__(*dst) == 0);
+	    assert(((uintptr_t)src) % __alignof__(*dst) == 0);
+	*/
+
+	/* Use the native word size for the copy */
+	if (sizeof(*dst_p) == 8) {
+		const __be64 *src_p = src;
+		void *addr;
+		__be64 val;
+
+		do {
+			/* Do 64 bytes at a time */
+			addr = dst_p++;
+			val = *src_p++;
+			__be32 first_dword = htonl(htonl64(val) >> 32);
+			__be32 second_dword = htonl(htonl64(val));
+
+			*(volatile uint32_t *)addr = (uint32_t)first_dword;
+			*(volatile uint32_t *)(addr+4) = (uint32_t)second_dword;
+
+			bytecnt -= sizeof(*dst_p);
+		} while (bytecnt > 0);
+	} else if (sizeof(*dst_p) == 4) {
+		const __be32 *src_p = src;
+
+		do {
+			*(volatile uint32_t *)dst_p++ = ( uint32_t)*src_p++;
+			*(volatile uint32_t *)dst_p++ = ( uint32_t)*src_p++;
+			bytecnt -= 2 * sizeof(*dst_p);
+		} while (bytecnt > 0);
+	}
+}
+
+void post_send_db(struct mlx5_qp *qp, struct mlx5_bf *bf,
+				int nreq, int inl, int size, void *ctrl)
+{
+
+	if (unlikely(!nreq))
+		return;
+	qp->sq.head += nreq;
+	qp->db[MLX5_SND_DBR] = htobe32(qp->sq.cur_post & 0xffff);	
+	void *addr2;
+	__be64 val;
+	addr2 = bf->reg + bf->offset;
+	val = *(__be64 *)ctrl;
+	__be32 first_dword = htonl(htonl64(val) >> 32);
+	__be32 second_dword = htonl(htonl64(val));
+
+	*(volatile uint32_t *)addr2 = (uint32_t)first_dword;
+	*(volatile uint32_t *)(addr2+4) = (uint32_t)second_dword;
+
+	bf->offset ^= bf->buf_size;
+
+}
+
+int my_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+				  struct ibv_send_wr **bad_wr)
+{
+	struct mlx5_qp *qp = to_mqp(ibqp);
+	void *seg;
+	struct mlx5_wqe_eth_seg *eseg;
+	struct mlx5_wqe_ctrl_seg *ctrl = NULL;
+	struct mlx5_wqe_data_seg *dpseg;
+	struct mlx5_sg_copy_ptr sg_copy_ptr = {.index = 0, .offset = 0};
+	int nreq;
+	int inl = 0;
+	int err = 0;
+	int size = 0;
+	int i;
+	unsigned idx;
+	uint8_t opmod = 0;
+	struct mlx5_bf *bf = qp->bf;
+	void *qend = qp->sq.qend;
+	uint32_t mlx5_opcode;
+	struct mlx5_wqe_xrc_seg *xrc;
+	uint8_t fence;
+	uint8_t next_fence;
+	uint32_t max_tso = 0;
+	FILE *fp = to_mctx(ibqp->context)->dbg_fp; /* The compiler ignores in non-debug mode */
+
+	// next_fence = qp->fm_cache;
+
+	// for (nreq = 0; wr; ++nreq, wr = wr->next) {
+		
+
+		// if (wr->send_flags & IBV_SEND_FENCE)
+		// 	fence = MLX5_WQE_CTRL_FENCE;
+		// else
+		// 	fence = next_fence;
+		// next_fence = 0;
+		idx = qp->sq.cur_post & (qp->sq.wqe_cnt - 1);
+		printf("qp->buf.buf: 0x%llx, qp->sq_start: 0x%llx\n", qp->buf.buf, qp->sq_start);
+		printf("qp->bf->buf_size: 0x%llx\n", qp->bf->buf_size);
+		ctrl = seg = qp->sq_start + (idx << MLX5_SEND_WQE_SHIFT); // mlx5_get_send_wqe(qp, idx);
+		*(uint32_t *)(seg + 8) = 0;
+		ctrl->imm = 0; // send_ieth(wr);
+		ctrl->fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE;
+		// qp->sq_signal_bits | fence |
+		// 	(wr->send_flags & IBV_SEND_SIGNALED ?
+		// 	 MLX5_WQE_CTRL_CQ_UPDATE : 0) |
+		// 	(wr->send_flags & IBV_SEND_SOLICITED ?
+		// 	 MLX5_WQE_CTRL_SOLICITED : 0);
+
+		seg += sizeof(*ctrl);
+		size = sizeof(*ctrl)/ 16;
+		qp->sq.wr_data[idx] = 0;
+
+		
+		if(wr->opcode == IBV_WR_RDMA_READ || wr->opcode == IBV_WR_RDMA_WRITE){
+			((struct mlx5_wqe_raddr_seg *) seg)->raddr    = htonl64(wr->wr.rdma.remote_addr);
+			((struct mlx5_wqe_raddr_seg *) seg)->rkey     = htonl(wr->wr.rdma.rkey);
+			((struct mlx5_wqe_raddr_seg *) seg)->reserved = 0;
+			seg = seg + sizeof(struct mlx5_wqe_raddr_seg);
+			size += sizeof(struct mlx5_wqe_raddr_seg) / 16;
+    	}
+
+		
+		dpseg = seg;
+
+		dpseg->byte_count = htonl(wr->sg_list->length);
+		dpseg->lkey       = htonl(wr->sg_list->lkey);
+		dpseg->addr       = htonl64(wr->sg_list->addr);
+
+		size += sizeof(struct mlx5_wqe_data_seg) / 16;
+		
+		mlx5_opcode = wr->opcode*2 + 8 - 2*(wr->opcode == 2); // mlx5_ib_opcode[wr->opcode];
+		ctrl->opmod_idx_opcode = htonl(((qp->sq.cur_post & 0xffff) << 8) | mlx5_opcode | (opmod << 24));
+		ctrl->qpn_ds = htonl(size | (ibqp->qp_num << 8));
+
+		qp->sq.wrid[idx] = wr->wr_id;
+		qp->sq.wqe_head[idx] = qp->sq.head;
+		qp->sq.cur_post += (size * 16 + 64 - 1) / 64;; //DIV_ROUND_UP(size * 16, MLX5_SEND_WQE_BB);
+
+
+	nreq = 1;
+
+out:
+	// qp->fm_cache = next_fence;
+	// post_send_db(qp, bf, nreq, inl, size, ctrl);
+
+	if (unlikely(!nreq))
+		return;
+	qp->sq.head += nreq;
+	qp->db[MLX5_SND_DBR] = htobe32(qp->sq.cur_post & 0xffff);	
+	void *addr2;
+	__be64 val;
+	addr2 = bf->reg + bf->offset;
+	val = *(__be64 *)ctrl;
+	__be32 first_dword = htonl(htonl64(val) >> 32);
+	__be32 second_dword = htonl(htonl64(val));
+
+	*(volatile uint32_t *)addr2 = (uint32_t)first_dword;
+	*(volatile uint32_t *)(addr2+4) = (uint32_t)second_dword;
+
+	bf->offset ^= bf->buf_size;
+
+
+	return err;
+}
+
+
 
 
 // __device__ 
