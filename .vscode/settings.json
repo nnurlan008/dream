@@ -26,6 +26,8 @@
         "tuple": "cpp",
         "type_traits": "cpp",
         "random": "cpp",
-        "rdma_cma.h": "c"
+        "rdma_cma.h": "c",
+        "stdio.h": "c",
+        "stdlib.h": "c"
     }
 }
