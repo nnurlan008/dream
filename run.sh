@@ -3,10 +3,10 @@ make
 var=13
 substring="message from passive/server side"
 
-for i in $(seq 231000 10000000)
+for i in $(seq 1 10)
 do
     # echo "Iteration $i"
-    output="$(sudo ./gpu-client read 192.168.1.155 9700 $i)"
+    output="$(sudo ./gpu-client read 192.168.1.155 9700 50)"
     # echo "newline: \n\n"
 
     if [[ $output == *"$substring"* ]]; then

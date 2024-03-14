@@ -190,7 +190,7 @@ void on_completion(struct ibv_wc *wc)
     // if (conn->recv_msg->type == MSG_MR) {
       memcpy(&conn->peer_mr, &conn->recv_msg->data.mr, sizeof(conn->peer_mr));
       post_receives(conn); /* only rearm for MSG_MR */
-      printf("received peer's MR");
+      printf("received peer's MR ");
       // if (conn->send_state == SS_INIT) {/* received peer's MR before sending ours, so send ours back */
         send_mr(conn);
         printf(" before sending ours\n");

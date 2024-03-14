@@ -14,11 +14,14 @@ CUDA_LIBS= -I $(CUDA_ROOT)/lib64 #-I $(nvidia_driver)/kernel/nvidia
 CUDA_INCLUDE=-I $(CUDA_ROOT)/include -I$(CUDA_SDK_ROOT)/C/common/inc 
 NVCC=$(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_35,arch=compute_35 $(CUDA_INCLUDE)
 
-APPS    := rdma-client rdma-server cpu-client gpu-client
+APPS    := rdma-client rdma-server cpu-client gpu-client uvm_experiment
 
 all: ${APPS}
 gpu-client:  gpu-client.o
 	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@ $(add_flags)
+
+uvm_experiment:  uvm_experiment.o
+	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@ 
 
 # gpu-client.o: gpu-utils.h
 
@@ -36,6 +39,9 @@ cpu-client: cpu-client.o gpu-utils.o
 
 gpu-client.o: gpu-client.cu
 	$(NVCC) -dc gpu-client.cu -o gpu-client.o -libverbs -lrdmacm -lcuda -lcudart $(CUDA_LIBS) $(add_flags)
+
+uvm_experiment.o: uvm_experiment.cu
+	$(NVCC) -dc uvm_experiment.cu -o uvm_experiment.o -libverbs -lrdmacm -lcuda -lcudart $(CUDA_LIBS)
 	
 # $(add_flags) $(CUDA_LIBS) 
 

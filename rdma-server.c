@@ -99,7 +99,7 @@ int on_connect_request(struct rdma_cm_id *id)
   struct connection *context = (struct connection *) id->context;
   printf("context)->rdma_remote_region: 0x%llx context)->rdma_local_region: 0x%llx\n", 
           context->rdma_remote_region, context->rdma_local_region);
-  printf("rkey: %u", context->rdma_remote_mr->rkey);
+  printf("rkey: %u\n", context->rdma_remote_mr->rkey);
   build_params(&cm_params);
   // printf("sizeof(get_local_message_region(id->context)): %d\n", sizeof(context->rdma_remote_region));
   // context->rdma_remote_region[RDMA_BUFFER_SIZE-1] = '\n';
