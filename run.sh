@@ -2,6 +2,8 @@
 make
 var=13
 substring="message from passive/server side"
+file_path="output.txt"
+
 
 for i in $(seq 1 10)
 do

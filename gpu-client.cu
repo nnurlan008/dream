@@ -45,7 +45,7 @@ void delay(int number_of_seconds)
 
 
 #define mr_buffer_gpu 1
-#define control_on_cpu 1 // 1: qp and cq on cpu, otherwise on gpu
+#define control_on_cpu 0 // 1: qp and cq on cpu, otherwise on gpu
 #define wq_buffer_gpu !control_on_cpu
 #define cq_buffer_gpu !control_on_cpu
 
@@ -577,14 +577,14 @@ int main(int argc, char **argv)
   cudaError_t cudaStatus1;
 
   cudaStatus1 = cudaHostRegister(qp->bf->reg,  8, cudaHostRegisterIoMemory);
-    if (cudaStatus1 != cudaSuccess and cudaStatus1 != cudaErrorHostMemoryAlreadyRegistered) {
-      exit(0);
-    }
-    cudaStatus1 = cudaHostGetDevicePointer(&bf_reg, qp->bf->reg, 0);
-    if (cudaStatus1 != cudaSuccess) {
-      printf("cudaHostGetDevicePointer successful with no error: %s\n", cudaGetErrorString(cudaStatus1));
-      exit(0);
-    }
+  if (cudaStatus1 != cudaSuccess and cudaStatus1 != cudaErrorHostMemoryAlreadyRegistered) {
+    exit(0);
+  }
+  cudaStatus1 = cudaHostGetDevicePointer(&bf_reg, qp->bf->reg, 0);
+  if (cudaStatus1 != cudaSuccess) {
+    printf("cudaHostGetDevicePointer successful with no error: %s\n", cudaGetErrorString(cudaStatus1));
+    exit(0);
+  }
     
 
   /*poll*/
@@ -769,7 +769,7 @@ int main(int argc, char **argv)
       
 
       gettimeofday(&start2, NULL);
-      while(cpu_poll_cq(s_ctx->cq, 1, &wc) != 0);
+      while(ibv_poll_cq(s_ctx->cq, 1, &wc) == 0);
       gettimeofday(&end2, NULL);
       time_taken1 = (end1.tv_usec - start1.tv_usec);
       // time_taken1 = (time_taken1 + (end1.tv_usec - 
@@ -5080,13 +5080,19 @@ int cpu_benchmark_whole(struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *w
 
   clock_t poll = 0, post = 0;
   for (int i = 0; i < num_of_packets; i++){
+      // printf("timer[i]: %d\n", timer[i]);
+      // printf("timer[i+1]: %d\n", timer[i+1]);
+      // printf("timer[i+2]: %d\n", timer[i+2]);
+      // printf("timer[i+3]: %d\n", timer[i+3]);
   
       poll += timer[4*i+3] - timer[4*i+2];
       post += timer[4*i+1] - timer[4*i];
   
   }
   printf("/*************************************************************/\n");
-  printf("Test results for %d packets with %d bytes\n", num_of_packets, mesg_size*4);
+  printf("Test results for %d packets each with %d bytes\n", num_of_packets, mesg_size*4);
+
+  printf("post: %d, poll: %d\n", post, poll );
 
   float freq_post = (float)1/((float)devProp.clockRate*1000);
 	float g_usec_post = (float)((float)1/(devProp.clockRate*1000))*((post)) * 1000000;
@@ -5096,12 +5102,12 @@ int cpu_benchmark_whole(struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *w
 	float g_usec__poll = (float)((float)1/(devProp.clockRate*1000))*((poll)) * 1000000;
 	printf("POLLING - INTERNAL MEASUREMENT: %f useconds to execute \n", g_usec__poll / num_of_packets);
 
-  float total_usec = g_usec_post + g_usec__poll;
+  float total_usec = /*g_usec_post +*/ g_usec__poll;
   printf("Total time: %f useconds for %d bytes data\n", total_usec, num_of_packets*mesg_size*4);
 
-  float throughtput = (float)(num_of_packets*mesg_size*4*8)/(total_usec*1e-6*1e9);
+  float throughtput = (float)(num_of_packets*mesg_size*4)/(total_usec*1e-6*1e9);
   *bandwidth = throughtput;
-  printf("Throughput: %f Gbps\n", throughtput);
+  printf("Throughput: %f GBps\n", throughtput);
   printf("/*************************************************************/\n");
 }
 
@@ -5206,16 +5212,16 @@ __device__ int poll( void *cq_buf, struct ibv_wc *wc, uint32_t *cons_index,
    
 	// timer[0] = clock();
   uint32_t *gpu_dbrec = (uint32_t *) cq_dbrec;
-  int npolled=0;
-	int err = 0;
+  // int npolled=0;
+	// int err = 0;
 	void *cqe;
 	struct mlx5_cqe64 *cqe64;
 	int cqe_ver = 1;
-	struct mlx5_wq *wq;
-	uint16_t wqe_ctr;
-	uint32_t qpn;
-	int idx;
-	uint8_t opcode;
+	// struct mlx5_wq *wq;
+	// uint16_t wqe_ctr;
+	// uint32_t qpn;
+	// int idx;
+	// uint8_t opcode;
 	uint32_t cons_index_dev = *cons_index;
     
   cqe = cq_buf + (cons_index_dev & ibv_cqe) * cqe_sz;
@@ -5227,38 +5233,41 @@ __device__ int poll( void *cq_buf, struct ibv_wc *wc, uint32_t *cons_index,
     // printf("cons_index_dev: %d\n", cons_index_dev);
     // printf("ibv_cqe: %d\n", ibv_cqe);
     // printf("cqe_sz: %d\n", cqe_sz);
-  if (!cond1) {
-    err = CQ_EMPTY;
-    gpu_dbrec[0] = htonl(cons_index_dev & 0xffffff);
-    // printf("cond1: %d\n", cond1);
-    return err; 
-  } 
+  while(((cqe64->op_own != 240) && !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1))))==0){
+      gpu_dbrec[0] = htonl(cons_index_dev & 0xffffff);
+    }
+  // if (!cond1) {
+  //   err = CQ_EMPTY;
+  //   gpu_dbrec[0] = htonl(cons_index_dev & 0xffffff);
+  //   // printf("cond1: %d\n", cond1);
+  //   return err; 
+  // } 
   
   (*cons_index)++;
 
 
-  qpn = htonl(cqe64->sop_drop_qpn) & 0xffffff;
-  wc->wc_flags = 0;
-  wc->qp_num = qpn;
-  opcode = cqe64->op_own >> 4;
+  // qpn = htonl(cqe64->sop_drop_qpn) & 0xffffff;
+  // wc->wc_flags = 0;
+  wc->qp_num =  htonl(cqe64->sop_drop_qpn) & 0xffffff;
+  // opcode = cqe64->op_own >> 4;
 
-  wq = (struct mlx5_wq *) dev_wq; // &mqp->sq;
-  wqe_ctr = htons (cqe64->wqe_counter);
-  idx = wqe_ctr & (wq->wqe_cnt - 1);
+  // wq = (struct mlx5_wq *) dev_wq; // &mqp->sq;
+  // wqe_ctr = htons (cqe64->wqe_counter);
+  // idx = wqe_ctr & (wq->wqe_cnt - 1);
   // if(htonl(cqe64->sop_drop_qpn) >> 24 == MLX5_OPCODE_RDMA_WRITE){
   //   wc->opcode    = (ibv_wc_opcode) (MLX5_OPCODE_RDMA_WRITE >> 3); // IBV_WC_RDMA_WRITE;
   // }
   // else {
-    wc->opcode    = (ibv_wc_opcode) ((htonl(cqe64->sop_drop_qpn) >> 24) >> 3); // IBV_WC_RDMA_READ;
-    wc->byte_len  = htonl(cqe64->byte_cnt);
+  //   wc->opcode    = (ibv_wc_opcode) ((htonl(cqe64->sop_drop_qpn) >> 24) >> 3); // IBV_WC_RDMA_READ;
+  //   wc->byte_len  = htonl(cqe64->byte_cnt);
   // }
-  wc->wr_id = wrid_0; // wq->wrid[idx];
-  wc->status = (ibv_wc_status) err;
-  wq->tail = wqe_head_0 + 1; // wq->wqe_head[idx] + 1;
+  // wc->wr_id = wrid_0; // wq->wrid[idx];
+  wc->status = (ibv_wc_status) IBV_WC_SUCCESS;
+  // wq->tail = wqe_head_0 + 1; // wq->wqe_head[idx] + 1;
   
-out1:
+// out1:
   gpu_dbrec[0] = htonl((*cons_index) & 0xffffff);
-  return err; 
+  return 0;// err; 
 }
 
 __device__ int post(unsigned int qpbf_bufsize,
@@ -5367,16 +5376,29 @@ __global__ void multiple_packets(int num_of_packets,
 
   for(int p_num=0 ;  p_num < num_of_packets ; p_num++)
   {
-
-    timer[4*p_num] = clock();
+    for(int i = 0; i < mesg_size; i++)
+      addr[i] = 0;
+    int cons_index_dev = *(int *)cons_index;
+    uint32_t *gpu_dbrec = (uint32_t *) dev_cq_dbrec;
+    void *cqe = cq_buf + (cons_index_dev & ibv_cqe) * cqe_sz;
+    struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *)((cqe_sz == 64) ? cqe : cqe + 64);
+    int cond1 = (cqe64->op_own != 240) &&
+    !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1)));
+    timer[4*p_num] = clock64();
     int ret = post(qpbf_bufsize, wr.wr.rdma.remote_addr, wr.wr.rdma.rkey,
             sge.length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
             qp_num, wr_id, &wr, qp_buf,
             dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, dev_wrid1, bf_reg);
-    timer[4*p_num+1] = clock();
-
+    timer[4*p_num+1] = clock64();
+  
+ 
+    // printf("cqe64->op_own: %d\n", cqe64->op_own);
     
-    timer[4*p_num+2] = clock();
+    // printf("cons_index_dev: %d\n", cons_index_dev);
+    // printf("ibv_cqe: %d\n", ibv_cqe);
+    // printf("cqe_sz: %d\n", cqe_sz);
+  
+    timer[4*p_num+2] = clock64();
     // while(poll(cq_buf /* the CQ, we got notification for */, 
     //     &wc1, // twc/* where to store */,
     //     (uint32_t *) cons_index,
@@ -5389,10 +5411,17 @@ __global__ void multiple_packets(int num_of_packets,
     //     dev_wrid, wrid_0, wqe_head_0,
     //     dev_wq) < 0);
         // printf("gpu polling\n");
-    while (addr[mesg_size-1] == 0); 
-    
-    timer[4*p_num+3] = clock();
-
+    // while (addr[mesg_size-1] == 0);
+    while(!((cqe64->op_own != 240) &&
+    !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1))))); 
+    timer[4*p_num+3] = clock64();
+   (*(int *)cons_index)++;
+    wc1.qp_num =  htonl(cqe64->sop_drop_qpn) & 0xffffff;
+    wc1.status = (ibv_wc_status) IBV_WC_SUCCESS;
+    gpu_dbrec[0] = htonl((*(int *)cons_index) & 0xffffff);
+    printf("addr[mesg_size-1]: %d\n", addr[mesg_size-1]);
+    // for(int i = 0; i < mesg_size; i++)
+    //   addr[i] = 0;
     if(wc1.status != IBV_WC_SUCCESS){
       printf("WC1 status is not success: %d\n", wc1.status);
       return;
@@ -5420,5 +5449,5 @@ __global__ void multiple_packets(int num_of_packets,
     // }
     __syncthreads();
 
-    timer[4*num_of_packets] = clock();
+    // timer[4*num_of_packets] = clock();
 }
