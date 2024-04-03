@@ -1,0 +1,530 @@
+initializing CUDA...
+CUDA device 0: PCIe address is 04:00
+CUDA device 1: PCIe address is 03:00
+[pid = 195379, dev = 0] device name = [Tesla K40c]
+free memory: 11358, total_memory: 11441
+Function: main line number: 135
+ip: 192.168.1.155
+devpath: rdma_cm 
+devpath: /dev/infiniband/rdma_cm 
+devpath: rdma_cm 
+devpath: /dev/infiniband/rdma_cm 
+s_ctx->cqbuf[i]: 0xb00c00000
+s_ctx->cqbuf[i]: 0xb00c01000
+s_ctx->cqbuf[i]: 0xb00c02000
+s_ctx->cqbuf[i]: 0xb00c03000
+s_ctx->cqbuf[i]: 0xb00c04000
+s_ctx->cqbuf[i]: 0xb00c05000
+s_ctx->cqbuf[i]: 0xb00c06000
+s_ctx->cqbuf[i]: 0xb00c07000
+s_ctx->cqbuf[i]: 0xb00c08000
+s_ctx->cqbuf[i]: 0xb00c09000
+s_ctx->cqbuf[i]: 0xb00c0a000
+s_ctx->cqbuf[i]: 0xb00c0b000
+s_ctx->cqbuf[i]: 0xb00c0c000
+s_ctx->cqbuf[i]: 0xb00c0d000
+s_ctx->cqbuf[i]: 0xb00c0e000
+s_ctx->cqbuf[i]: 0xb00c0f000
+s_ctx->cqbuf[i]: 0xb00c10000
+s_ctx->cqbuf[i]: 0xb00c11000
+s_ctx->cqbuf[i]: 0xb00c12000
+s_ctx->cqbuf[i]: 0xb00c13000
+s_ctx->cqbuf[i]: 0xb00c14000
+s_ctx->cqbuf[i]: 0xb00c15000
+s_ctx->cqbuf[i]: 0xb00c16000
+s_ctx->cqbuf[i]: 0xb00c17000
+s_ctx->cqbuf[i]: 0xb00c18000
+s_ctx->cqbuf[i]: 0xb00c19000
+s_ctx->cqbuf[i]: 0xb00c1a000
+s_ctx->cqbuf[i]: 0xb00c1b000
+s_ctx->cqbuf[i]: 0xb00c1c000
+s_ctx->cqbuf[i]: 0xb00c1d000
+s_ctx->cqbuf[i]: 0xb00c1e000
+s_ctx->cqbuf[i]: 0xb00c1f000
+s_ctx->cqbuf[i]: 0xb00c20000
+s_ctx->cqbuf[i]: 0xb00c21000
+s_ctx->cqbuf[i]: 0xb00c22000
+s_ctx->cqbuf[i]: 0xb00c23000
+s_ctx->cqbuf[i]: 0xb00c24000
+s_ctx->cqbuf[i]: 0xb00c25000
+s_ctx->cqbuf[i]: 0xb00c26000
+s_ctx->cqbuf[i]: 0xb00c27000
+s_ctx->cqbuf[i]: 0xb00c28000
+s_ctx->cqbuf[i]: 0xb00c29000
+s_ctx->cqbuf[i]: 0xb00c2a000
+s_ctx->cqbuf[i]: 0xb00c2b000
+s_ctx->cqbuf[i]: 0xb00c2c000
+s_ctx->cqbuf[i]: 0xb00c2d000
+s_ctx->cqbuf[i]: 0xb00c2e000
+s_ctx->cqbuf[i]: 0xb00c2f000
+s_ctx->cqbuf[i]: 0xb00c30000
+s_ctx->cqbuf[i]: 0xb00c31000
+s_ctx->cqbuf[i]: 0xb00c32000
+s_ctx->cqbuf[i]: 0xb00c33000
+s_ctx->cqbuf[i]: 0xb00c34000
+s_ctx->cqbuf[i]: 0xb00c35000
+s_ctx->cqbuf[i]: 0xb00c36000
+s_ctx->cqbuf[i]: 0xb00c37000
+s_ctx->cqbuf[i]: 0xb00c38000
+s_ctx->cqbuf[i]: 0xb00c39000
+s_ctx->cqbuf[i]: 0xb00c3a000
+s_ctx->cqbuf[i]: 0xb00c3b000
+s_ctx->cqbuf[i]: 0xb00c3c000
+s_ctx->cqbuf[i]: 0xb00c3d000
+s_ctx->cqbuf[i]: 0xb00c3e000
+s_ctx->cqbuf[i]: 0xb00c3f000
+s_ctx->cqbuf[i]: 0xb00c40000
+s_ctx->cqbuf[i]: 0xb00c41000
+s_ctx->cqbuf[i]: 0xb00c42000
+s_ctx->cqbuf[i]: 0xb00c43000
+s_ctx->cqbuf[i]: 0xb00c44000
+s_ctx->cqbuf[i]: 0xb00c45000
+s_ctx->cqbuf[i]: 0xb00c46000
+s_ctx->cqbuf[i]: 0xb00c47000
+s_ctx->cqbuf[i]: 0xb00c48000
+s_ctx->cqbuf[i]: 0xb00c49000
+s_ctx->cqbuf[i]: 0xb00c4a000
+s_ctx->cqbuf[i]: 0xb00c4b000
+s_ctx->cqbuf[i]: 0xb00c4c000
+s_ctx->cqbuf[i]: 0xb00c4d000
+s_ctx->cqbuf[i]: 0xb00c4e000
+s_ctx->cqbuf[i]: 0xb00c4f000
+s_ctx->cqbuf[i]: 0xb00c50000
+s_ctx->cqbuf[i]: 0xb00c51000
+s_ctx->cqbuf[i]: 0xb00c52000
+s_ctx->cqbuf[i]: 0xb00c53000
+s_ctx->cqbuf[i]: 0xb00c54000
+s_ctx->cqbuf[i]: 0xb00c55000
+s_ctx->cqbuf[i]: 0xb00c56000
+s_ctx->cqbuf[i]: 0xb00c57000
+s_ctx->cqbuf[i]: 0xb00c58000
+s_ctx->cqbuf[i]: 0xb00c59000
+s_ctx->cqbuf[i]: 0xb00c5a000
+s_ctx->cqbuf[i]: 0xb00c5b000
+s_ctx->cqbuf[i]: 0xb00c5c000
+s_ctx->cqbuf[i]: 0xb00c5d000
+s_ctx->cqbuf[i]: 0xb00c5e000
+s_ctx->cqbuf[i]: 0xb00c5f000
+s_ctx->cqbuf[i]: 0xb00c60000
+s_ctx->cqbuf[i]: 0xb00c61000
+s_ctx->cqbuf[i]: 0xb00c62000
+s_ctx->cqbuf[i]: 0xb00c63000
+s_ctx->cqbuf[i]: 0xb00c64000
+s_ctx->cqbuf[i]: 0xb00c65000
+s_ctx->cqbuf[i]: 0xb00c66000
+s_ctx->cqbuf[i]: 0xb00c67000
+s_ctx->cqbuf[i]: 0xb00c68000
+s_ctx->cqbuf[i]: 0xb00c69000
+s_ctx->cqbuf[i]: 0xb00c6a000
+s_ctx->cqbuf[i]: 0xb00c6b000
+s_ctx->cqbuf[i]: 0xb00c6c000
+s_ctx->cqbuf[i]: 0xb00c6d000
+s_ctx->cqbuf[i]: 0xb00c6e000
+s_ctx->cqbuf[i]: 0xb00c6f000
+s_ctx->cqbuf[i]: 0xb00c70000
+s_ctx->cqbuf[i]: 0xb00c71000
+s_ctx->cqbuf[i]: 0xb00c72000
+s_ctx->cqbuf[i]: 0xb00c73000
+s_ctx->cqbuf[i]: 0xb00c74000
+s_ctx->cqbuf[i]: 0xb00c75000
+s_ctx->cqbuf[i]: 0xb00c76000
+s_ctx->cqbuf[i]: 0xb00c77000
+s_ctx->cqbuf[i]: 0xb00c78000
+s_ctx->cqbuf[i]: 0xb00c79000
+s_ctx->cqbuf[i]: 0xb00c7a000
+s_ctx->cqbuf[i]: 0xb00c7b000
+s_ctx->cqbuf[i]: 0xb00c7c000
+s_ctx->cqbuf[i]: 0xb00c7d000
+s_ctx->cqbuf[i]: 0xb00c7e000
+s_ctx->cqbuf[i]: 0xb00c7f000
+s_ctx->cqbuf[i]: 0xb00c80000
+s_ctx->cqbuf[i]: 0xb00c81000
+s_ctx->cqbuf[i]: 0xb00c82000
+s_ctx->cqbuf[i]: 0xb00c83000
+s_ctx->cqbuf[i]: 0xb00c84000
+s_ctx->cqbuf[i]: 0xb00c85000
+s_ctx->cqbuf[i]: 0xb00c86000
+s_ctx->cqbuf[i]: 0xb00c87000
+s_ctx->cqbuf[i]: 0xb00c88000
+s_ctx->cqbuf[i]: 0xb00c89000
+s_ctx->cqbuf[i]: 0xb00c8a000
+s_ctx->cqbuf[i]: 0xb00c8b000
+s_ctx->cqbuf[i]: 0xb00c8c000
+s_ctx->cqbuf[i]: 0xb00c8d000
+s_ctx->cqbuf[i]: 0xb00c8e000
+s_ctx->cqbuf[i]: 0xb00c8f000
+s_ctx->cqbuf[i]: 0xb00c90000
+s_ctx->cqbuf[i]: 0xb00c91000
+s_ctx->cqbuf[i]: 0xb00c92000
+s_ctx->cqbuf[i]: 0xb00c93000
+s_ctx->cqbuf[i]: 0xb00c94000
+s_ctx->cqbuf[i]: 0xb00c95000
+s_ctx->cqbuf[i]: 0xb00c96000
+s_ctx->cqbuf[i]: 0xb00c97000
+s_ctx->cqbuf[i]: 0xb00c98000
+s_ctx->cqbuf[i]: 0xb00c99000
+s_ctx->cqbuf[i]: 0xb00c9a000
+s_ctx->cqbuf[i]: 0xb00c9b000
+s_ctx->cqbuf[i]: 0xb00c9c000
+s_ctx->cqbuf[i]: 0xb00c9d000
+s_ctx->cqbuf[i]: 0xb00c9e000
+s_ctx->cqbuf[i]: 0xb00c9f000
+s_ctx->cqbuf[i]: 0xb00ca0000
+s_ctx->cqbuf[i]: 0xb00ca1000
+s_ctx->cqbuf[i]: 0xb00ca2000
+s_ctx->cqbuf[i]: 0xb00ca3000
+s_ctx->cqbuf[i]: 0xb00ca4000
+s_ctx->cqbuf[i]: 0xb00ca5000
+s_ctx->cqbuf[i]: 0xb00ca6000
+s_ctx->cqbuf[i]: 0xb00ca7000
+s_ctx->cqbuf[i]: 0xb00ca8000
+s_ctx->cqbuf[i]: 0xb00ca9000
+s_ctx->cqbuf[i]: 0xb00caa000
+s_ctx->cqbuf[i]: 0xb00cab000
+s_ctx->cqbuf[i]: 0xb00cac000
+s_ctx->cqbuf[i]: 0xb00cad000
+s_ctx->cqbuf[i]: 0xb00cae000
+s_ctx->cqbuf[i]: 0xb00caf000
+s_ctx->cqbuf[i]: 0xb00cb0000
+s_ctx->cqbuf[i]: 0xb00cb1000
+s_ctx->cqbuf[i]: 0xb00cb2000
+s_ctx->cqbuf[i]: 0xb00cb3000
+s_ctx->cqbuf[i]: 0xb00cb4000
+s_ctx->cqbuf[i]: 0xb00cb5000
+s_ctx->cqbuf[i]: 0xb00cb6000
+s_ctx->cqbuf[i]: 0xb00cb7000
+s_ctx->cqbuf[i]: 0xb00cb8000
+s_ctx->cqbuf[i]: 0xb00cb9000
+s_ctx->cqbuf[i]: 0xb00cba000
+s_ctx->cqbuf[i]: 0xb00cbb000
+s_ctx->cqbuf[i]: 0xb00cbc000
+s_ctx->cqbuf[i]: 0xb00cbd000
+s_ctx->cqbuf[i]: 0xb00cbe000
+s_ctx->cqbuf[i]: 0xb00cbf000
+s_ctx->cqbuf[i]: 0xb00cc0000
+s_ctx->cqbuf[i]: 0xb00cc1000
+s_ctx->cqbuf[i]: 0xb00cc2000
+s_ctx->cqbuf[i]: 0xb00cc3000
+s_ctx->cqbuf[i]: 0xb00cc4000
+s_ctx->cqbuf[i]: 0xb00cc5000
+s_ctx->cqbuf[i]: 0xb00cc6000
+s_ctx->cqbuf[i]: 0xb00cc7000
+s_ctx->cqbuf[i]: 0xb00cc8000
+s_ctx->cqbuf[i]: 0xb00cc9000
+s_ctx->cqbuf[i]: 0xb00cca000
+s_ctx->cqbuf[i]: 0xb00ccb000
+s_ctx->cqbuf[i]: 0xb00ccc000
+s_ctx->cqbuf[i]: 0xb00ccd000
+s_ctx->cqbuf[i]: 0xb00cce000
+s_ctx->cqbuf[i]: 0xb00ccf000
+s_ctx->cqbuf[i]: 0xb00cd0000
+s_ctx->cqbuf[i]: 0xb00cd1000
+s_ctx->cqbuf[i]: 0xb00cd2000
+s_ctx->cqbuf[i]: 0xb00cd3000
+s_ctx->cqbuf[i]: 0xb00cd4000
+s_ctx->cqbuf[i]: 0xb00cd5000
+s_ctx->cqbuf[i]: 0xb00cd6000
+s_ctx->cqbuf[i]: 0xb00cd7000
+s_ctx->cqbuf[i]: 0xb00cd8000
+s_ctx->cqbuf[i]: 0xb00cd9000
+s_ctx->cqbuf[i]: 0xb00cda000
+s_ctx->cqbuf[i]: 0xb00cdb000
+s_ctx->cqbuf[i]: 0xb00cdc000
+s_ctx->cqbuf[i]: 0xb00cdd000
+s_ctx->cqbuf[i]: 0xb00cde000
+s_ctx->cqbuf[i]: 0xb00cdf000
+s_ctx->cqbuf[i]: 0xb00ce0000
+s_ctx->cqbuf[i]: 0xb00ce1000
+s_ctx->cqbuf[i]: 0xb00ce2000
+s_ctx->cqbuf[i]: 0xb00ce3000
+s_ctx->cqbuf[i]: 0xb00ce4000
+s_ctx->cqbuf[i]: 0xb00ce5000
+s_ctx->cqbuf[i]: 0xb00ce6000
+s_ctx->cqbuf[i]: 0xb00ce7000
+s_ctx->cqbuf[i]: 0xb00ce8000
+s_ctx->cqbuf[i]: 0xb00ce9000
+s_ctx->cqbuf[i]: 0xb00cea000
+s_ctx->cqbuf[i]: 0xb00ceb000
+s_ctx->cqbuf[i]: 0xb00cec000
+s_ctx->cqbuf[i]: 0xb00ced000
+s_ctx->cqbuf[i]: 0xb00cee000
+s_ctx->cqbuf[i]: 0xb00cef000
+s_ctx->cqbuf[i]: 0xb00cf0000
+s_ctx->cqbuf[i]: 0xb00cf1000
+s_ctx->cqbuf[i]: 0xb00cf2000
+s_ctx->cqbuf[i]: 0xb00cf3000
+s_ctx->cqbuf[i]: 0xb00cf4000
+s_ctx->cqbuf[i]: 0xb00cf5000
+s_ctx->cqbuf[i]: 0xb00cf6000
+s_ctx->cqbuf[i]: 0xb00cf7000
+s_ctx->cqbuf[i]: 0xb00cf8000
+s_ctx->cqbuf[i]: 0xb00cf9000
+s_ctx->cqbuf[i]: 0xb00cfa000
+s_ctx->cqbuf[i]: 0xb00cfb000
+s_ctx->cqbuf[i]: 0xb00cfc000
+s_ctx->cqbuf[i]: 0xb00cfd000
+s_ctx->cqbuf[i]: 0xb00cfe000
+s_ctx->cqbuf[i]: 0xb00cff000
+MY function name: rdma_get_cm_event, line: 2610 2610
+devpath: uverbs0 
+devpath: /dev/infiniband/uverbs0 
+address resolved.
+Function: build_context line number: 145
+Function name: mlx5_alloc_qp_uar, line number: 385
+Function: build_connection line number: 253
+s_ctx->gpu_buf_size: 3145728
+
+Function: connect line number: 478
+MY function name: rdma_get_cm_event, line: 2610 2610
+Function: connect line number: 482
+route resolved.
+Function: on_route_resolved line number: 306 ret: 0
+Function: connect line number: 487
+MY function name: rdma_get_cm_event, line: 2610 2610
+Function: connect line number: 490
+Function name: on_connection, line number: 318
+Function: connect line number: 495
+Function: connect line number: 501 wc.opcode: 21972
+Function: connect line number: 502
+polling starts here
+receive completed
+wc.opcode: 128
+receive completed
+Function: connect line number: 508 
+Function: connect line number: 511 conn->recv_msg->data.mr.addr: 0x7f2acf1fe010
+Function: connect line number: 512 conn->recv_msg->data.mr.rkey: 114333
+polling starts here
+receive completed
+wc.opcode: 128
+receive completed
+Function name: connect, line number: 558
+Function name: connect, line number: 559 conn->peer_mr: 76399 buffer->target_lid: 0
+Function name: mlx5_alloc_qp_uar, line number: 385
+Function name: mlx5_alloc_qp_uar, line number: 385
+Function name: mlx5_alloc_qp_uar, line number: 385
+Function name: mlx5_alloc_qp_uar, line number: 385
+Function name: mlx5_alloc_qp_uar, line number: 385
+Function name: mlx5_alloc_qp_uar, line number: 385
+Function name: mlx5_alloc_qp_uar, line number: 385
+Function name: connect, line number: 587
+found at index 0 
+254: 128: 0: 0: 0: 0: 0: 0: 234: 235: 211: 255: 254: 203: 45: 44: the entry is 0
+Function name: connect, line number: 593
+polling starts here
+send completed
+QP info sent; qp_num: 76655
+Function name: connect, line number: 698
+Function name: connect, line number: 713
+Function name: host_gpu_post_send, line number: 1008 bf->uar: 0x7f9a2257b000
+cudaHostRegister successful for address 0x7f9a2257b000: no error and i: 4096
+cudaHostGetDevicePointer successful with no error: no error
+Function name: host_gpu_post_send, line number: 1186 &qp->sq: 0x55d44438d448
+Function name: host_gpu_post_send, line number: 1188 cudaStatus: 0
+Function name: host_gpu_post_send, line number: 1194 cudaStatus: 0
+Function name: host_gpu_post_send, line number: 1202 cudaStatus: 0
+Function name: host_gpu_post_send, line number: 1211 cudaStatus: 0
+Function name: host_gpu_post_send, line number: 1217 cudaStatus: 0
+Function name: host_gpu_post_send, line number: 1221 cudaStatus: 0
+Function name: host_gpu_post_send, line number: 1229 cuda_success: 0
+Function name: host_gpu_post_send, line number: 1243 cuda_success: 0
+POST - INTERNAL MEASUREMENT: 43.022816 useconds to execute 
+gpu code running
+cqe64->op_own: 0
+wc->status: 0
+gpu code running
+gpu code running
+gpu code running dev
+
+
+Gpu memory read: 2, 2
+
+Function name: connect, line number: 724
+Function name: prepare_post_poll_content, line number: 2024
+Function name: prepare_post_poll_content, line number: 2036
+Function name: prepare_post_poll_content, line number: 2052
+Function name: prepare_post_poll_content, line number: 2084
+Function name: main, line number: 149
+thr_per_blk: 1024, blk_in_grid: 256
+line number 233
+ret1: 0
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+blockIdx.x: 10 a[11263]: 0
+blockIdx.x: 5 a[6143]: 0
+blockIdx.x: 13 a[14335]: 0
+blockIdx.x: 8 a[9215]: 0
+inside post
+blockIdx.x: 14 a[15359]: 0
+blockIdx.x: 9 a[10239]: 0
+blockIdx.x: 0 a[1023]: 0
+blockIdx.x: 3 a[4095]: 0
+blockIdx.x: 4 a[5119]: 0
+blockIdx.x: 11 a[12287]: 0
+a[11263]: 0
+a[14335]: 0
+a[6143]: 0
+blockIdx.x: 12 a[13311]: 0
+a[9215]: 0
+a[15359]: 0
+blockIdx.x: 6 a[7167]: 0
+a[10239]: 2
+blockIdx.x: 7 a[8191]: 0
+a[1023]: 0
+a[4095]: 0
+blockIdx.x: 1 a[2047]: 0
+a[5119]: 2
+blockIdx.x: 2 a[3071]: 0
+a[12287]: 2
+a[14335]: 0
+a[11263]: 0
+a[6143]: 0
+a[9215]: 0
+a[15359]: 0
+a[13311]: 2
+a[10239]: 2
+a[7167]: 2
+a[8191]: 2
+a[1023]: 0
+a[4095]: 0
+a[5119]: 2
+a[2047]: 2
+a[3071]: 2
+a[12287]: 2
+a[11263]: 0
+a[6143]: 0
+a[14335]: 0
+a[9215]: 0
+a[15359]: 0
+a[13311]: 2
+a[10239]: 2
+a[7167]: 2
+a[8191]: 2
+a[1023]: 0
+a[4095]: 0
+a[5119]: 2
+a[2047]: 2
+a[3071]: 2
+a[12287]: 2
+a[6143]: 0
+a[11263]: 0
+a[14335]: 0
+a[9215]: 0
+a[15359]: 0
+a[10239]: 2
+a[13311]: 2
+a[7167]: 2
+a[8191]: 2
+a[1023]: 0
+a[4095]: 0
+a[5119]: 2
+a[2047]: 2
+a[3071]: 2
+a[12287]: 2
+a[13311]: 2
+a[7167]: 2
+a[8191]: 2
+a[2047]: 2
+a[3071]: 2
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+inside post
+blockIdx.x: 16 a[17407]: 0
+blockIdx.x: 15 a[16383]: 0
+blockIdx.x: 19 a[20479]: 0
+blockIdx.x: 17 a[18431]: 0
+blockIdx.x: 18 a[19455]: 0
+inside post
+blockIdx.x: 20 a[21503]: 0
+inside post
+blockIdx.x: 21 a[22527]: 0
+inside post
+blockIdx.x: 22 a[23551]: 0
+inside post
+a[17407]: 0
+blockIdx.x: 23 a[24575]: 0
+a[16383]: 0
+a[20479]: 0
+a[18431]: 0
+a[19455]: 0
+a[21503]: 2
+inside post
+a[22527]: 2
+inside post
+a[23551]: 2
+blockIdx.x: 24 a[25599]: 0
+a[17407]: 0
+a[16383]: 0
+a[20479]: 0
+a[18431]: 0
+a[24575]: 2
+a[19455]: 0
+blockIdx.x: 25 a[26623]: 0
+a[21503]: 2
+blockIdx.x: 26 a[27647]: 0
+blockIdx.x: 27 a[28671]: 0
+a[22527]: 2
+a[23551]: 2
+a[25599]: 2
+a[17407]: 0
+a[16383]: 0
+a[20479]: 0
+blockIdx.x: 28 a[29695]: 0
+a[18431]: 0
+a[19455]: 0
+a[24575]: 2
+a[26623]: 2
+a[21503]: 2
+blockIdx.x: 29 a[30719]: 0
+a[27647]: 2
+a[28671]: 2
+a[22527]: 2
+a[23551]: 2
+a[25599]: 2
+a[17407]: 0
+a[16383]: 0
+a[20479]: 0
+a[19455]: 0
+a[18431]: 0
+a[24575]: 2
+a[29695]: 2
+a[26623]: 2
+a[21503]: 2
+a[30719]: 2
+a[27647]: 2
+a[28671]: 2
+a[22527]: 2
+a[23551]: 2
+a[25599]: 2
+a[24575]: 2
+a[29695]: 2
+a[26623]: 2
+a[30719]: 2
+a[27647]: 2
+a[28671]: 2
+a[25599]: 2
+a[29695]: 2
+a[26623]: 2
+a[27647]: 2
+a[30719]: 2
+a[28671]: 2
+a[29695]: 2
+a[30719]: 2
+ret1: 0
