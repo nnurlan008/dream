@@ -69,10 +69,29 @@ struct __attribute__((__packed__)) mlx5_cqe64 {
                    (((uint32_t)(x) & 0x0000ff00) <<  8) |\
                    (((uint32_t)(x) & 0x000000ff) << 24))
 
+
+void delay(int number_of_seconds)
+{
+    // Converting time into milli_seconds
+    int milli_seconds = 1000000 * number_of_seconds;
+ 
+    // Storing start time
+    clock_t start_time = clock();
+ 
+    // looping till required time is not achieved
+    while (clock() < start_time + milli_seconds)
+        ;
+}
+
+
 __global__ void add_vectors_rdma(int *a, int *b, int *c, int size, \
                                 uint8_t *tlb_A, uint8_t *tlb_B, uint8_t *tlb_C, struct post_content *post_cont1, struct poll_content *poll_cont1)
-{
+{   
+
+    
+
 	int id = blockDim.x * blockIdx.x + threadIdx.x;
+    
     if(id < size) {
         // if(id == 1023)
         // printf("hello\n");
@@ -88,15 +107,15 @@ __global__ void add_vectors_rdma(int *a, int *b, int *c, int size, \
 
         // all other threads poll on the tlb array entry
         // when the entry is 2 - on-device, computation continues
-        int cur_post = 0;
-        // printf("a[%d]: %d\n", id, a[id]);
         
-        // if (tlb_A[blockIdx.x] == 0 && blockIdx.x <= 7 /*&& blockIdx.x <= 9)*/){
+        // printf("a[%d]: %d\n", id, a[id]);
+        int single_thread = threadIdx.x;
+        if (tlb_A[blockIdx.x] == 0){
             
             // __threadfence_system();
             // printf("threadIdx.x: %d\n", threadIdx.x);
             // __syncthreads();
-            if (threadIdx.x == 0){
+            // if (threadIdx.x == 0){
                 // printf("a[%d]: %d\n", id, a[id]);
                 struct post_content post_cont = *post_cont1; 
                 struct poll_content poll_cont = *poll_cont1;
@@ -110,24 +129,175 @@ __global__ void add_vectors_rdma(int *a, int *b, int *c, int size, \
                 wr.wr_rdma_remote_addr = post_cont.wr_rdma_remote_addr;
                 wr.wr_rdma_rkey = post_cont.wr_rdma_rkey;
                 wr.wr_sg_addr = post_cont.wr_sg_addr;
-                wr.wr_sg_length = 4096; // post_cont.wr_sg_length;
+                wr.wr_sg_length = 128*4; // post_cont.wr_sg_length;
                 wr.wr_sg_lkey = post_cont.wr_sg_lkey;
-                // printf("blockIdx.x: %d post_cont.bf_reg[blockIdx.x]: 0x%llx\n", blockIdx.x, post_cont.bf_reg[blockIdx.x]);
-                post(post_cont.wr_rdma_remote_addr + 1024*blockIdx.x*4 , post_cont.wr_rdma_rkey, 
-                     post_cont.wr_sg_length, post_cont.wr_sg_lkey, post_cont.wr_sg_addr + 1024*blockIdx.x*4, post_cont.wr_opcode, 
-                     wr.qp_num + blockIdx.x, cur_post, post_cont.qp_buf + 8192*blockIdx.x, (void *) post_cont.bf_reg[blockIdx.x]);
-                     
-                printf("blockIdx.x: %d a[%d]: %d\n",blockIdx.x, id, a[id]);
-                // printf("a[%d]: %d\n", id, a[id]);
-                // printf("a[%d]: %d\n", id, a[id]);
-                // printf("a[%d]: %d\n", id, a[id]);
-
-                // post_s(wr, cur_post, post_cont.qp_buf, (void *) post_cont.bf_reg[0]);
-                cur_post++;
+                int cur_post = 0;
+                // void *buf = post_cont.qp_buf + 8192*id;
+                // void *reg = (void *) post_cont.bf_reg[id];
+                // if(id == 0 || id == 516 || id == 1028){
+                // int condition = (threadIdx.x == 0 && blockIdx.x == 0) || (threadIdx.x == 16 && blockIdx.x > 0 && blockIdx.x < 3);
                 
-                while(poll(poll_cont.cq_buf + 4096*blockIdx.x, &wc, (uint32_t *) poll_cont.cons_index[blockIdx.x], poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, \ 
-                (void *) poll_cont.cq_dbrec[blockIdx.x])==0);
-                tlb_A[blockIdx.x] = 3;
+                // if(id == 0 || id == 1){
+                // // if(condition){
+                //     cur_post = 0;
+                //     printf("blockIdx.x1: %d a[%d]: %d\n",blockIdx.x, id, a[id]);
+                //     printf("threadIdx.x1: %d a[%d]: %d\n",threadIdx.x, id, a[id]);
+                //     printf("threadIdx.y1: %d a[%d]: %d\n",threadIdx.y, id, a[id]);
+                //     printf("id: %d, a[%d]: %d cur_post: %d\n", id, id, a[id], cur_post);
+                //     printf("qp_num: %d\n",post_cont.qp_num + id);
+                //     printf("blockIdx.x: %d, post_cont.qp_buf + 8192*blockIdx.x: %p\n", blockIdx.x, post_cont.qp_buf + 8192*id);
+                //     printf("blockIdx.x: %d, post_cont.wr_sg_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_sg_addr + 512*id*4);
+                //     printf("blockIdx.x: %d, post_cont.bf_reg[blockIdx.x]: %p\n", blockIdx.x, post_cont.bf_reg[id]);
+                //     printf("blockIdx.x: %d, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_rdma_remote_addr + 896*id*4);
+
+                //     post(post_cont.wr_rdma_remote_addr + 1*id*4 , post_cont.wr_rdma_rkey, 
+                //         /*post_cont.wr_sg_length*/1*4, post_cont.wr_sg_lkey, post_cont.wr_sg_addr + 1*id*4, post_cont.wr_opcode, 
+                //         post_cont.qp_num + id, cur_post, post_cont.qp_buf + 8192*id, (void *) post_cont.bf_reg[id]);
+                //     // post_s(wr, cur_post, buf, reg);
+                //     cur_post++;
+                
+                //     while(poll(poll_cont.cq_buf + 4096*id, &wc, (uint32_t *) poll_cont.cons_index[id], poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, \ 
+                //     (void *) poll_cont.cq_dbrec[id])==0);
+                //     // __syncwarp();
+                //     // __syncthreads();
+                // }
+
+                
+                
+                if(id == 0){
+                    cur_post = 0;
+                    printf("blockIdx.x1: %d a[%d]: %d\n",blockIdx.x, id, a[id]);
+                    printf("threadIdx.x1: %d a[%d]: %d\n",threadIdx.x, id, a[id]);
+                    printf("threadIdx.y1: %d a[%d]: %d\n",threadIdx.y, id, a[id]);
+                    printf("id1 %d a[%d]: %d cur_post: %d\n", id, id, a[id], cur_post);
+                    printf("qp_num: %d\n",post_cont.qp_num + blockIdx.x);
+                    printf("blockIdx.x: %d, post_cont.qp_buf + 8192*blockIdx.x: %p\n", blockIdx.x, post_cont.qp_buf + 8192*blockIdx.x);
+                    printf("blockIdx.x: %d, post_cont.wr_sg_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_sg_addr + 512*blockIdx.x*4);
+                    printf("blockIdx.x: %d, post_cont.bf_reg[blockIdx.x]: %p\n", blockIdx.x, post_cont.bf_reg[blockIdx.x]);
+                    printf("pblockIdx.x: %d, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4);
+                    
+                    void *bf_reg = (void *) post_cont.bf_reg[0];
+                    post(post_cont.wr_rdma_remote_addr, post_cont.wr_rdma_rkey, 
+                        1024, post_cont.wr_sg_lkey, post_cont.wr_sg_addr , post_cont.wr_opcode, 
+                        post_cont.qp_num, cur_post, post_cont.qp_buf, bf_reg);
+                    cur_post++;
+                
+                    // while(poll(poll_cont.cq_buf, &wc, (uint32_t *) poll_cont.cons_index[0], poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, \ 
+                    // (void *) poll_cont.cq_dbrec[0])==0);
+                    // tlb_A[0] = 3;
+                    // tlb_A[1] = 3;
+                }
+                // __syncthreads();
+                // if(id == 140){
+                //     cur_post = 0;
+                    
+                //     printf("blockDim.x: %d, blockIdx.x1: %d a[%d]: %d\n",blockDim.x, blockIdx.x, id, a[id]);
+                //     printf("threadIdx.x1: %d a[%d]: %d\n",threadIdx.x, id, a[id]);
+                //     printf("threadIdx.y1: %d a[%d]: %d\n",threadIdx.y, id, a[id]);
+                //     printf("id1 %d a[%d]: %d cur_post: %d\n", id, id, a[id], cur_post);
+                //     printf("qp_num: %d\n",post_cont.qp_num + blockIdx.x);
+                //     printf("blockIdx.x: %d, post_cont.qp_buf + 8192*blockIdx.x: %p\n", blockIdx.x, post_cont.qp_buf + 8192*blockIdx.x);
+                //     printf("blockIdx.x: %d, post_cont.wr_sg_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_sg_addr + 512*blockIdx.x*4);
+                //     printf("blockIdx.x: %d, post_cont.bf_reg[blockIdx.x]: %p\n", blockIdx.x, post_cont.bf_reg[blockIdx.x]);
+                //     printf("pblockIdx.x: %d, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4);
+
+                //     post(post_cont.wr_rdma_remote_addr + blockDim.x*1*4 , post_cont.wr_rdma_rkey, 
+                //         blockDim.x*4, post_cont.wr_sg_lkey, post_cont.wr_sg_addr + blockDim.x*1*4, post_cont.wr_opcode, 
+                //         post_cont.qp_num + 1, cur_post, post_cont.qp_buf + 8192*1, (void *) post_cont.bf_reg[1]);
+                //     cur_post++;
+                
+                //     // while(poll(poll_cont.cq_buf + 4096*blockIdx.x, &wc, (uint32_t *) poll_cont.cons_index[blockIdx.x], poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, \ 
+                //     // (void *) poll_cont.cq_dbrec[blockIdx.x])==0);
+                // }
+                // __syncthreads();
+                if(id == 270){
+                    cur_post = 0;
+                    printf("blockIdx.x1: %d a[%d]: %d\n",blockIdx.x, id, a[id]);
+                    printf("threadIdx.x1: %d a[%d]: %d\n",threadIdx.x, id, a[id]);
+                    printf("threadIdx.y1: %d a[%d]: %d\n",threadIdx.y, id, a[id]);
+                    printf("id1 %d a[%d]: %d cur_post: %d\n", id, id, a[id], cur_post);
+                    printf("qp_num: %d\n",post_cont.qp_num + blockIdx.x);
+                    printf("blockIdx.x: %d, post_cont.qp_buf + 8192*blockIdx.x: %p\n", blockIdx.x, post_cont.qp_buf + 8192*blockIdx.x);
+                    printf("blockIdx.x: %d, post_cont.wr_sg_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_sg_addr + 512*blockIdx.x*4);
+                    printf("blockIdx.x: %d, post_cont.bf_reg[blockIdx.x]: %p\n", blockIdx.x, post_cont.bf_reg[blockIdx.x]);
+                    printf("pblockIdx.x: %d, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4);
+                    
+                    post_cont.wr_rdma_remote_addr = post_cont.wr_rdma_remote_addr + blockDim.x*2*4;
+                    post_cont.wr_sg_addr = post_cont.wr_sg_addr + blockDim.x*2*4;
+                    post_cont.qp_buf = post_cont.qp_buf + 8192*1;
+                    post_cont.qp_num = post_cont.qp_num + 1;
+                    void *bf_reg = (void *) post_cont.bf_reg[1];
+
+                    post(post_cont.wr_rdma_remote_addr, post_cont.wr_rdma_rkey, 
+                        1024, post_cont.wr_sg_lkey, post_cont.wr_sg_addr, post_cont.wr_opcode, 
+                        post_cont.qp_num, cur_post, post_cont.qp_buf, bf_reg);
+                    // cur_post++;
+                
+                    // while(poll(poll_cont.cq_buf + 4096*1, &wc, (uint32_t *) poll_cont.cons_index[1], poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, \ 
+                    // (void *) poll_cont.cq_dbrec[1])==0);
+                    // tlb_A[2] = 3;
+                    // tlb_A[3] = 3;
+                }
+                // __syncthreads();
+                if(id == 514){
+                    cur_post = 0;
+                    printf("blockIdx.x1: %d a[%d]: %d\n",blockIdx.x, id, a[id]);
+                    printf("threadIdx.x1: %d a[%d]: %d\n",threadIdx.x, id, a[id]);
+                    printf("threadIdx.y1: %d a[%d]: %d\n",threadIdx.y, id, a[id]);
+                    printf("id1 %d a[%d]: %d cur_post: %d\n", id, id, a[id], cur_post);
+                    printf("qp_num: %d\n",post_cont.qp_num + blockIdx.x);
+                    printf("blockIdx.x: %d, post_cont.qp_buf + 8192*blockIdx.x: %p\n", blockIdx.x, post_cont.qp_buf + 8192*blockIdx.x);
+                    printf("blockIdx.x: %d, post_cont.wr_sg_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_sg_addr + 512*blockIdx.x*4);
+                    printf("blockIdx.x: %d, post_cont.bf_reg[blockIdx.x]: %p\n", blockIdx.x, post_cont.bf_reg[blockIdx.x]);
+                    printf("pblockIdx.x: %d, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4);
+
+                    post_cont.wr_rdma_remote_addr = post_cont.wr_rdma_remote_addr + blockDim.x*4*4;
+                    post_cont.wr_sg_addr = post_cont.wr_sg_addr + blockDim.x*4*4;
+                    post_cont.qp_buf = post_cont.qp_buf + 8192*2;
+                    post_cont.qp_num = post_cont.qp_num + 2;
+                    void *bf_reg = (void *) post_cont.bf_reg[2];
+
+                    // post(post_cont.wr_rdma_remote_addr, post_cont.wr_rdma_rkey, 
+                    //     1024, post_cont.wr_sg_lkey, post_cont.wr_sg_addr, post_cont.wr_opcode, 
+                    //     post_cont.qp_num, cur_post, post_cont.qp_buf, bf_reg);
+                    // // cur_post++;
+                
+                    // while(poll(poll_cont.cq_buf + 4096*2, &wc, (uint32_t *) poll_cont.cons_index[2], poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, \ 
+                    // (void *) poll_cont.cq_dbrec[2])==0);
+                    // tlb_A[4] = 3;
+                    // tlb_A[5] = 3;
+                }
+                // __syncthreads();
+                if(id == 780){
+                    cur_post = 0;
+                    printf("blockIdx.x1: %d a[%d]: %d\n",blockIdx.x, id, a[id]);
+                    printf("threadIdx.x1: %d a[%d]: %d\n",threadIdx.x, id, a[id]);
+                    printf("threadIdx.y1: %d a[%d]: %d\n",threadIdx.y, id, a[id]);
+                    printf("id1 %d a[%d]: %d cur_post: %d\n", id, id, a[id], cur_post);
+                    printf("qp_num: %d\n",post_cont.qp_num + blockIdx.x);
+                    printf("blockIdx.x: %d, post_cont.qp_buf + 8192*blockIdx.x: %p\n", blockIdx.x, post_cont.qp_buf + 8192*blockIdx.x);
+                    printf("blockIdx.x: %d, post_cont.wr_sg_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_sg_addr + 512*blockIdx.x*4);
+                    printf("blockIdx.x: %d, post_cont.bf_reg[blockIdx.x]: %p\n", blockIdx.x, post_cont.bf_reg[blockIdx.x]);
+                    printf("pblockIdx.x: %d, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4: %p\n", blockIdx.x, post_cont.wr_rdma_remote_addr + 896*blockIdx.x*4);
+
+                    post_cont.wr_rdma_remote_addr = post_cont.wr_rdma_remote_addr + blockDim.x*6*4;
+                    post_cont.wr_sg_addr = post_cont.wr_sg_addr + blockDim.x*6*4;
+                    post_cont.qp_buf = post_cont.qp_buf + 8192*3;
+                    post_cont.qp_num = post_cont.qp_num + 3;
+                    void *bf_reg = (void *) post_cont.bf_reg[3];
+
+                    post(post_cont.wr_rdma_remote_addr, post_cont.wr_rdma_rkey, 
+                        1024, post_cont.wr_sg_lkey, post_cont.wr_sg_addr, post_cont.wr_opcode, 
+                        post_cont.qp_num, cur_post, post_cont.qp_buf, bf_reg);
+                    // cur_post++;
+                
+                    // while(poll(poll_cont.cq_buf + 4096*3, &wc, (uint32_t *) poll_cont.cons_index[3], poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, \ 
+                    // (void *) poll_cont.cq_dbrec[3])==0);
+                    // tlb_A[6] = 3;
+                    // tlb_A[7] = 3;
+                }
+
+                
                 // printf("blockIdx.x: %d a[%d]: %d\n", blockIdx.x, id, a[id]);
                 // printf("blockIdx.x: %d a[%d]: %d\n", blockIdx.x, id, a[id]);
                 // printf("blockIdx.x: %d a[%d]: %d\n", blockIdx.x, id, a[id]);
@@ -138,12 +308,17 @@ __global__ void add_vectors_rdma(int *a, int *b, int *c, int size, \
                 // cur_post++;
                 // __syncwarp();
             }
-            while(tlb_A[blockIdx.x] == 0);
-            // __syncthreads();
-            // for(int del = 0; del < 10000000; del++);
-            __syncthreads();
-            printf("a[%d]: %d\n", id, a[id]);
+            // while(tlb_A[blockIdx.x] == 0);
+        __syncthreads();
+        for(int del = 0; del < 20000000; del++);
+            
+            
         // }
+        __syncthreads();
+        // __threadfence_system();
+        
+        printf("a[%d]: %d\n", id, a[id]);
+        
         // if(threadIdx.x != 0)
             // for(int del = 0; del < 10000000; del++);
         // __threadfence_system();
@@ -234,6 +409,29 @@ void usage(const char *argv0)
 {
   fprintf(stderr, "usage: %s <mode> <server-address> <server-port>\n  mode = \"read\", \"write\"\n", argv0);
   exit(1);
+}
+
+__global__ void read_nonstop(int *a, int size){
+    int i = 0;
+    int stop = 0;
+    while(1){
+        for(i = 0; i < size; i++)
+            if(a[i] == 3){
+                printf("a[%d]: %d\n", i, a[i]);
+                stop = 1;
+                break;
+            }
+        if(stop) break;
+    }
+}
+
+__global__ void read(int *a, int index){
+    printf("a[%d]: %d\n", index, a[index]);
+}
+
+__global__ void write(int *a, int index, int number){
+    a[index] = number;
+    printf("a[%d]: %d\n", index, a[index]);
 }
 
 // Main program
@@ -327,28 +525,39 @@ int main(int argc, char **argv)
     
 
 
-    // Allocate memory for arrays d_A, d_B, and d_C on device
-	int *d_A, *d_B, *d_C;
-	cudaError_t state;
-	state = cudaMallocManaged(&d_A, bytes);
-	if(cudaSuccess != state){
-		printf("error on cudaMallocManaged(&d_A, bytes): %d\n", state);
-	}
-	state = cudaMallocManaged(&d_B, bytes);
-	if(cudaSuccess != state){
-		printf("error on cudaMallocManaged(&d_B, bytes): %d\n", state);
-	}
-	state = cudaMallocManaged(&d_C, bytes);
-	if(cudaSuccess != state){
-		printf("error on cudaMallocManaged(&d_C, bytes): %d\n", state);
-	}
-	printf("line number %d\n", __LINE__);
-	// Fill host arrays A and B
-	for(int i=0; i<N; i++)
-	{
-		d_A[i] = 1.0;
-		d_B[i] = 2.0;
-	}
+            // // Allocate memory for arrays d_A, d_B, and d_C on device
+            // int *d_A, *d_B, *d_C;
+            // cudaError_t state;
+            // state = cudaMallocManaged(&d_A, bytes);
+            // if(cudaSuccess != state){
+            // 	printf("error on cudaMallocManaged(&d_A, bytes): %d\n", state);
+            // }
+            // state = cudaMallocManaged(&d_B, bytes);
+            // if(cudaSuccess != state){
+            // 	printf("error on cudaMallocManaged(&d_B, bytes): %d\n", state);
+            // }
+            // state = cudaMallocManaged(&d_C, bytes);
+            // if(cudaSuccess != state){
+            // 	printf("error on cudaMallocManaged(&d_C, bytes): %d\n", state);
+            // }
+            // printf("line number %d\n", __LINE__);
+            // // Fill host arrays A and B
+            // for(int i=0; i<N; i++)
+            // {
+            // 	d_A[i] = 1.0;
+            // 	d_B[i] = 2.0;
+            // }
+   
+        // int *dev_array, *dev_array2;                      // 107374182
+        // ret1 = cudaMalloc((void **)&dev_array, 1024);
+        // if(ret1 != cudaSuccess){
+        //     printf("cuda error: %s\n", cudaGetErrorString(ret1));
+        // }
+        // ret1 = cudaMalloc((void **)&dev_array2, 1024);
+        // if(ret1 != cudaSuccess){
+        //     printf("cuda error: %s\n", cudaGetErrorString(ret1));
+        // }
+        // printf("dev_array: 0x%llx, dev_array2: 0x%llx \n", dev_array, dev_array2);
 
     // Launch kernel
     ret1 = cudaDeviceSynchronize();
@@ -356,14 +565,19 @@ int main(int argc, char **argv)
     if(cudaSuccess != ret1){    
         return -1;
     }
-	add_vectors_rdma<<< 2, 896 >>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, d_post, d_poll);
-    // add_vectors_uvm<<< blk_in_grid, thr_per_blk >>>(d_A, d_B, d_C, bytes);
+        // read<<<1,1>>>(dev_array, 0);
+        // write<<<1,1>>>(dev_array, 71808, 3);
+        // read<<<1,1>>>(dev_array2, 71808-256);
+        // read_nonstop<<<1,1>>>(dev_array, 256);
+        add_vectors_rdma<<< 10, 128 >>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, d_post, d_poll);
+
+        // add_vectors_uvm<<< blk_in_grid, thr_per_blk >>>(d_A, d_B, d_C, bytes);
 	ret1 = cudaDeviceSynchronize();
     printf("ret1: %d\n", ret1);
     if(cudaSuccess != ret1){
         return -1;
     }
-
+    // delay(40);
 	// // Number of bytes to allocate for N doubles
 	// size_t bytes = N*sizeof(int);
 	// printf("size: %d GB\n", sizeof(int)/4);

@@ -68,6 +68,18 @@ struct __attribute__((__packed__)) poll_content{
   long long int cq_dbrec[20];
 };
 
+struct benchmark_content{
+  struct ibv_cq *cq_ptr; 
+  int num_entries; 
+  struct ibv_wc *wc;
+  struct ibv_qp *ibqp; 
+  struct ibv_send_wr *wr;
+  struct ibv_send_wr **bad_wr; 
+  int num_packets; 
+  int mesg_size; 
+  float *bandwidth;
+};
+
 int init_gpu(int gpu);
 int connect(const char *ip, struct context *s_ctx);
 int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_cont, struct poll_content *poll_cont);
@@ -107,5 +119,6 @@ __global__ void multiple_packets(int num_of_packets,
           unsigned int wqe_head_0, void *dev_wq    
 );
 
+void *benchmark(void *param);
 
 #endif
