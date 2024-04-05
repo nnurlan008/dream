@@ -715,7 +715,8 @@ int connect(const char *ip, struct context *s_ctx){
     sge.addr = (uintptr_t)s_ctx->gpu_buffer;
     sge.length = 4096;
     sge.lkey = s_ctx->gpu_mr->lkey;
-    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    printf("Function name: %s, line number: %d conn->peer_mr.addr: %p\n", __func__, __LINE__, conn->peer_mr.addr);
+    printf("Function name: %s, line number: %d conn->peer_mr.rkey: %p\n", __func__, __LINE__, conn->peer_mr.rkey);
     // ret = ibv_post_send(g_qp, &wr, &bad_wr);
     // printf("ret: %d\n", ret);
     // exit(0);
@@ -727,7 +728,16 @@ int connect(const char *ip, struct context *s_ctx){
 
     // printf("read remote buffer: %s\n", conn->rdma_local_region);
 
-    process_gpu_mr((int *)s_ctx->gpu_buffer, 4096);
+    // process_gpu_mr((int *)s_ctx->gpu_buffer, 4096);
+
+    // TEST_NZ(host_gpu_post_send(s_ctx->gpu_qp[1], &wr, &bad_wr, 0));
+    // // gpu_process_work_completion_events (s_ctx->comp_channel, &wc1, 1, s_ctx->gpu_cq[255]);
+    // host_poll_fake(s_ctx->gpu_cq[1], &wc1);
+
+
+    // printf("read remote buffer: %s\n", conn->rdma_local_region);
+
+    // process_gpu_mr((int *)s_ctx->gpu_buffer, 4096);
 
     // benchmark(s_ctx, 1, 128);
     float bandwidth;
@@ -735,7 +745,122 @@ int connect(const char *ip, struct context *s_ctx){
     //                struct ibv_qp *ibqp, struct ibv_send_wr *wr,
     //                struct ibv_send_wr **bad_wr, int num_packets, int mesg_size, float *bandwidth)
 
-    // cpu_benchmark_whole(s_ctx->gpu_cq[0], 1, &wc1, s_ctx->gpu_qp[0], &wr, &bad_wr, 1, 128, &bandwidth);
+    // cpu_benchmark_whole(s_ctx->gpu_cq[2], 1, &wc1, s_ctx->gpu_qp[2], &wr, &bad_wr, 1, 128, &bandwidth);
+
+    // struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *wc,
+    //                struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+    //                struct ibv_send_wr **bad_wr, int num_packets, int mesg_size, float *bandwidth
+    float b1, b2;
+    struct benchmark_content cont1, cont2, cont3, cont4, cont5, cont6, cont7;
+    cont1 = {
+        .cq_ptr = s_ctx->gpu_cq[0],
+        .num_entries = 1,
+        .wc = &wc1,
+        .ibqp = s_ctx->gpu_qp[0],
+        .wr = &wr,
+        .bad_wr = &bad_wr,
+        .num_packets = 1,
+        .mesg_size = 128,
+        .bandwidth = &b1,
+    };
+
+    wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr + 4096;
+    sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096;
+
+    cont2 = {
+        .cq_ptr = s_ctx->gpu_cq[0],
+        .num_entries = 1,
+        .wc = &wc1,
+        .ibqp = s_ctx->gpu_qp[1],
+        .wr = &wr,
+        .bad_wr = &bad_wr,
+        .num_packets = 1,
+        .mesg_size = 128,
+        .bandwidth = &b2,
+    };
+
+    wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr + 4096*2;
+    sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*2;
+
+    cont3 = {
+        .cq_ptr = s_ctx->gpu_cq[0],
+        .num_entries = 1,
+        .wc = &wc1,
+        .ibqp = s_ctx->gpu_qp[2],
+        .wr = &wr,
+        .bad_wr = &bad_wr,
+        .num_packets = 1,
+        .mesg_size = 128,
+        .bandwidth = &b2,
+    };
+
+    wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr + 4096*3;
+    sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*3;
+
+    cont4 = {
+        .cq_ptr = s_ctx->gpu_cq[0],
+        .num_entries = 1,
+        .wc = &wc1,
+        .ibqp = s_ctx->gpu_qp[3],
+        .wr = &wr,
+        .bad_wr = &bad_wr,
+        .num_packets = 1,
+        .mesg_size = 128,
+        .bandwidth = &b2,
+    };
+
+    wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr + 4096*4;
+    sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*4;
+
+    cont5 = {
+        .cq_ptr = s_ctx->gpu_cq[0],
+        .num_entries = 1,
+        .wc = &wc1,
+        .ibqp = s_ctx->gpu_qp[4],
+        .wr = &wr,
+        .bad_wr = &bad_wr,
+        .num_packets = 1,
+        .mesg_size = 128,
+        .bandwidth = &b2,
+    };
+
+    wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr + 4096*5;
+    sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*5;
+
+    cont6 = {
+        .cq_ptr = s_ctx->gpu_cq[0],
+        .num_entries = 1,
+        .wc = &wc1,
+        .ibqp = s_ctx->gpu_qp[5],
+        .wr = &wr,
+        .bad_wr = &bad_wr,
+        .num_packets = 1,
+        .mesg_size = 128,
+        .bandwidth = &b2,
+    };
+
+    wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr + 4096*6;
+    sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*6;
+
+    cont7 = {
+        .cq_ptr = s_ctx->gpu_cq[0],
+        .num_entries = 1,
+        .wc = &wc1,
+        .ibqp = s_ctx->gpu_qp[6],
+        .wr = &wr,
+        .bad_wr = &bad_wr,
+        .num_packets = 1,
+        .mesg_size = 128,
+        .bandwidth = &b2,
+    };
+
+    // TEST_NZ(pthread_create(&s_ctx->cq_poller_thread, NULL, benchmark, &cont1));
+    // TEST_NZ(pthread_create(&s_ctx->cq_poller_thread, NULL, benchmark, &cont2));
+    // TEST_NZ(pthread_create(&s_ctx->cq_poller_thread, NULL, benchmark, &cont3));
+    // TEST_NZ(pthread_create(&s_ctx->cq_poller_thread, NULL, benchmark, &cont4));
+    // TEST_NZ(pthread_create(&s_ctx->cq_poller_thread, NULL, benchmark, &cont5));
+    // TEST_NZ(pthread_create(&s_ctx->cq_poller_thread, NULL, benchmark, &cont6));
+    // TEST_NZ(pthread_create(&s_ctx->cq_poller_thread, NULL, benchmark, &cont7));
 
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
 
@@ -743,10 +868,17 @@ int connect(const char *ip, struct context *s_ctx){
     return 0;
 }
 
+void *benchmark(void *param1){
+    struct benchmark_content *param = (struct benchmark_content *) param1;
+    cpu_benchmark_whole(param->cq_ptr, 1, param->wc, param->ibqp, param->wr, \
+                        param->bad_wr, param->num_packets, param->mesg_size, param->bandwidth);
+
+}
+
 __global__ void poll_fake(void *cq_buf, uint32_t *cons_index,
                     int ibv_cqe, uint32_t cqe_sz, int n, void *cq_dbrec){
     struct ibv_wc wc;                
-    poll(cq_buf, &wc, cons_index, ibv_cqe, cqe_sz, n, cq_dbrec);
+    while(poll(cq_buf, &wc, cons_index, ibv_cqe, cqe_sz, n, cq_dbrec) == 0);
     printf("wc->status: %d\n", wc.status);
     if (wc.status != IBV_WC_SUCCESS){
         printf("wc->status: %d\n", wc.status);
@@ -2013,12 +2145,12 @@ __device__ int post_s(struct post_wr wr, int cur_post, void *qp_buf, void *bf_re
     data->byte_count = htonl(wr_sg_length); // htonl(wr_sg_list->length);
     data->lkey       = htonl(wr_sg_lkey); // htonl(wr_sg_list->lkey);
     data->addr       = htonl64(wr_sg_addr); // htonl64(wr_sg_list->addr);
-    // __threadfence_system();
+    __threadfence_system();
     uint64_t val;
     val = *(uint64_t *) ctrl;
     *(volatile uint32_t *)bf_reg = htonl(htonl64(val) >> 32);
     *(volatile uint32_t *)(bf_reg+4) = htonl(htonl64(val));
-    // __threadfence_system();
+    __threadfence_system();
 	return 0;
 }
 
@@ -2114,16 +2246,17 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
 
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     for(int i = 0; i < s_ctx->n_bufs; i++){
-        
+        printf("qp_num[%d]: %d\n", i, s_ctx->gpu_qp[i]->qp_num);
         struct mlx5_qp *qp = to_mqp(s_ctx->gpu_qp[i]);
-        printf("qp->sq.wqe_cnt[%d]: %d\n", i, qp->sq.wqe_cnt);
+        printf("qp->bf->reg[%d]: %p\n", i, qp->bf->reg);
+        printf("qp->buf.buf[%d]: %p \n", i, qp->buf.buf);
         void *device_db;
         // printf("qp->bf->reg[%d]: 0x%llx\n", i, qp->bf->reg);
         success = cudaHostRegister(qp->bf->reg,  8, cudaHostRegisterIoMemory);
         if (success != cudaSuccess && success != cudaErrorHostMemoryAlreadyRegistered) return -1;
         success = cudaHostGetDevicePointer(&device_db, qp->bf->reg, 0);
         if (success != cudaSuccess) return -1;
-        // printf("device_db[%d]: 0x%llx\n", i, device_db);
+        printf("device_db[%d]: 0x%llx\n", i, device_db);
         // printf("device_db[%d]: 0x%llx\n", i, qp->cqe);
         post_cont->bf_reg[i] = (long long int) device_db;
         
@@ -2240,10 +2373,12 @@ int cpu_benchmark_whole(struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *w
         if(cudaHostGetDevicePointer(&qp_buf, qp->buf.buf, 0) != cudaSuccess) exit(0);
     }
     else qp_buf = qp->buf.buf;
-    
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     success = cudaHostRegister(qp->sq.wqe_head, sizeof(qp->sq.wqe_head), cudaHostRegisterMapped);
+    printf("success: %s, %d\n", cudaGetErrorString(success), success);
     if(success != cudaErrorHostMemoryAlreadyRegistered && success !=  cudaSuccess)
             exit(0);
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     // get GPU pointer for qp->sq.wqe_head
     if(cudaHostGetDevicePointer(&dev_qpsq_wqe_head, qp->sq.wqe_head, 0) != cudaSuccess)
         exit(0);
@@ -2590,8 +2725,8 @@ __global__ void multiple_packets(int num_of_packets,
         //     (uint32_t *) dev_cq_dbrec) == 0);
             // printf("gpu polling\n");
         // while (addr[mesg_size-1] == 0);
-        // while(!((cqe64->op_own != 240) &&
-        // !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1))))); 
+        while(!((cqe64->op_own != 240) &&
+        !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1))))); 
         timer[4*p_num+3] = clock64();
     (*(int *)cons_index)++;
         // wc1.qp_num =  htonl(cqe64->sop_drop_qpn) & 0xffffff;

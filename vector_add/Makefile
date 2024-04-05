@@ -21,11 +21,14 @@ NVCC=$(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_35,arch=compute_35 $(CU
 
 CXXARGS = -w -std=c++14 -g -arch=sm_35
 
-APPS    := main server
+APPS    := main server temp_cuda
 
 all: ${APPS}
 
 main:  main.o rdma_utils.o
+	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@ $(add_flags)
+
+temp_cuda:  temp_cuda.o  rdma_utils.o
 	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@ $(add_flags)
 
 rdma_utils:  rdma_utils.o
@@ -34,10 +37,13 @@ rdma_utils:  rdma_utils.o
 # server-utils.o: server-utils.c
 # 	${LD}  server-utils.c -o server-utils.o ${LDLIBS}
 
-main.o: rdma_utils.cuh
+main.o temp_cuda.o: rdma_utils.cuh
 
 server: server-utils.o server.o
 	${LD} -o $@ $^ ${LDLIBS}
+
+temp_cuda.o: temp_cuda.cu 
+	$(NVCC) -dc temp_cuda.cu -o temp_cuda.o -libverbs -lrdmacm -lcuda -lcudart $(CUDA_LIBS)
 
 main.o: main.cu 
 	$(NVCC) -dc main.cu -o main.o -libverbs -lrdmacm -lcuda -lcudart $(CUDA_LIBS) $(add_flags)
