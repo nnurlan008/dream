@@ -28,6 +28,18 @@
         "random": "cpp",
         "rdma_cma.h": "c",
         "stdio.h": "c",
-        "stdlib.h": "c"
+        "stdlib.h": "c",
+        "thread": "c",
+        "cmath": "cpp",
+        "variant": "cpp",
+        "bitset": "cpp",
+        "regex": "cpp",
+        "valarray": "cpp",
+        "cstddef": "cpp",
+        "atomic": "cpp",
+        "__atomic": "cpp",
+        "__atomic_derived": "cpp",
+        "__atomic_generated": "cpp",
+        "chrono": "cpp"
     }
 }

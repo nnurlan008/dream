@@ -56,7 +56,7 @@ if __name__=="__main__":
         lat = lat[:-1]
         i = 0
         while i < len(lat):
-            lat[i] = lat[i]/2505
+            lat[i] = lat[i]/1815
             i += 1
         # lat = lat/2505000000
         print(data_size)
@@ -71,13 +71,14 @@ if __name__=="__main__":
         # bar plot below:
         barWidth = 0.25
         fig = plt.subplots(figsize =(12, 8)) 
-        
+        lat = lat[:20]
+        data_size = data_size[0:20]
         # set height of bar 
         IT = lat # [12, 30, 1, 8] 
         # ECE = rdma_lat # [28, 6, 16, 5] 
         # CSE = [29, 3, 24, 25] 
         
-        # Set position of bar on X axis 
+        # Set position ar on X axis 
         br1 = np.arange(len(IT)) 
         # br2 = [x + barWidth for x in br1] 
         # br3 = [x + barWidth for x in br2] 

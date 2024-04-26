@@ -49,7 +49,7 @@ void delay(int number_of_seconds)
 #define wq_buffer_gpu !control_on_cpu
 #define cq_buffer_gpu !control_on_cpu
 
-const int TIMEOUT_IN_MS = 500000; /* ms */
+const int TIMEOUT_IN_MS = 500; /* ms */
 
 static int on_addr_resolved(struct rdma_cm_id *id);
 static int on_connection(struct rdma_cm_id *id, unsigned long offset);
@@ -81,7 +81,7 @@ __device__ int poll( void *cq_buf, struct ibv_wc *twc, uint32_t *cons_index,
 __device__ int post(unsigned int qpbf_bufsize,
           uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
           uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, int wr_opcode, 
-          uint32_t qp_num, uint64_t wr_id, struct ibv_send_wr *wr,
+          uint32_t qp_num, uint64_t wr_id, int cur_post, struct ibv_send_wr *wr,
           void *qp_buf,  void *dev_qpsq_wqe_head, 
           void *dev_qp_sq, void *dev_qp_db, void *dev_wrid,
           void *bf_reg);
@@ -182,10 +182,10 @@ void send_message(struct connection *conn, unsigned long offset)
   printf("Function: %s line number: %d sge.length: %d\n", __func__, __LINE__, sge.length);
   while (!conn->connected);
 
-  if(control_on_cpu)
+  // if(control_on_cpu)
     TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
-  else 
-    TEST_NZ(host_gpu_post_send(conn->qp, &wr, &bad_wr, offset));
+  // else 
+    // TEST_NZ(host_gpu_post_send(conn->qp, &wr, &bad_wr, offset));
 }
 
 void send_mr(void *context, unsigned long offset)
@@ -207,7 +207,7 @@ int process_work_completion_events (struct ibv_comp_channel *comp_channel,
 		struct ibv_wc *wc, int max_wc);
 
 int gpu_process_work_completion_events (struct ibv_comp_channel *comp_channel, 
-		struct ibv_wc *wc, int max_wc);
+		struct ibv_wc *wc, int max_wc, struct context *s_ctx);
 
 int host_gpu_poll_cq (struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *wc);
 
@@ -225,8 +225,10 @@ void process_gpu_mr(int *addr, int size);
 int* /*volatile*/ read_after_write_buffer = NULL;
 struct ibv_mr *read_after_write_mr;
 // void *cqbuf, *wqbuf;
-void* /*volatile*/ cqbuf = NULL;
-void* /*volatile*/ wqbuf = NULL;
+void* volatile cqbuf = NULL;
+void* volatile cqbuf2 = NULL;
+void* volatile wqbuf = NULL;
+void* volatile wqbuf2 = NULL;
 int wqbuf_size = 8192, cqbuf_size = 4096; // 32768;
 
 __global__ void gpu_benchmark(uint32_t mesg_size, uint64_t wr_id, uint32_t peer_rkey, uintptr_t peer_addr, uintptr_t local_address, uint32_t lkey,
@@ -326,6 +328,68 @@ int cpu_benchmark_whole(struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *w
                    struct ibv_qp *ibqp, struct ibv_send_wr *wr,
                    struct ibv_send_wr **bad_wr, int num_packets, int mesg_size, float *bandwidth);
 
+// struct ibv_qp *g_qp = NULL;
+
+struct thread_one{
+  int num_of_packets;
+          unsigned int qpbf_bufsize; 
+          struct ibv_send_wr wr1; int mesg_size;
+          uint32_t wr_sg_length; uint32_t wr_sg_lkey; uint64_t wr_sg_addr;
+          int wr_opcode; uint32_t qp_num; uint64_t wr_id;
+          void *qp_buf; void *dev_qpsq_wqe_head;
+          void *dev_qp_sq; void *dev_qp_db; void *dev_wrid1;
+          void *bf_reg;
+
+          void *cq_buf; void *cons_index;
+          int ibv_cqe; uint32_t cqe_sz; int max_wc; 
+          void *dev_cq_dbrec;
+          void* dev_rsc;
+          void *dev_wrid;
+          clock_t *timer; uint64_t wrid_0; 
+          unsigned int wqe_head_0; void *dev_wq;
+};
+
+struct buffers{
+  void* volatile cq_buf = NULL;
+  void* volatile wq_buf = NULL;
+};
+
+int get_myglid(struct ibv_context *ctx, int port, union ibv_gid *gid1, int *gid_entry1) {
+    
+    struct ibv_port_attr attr;
+    TEST_NZ(ibv_query_port(ctx, port, &attr));
+    int gid_tlb_len = attr.gid_tbl_len;
+    union ibv_gid gid;
+    int gid_entry;
+    for (int i = 0; i < gid_tlb_len; i++)
+    {
+        if (ibv_query_gid(ctx, port, i, &gid) == 0)
+        {
+            printf("found at index %d \n", i);
+            gid_entry = i;
+            break;
+        }
+    }
+    
+    for (int i = 0; i < 16; i++)
+    {
+        printf("%d: ", gid.raw[i]);
+    }
+    *gid1 = gid;
+    *gid_entry1 = gid_entry;
+    printf("the entry is %d\n", gid_entry);
+
+    return 0;
+}
+
+int get_mylid(struct ibv_context *context, int port, int *lid) {
+    struct ibv_port_attr attr;
+    TEST_NZ(ibv_query_port(context, port, &attr));
+    *lid = attr.lid;
+    return 0;
+}
+
+
 int main(int argc, char **argv)
 {
   struct addrinfo *addr;
@@ -342,7 +406,7 @@ int main(int argc, char **argv)
     set_mode(M_READ);
   else
     usage(argv[0]);
-
+  printf("Function: %s line number: %d\n",__func__, __LINE__);
   int num_msg = (unsigned long) atoi(argv[4]);
   int mesg_size = (unsigned long) atoi(argv[5]);
 
@@ -354,7 +418,7 @@ int main(int argc, char **argv)
 
   freeaddrinfo(addr);
   int ret;
-
+  printf("Function: %s line number: %d\n",__func__, __LINE__);
   if (wq_buffer_gpu == 1){
 
   ret = cudaMalloc((void **)&wqbuf, wqbuf_size);
@@ -402,6 +466,63 @@ int main(int argc, char **argv)
     cqbuf_size = 0;
   }
 
+  ret = cudaMalloc((void **)&wqbuf2, wqbuf_size);
+    if (cudaSuccess != ret) {
+      printf("error on cudaMalloc for wqbuf: %d\n", ret);
+      exit(0);
+    }
+    ret = cudaMemset(wqbuf2, 0, wqbuf_size);
+    if (cudaSuccess != ret) {
+      printf("error on cudaMemset for wqbuf: %d\n", ret);
+      exit(0);
+    }
+
+  ret = cudaMalloc((void **) &cqbuf2, cqbuf_size);
+    if (cudaSuccess != ret) {
+      printf("error on cudaMalloc for cqbuf: %d\n", ret);
+      exit(0);
+    }
+    ret = cudaMemset(cqbuf2, 0, cqbuf_size);
+    if (cudaSuccess != ret) {
+      printf("error on cudaMemset for cqbuf: %d\n", ret);
+      exit(0);
+    }
+
+  const int num_thread = 2;
+  struct buffers buffers[num_thread];
+  for(int i = 0; i < num_thread; i++){
+    
+
+    ret = cudaMalloc((void **)&buffers[i].wq_buf, wqbuf_size);
+      if (cudaSuccess != ret) {
+        printf("error on cudaMalloc for buffers[i].wq_buf: %d\n", ret);
+        exit(0);
+      }
+      ret = cudaMemset(buffers[i].wq_buf,0,wqbuf_size);
+      if (cudaSuccess != ret) {
+        printf("error on cudaMemset for buffers[i].wq_buf: %d\n", ret);
+        exit(0);
+      }
+  }
+  for(int i = 0; i < num_thread; i++){
+    printf("Function: %s line number: %d\n",__func__, __LINE__);
+    /*Allocate control buffers - CQ and WQ*/
+    
+      ret = cudaMalloc((void **) &buffers[i].cq_buf, cqbuf_size);
+      if (cudaSuccess != ret) {
+        printf("error on cudaMalloc for buffers[i].cq_buf: %d\n", ret);
+        exit(0);
+      }
+      ret = cudaMemset(buffers[i].cq_buf,0,cqbuf_size);
+      if (cudaSuccess != ret) {
+        printf("error on cudaMemset for buffers[i].cq_buf: %d\n", ret);
+        exit(0);
+      }
+      invalidate_cq<<<1,1>>>(buffers[i].cq_buf);
+    
+  }
+
+
   printf("Function: %s line number: %d\n",__func__, __LINE__);
   printf("Function: %s line number: %d cqbuf: 0x%llx\n",__func__, __LINE__, cqbuf);
   if ((unsigned long)cqbuf & 0xF00000000 != 0xb00000000)
@@ -438,11 +559,11 @@ int main(int argc, char **argv)
   // struct mlx5_qp *qp = to_mqp(event->id->qp);
   // printf("Function: %s line number: %d qp->buf.length: %d\n",__func__, __LINE__, qp->buf.length);
 
-  process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  // process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   printf("Function: %s line number: %d wc.opcode: %d\n",__func__, __LINE__, wc.opcode);
   printf("Function: %s line number: %d\n",__func__, __LINE__);
   // exit(0);
-  process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  gpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
   struct connection *conn = (struct connection *)(uintptr_t)wc.wr_id;
   if (wc.opcode & IBV_WC_RECV){
     printf("receive completed\n");
@@ -452,7 +573,7 @@ int main(int argc, char **argv)
     printf("Function: %s line number: %d conn->recv_msg->data.mr.rkey: %u\n",__func__, __LINE__, conn->recv_msg->data.mr.rkey);
   //   conn->peer_mr.addr;
   // wr.wr.rdma.rkey = conn->peer_mr.rkey
-    post_receives(conn);
+    // post_receives(conn);
     // exit(0);
   }
   else {
@@ -460,6 +581,192 @@ int main(int argc, char **argv)
     exit(-1);
   }
   printf("Function: %s line number: %d\n",__func__, __LINE__);
+
+
+
+  /*create new qp for gpu*/
+  int num_qps = 1;
+  struct remote_qp_info{
+    uint32_t target_qp_num[1];
+    uint16_t target_lid;
+    union ibv_gid target_gid;
+  };
+
+  struct remote_qp_info buffer; // = (struct remote_qp_info **) calloc(2, sizeof(struct remote_qp_info *));
+    // buffer.target_qp_num = (uint32_t *) calloc(s_ctx->n_bufs, sizeof(uint32_t));
+    // for(int i = 0; i < 2; i++){
+    //   buffer[i] = (struct remote_qp_info *) malloc(sizeof(struct remote_qp_info));
+    // }
+    struct ibv_mr *my_mr;
+    TEST_Z(my_mr = ibv_reg_mr(
+        s_ctx->pd, 
+        &buffer, 
+        sizeof(buffer), 
+        IBV_ACCESS_LOCAL_WRITE));
+    struct ibv_recv_wr wr1, *bad_wr1 = NULL;
+    struct ibv_sge sge1;
+
+    wr1.wr_id = (uintptr_t)conn;
+    wr1.next = NULL;
+    wr1.sg_list = &sge1;
+    wr1.num_sge = 1;
+
+    sge1.addr = (uintptr_t)&buffer;
+    sge1.length = sizeof(buffer);
+    sge1.lkey = my_mr->lkey;
+
+    TEST_NZ(ibv_post_recv(conn->qp, &wr1, &bad_wr1));
+    // TEST_NZ(host_gpu_post_recv(conn->qp, &wr1, &bad_wr1));
+    // post_receives(conn);
+    gpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
+
+    if (wc.opcode & IBV_WC_RECV){
+        printf("receive completed\n");
+        // memcpy(&conn->peer_mr, &conn->recv_msg->data.mr, sizeof(conn->peer_mr));
+        // post_receives(conn);
+        printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        printf("Function name: %s, line number: %d conn->peer_mr: %d buffer->target_lid: %d\n", __func__, __LINE__, buffer.target_qp_num[0], buffer.target_lid);
+        // exit(0);
+    }
+
+    // we received server side info for qp
+    // now we need to send the qp info from our side
+
+    // s_ctx->gpu_qp = (struct ibv_qp **) calloc(s_ctx->n_bufs, sizeof(struct ibv_qp *));
+    for(int i = 0; i < num_qps; i++){
+        struct ibv_qp_init_attr qp_attr;
+        memset(&qp_attr, 0, sizeof(qp_attr));
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.send_cq = s_ctx->gpu_cq;
+        qp_attr.recv_cq = s_ctx->gpu_cq;
+        qp_attr.qp_type = IBV_QPT_RC;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.cap.max_send_wr = 10;
+        qp_attr.cap.max_recv_wr = 10;
+        qp_attr.cap.max_send_sge = 1;
+        qp_attr.cap.max_recv_sge = 1;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        // TEST_Z(s_ctx->gpu_qp = ibvx_create_qp(s_ctx->pd, &qp_attr, wqbuf2, wqbuf_size));
+        TEST_Z(s_ctx->gpu_qp = ibv_create_qp(s_ctx->pd, &qp_attr));
+        if (!s_ctx->gpu_qp){
+        printf("g_qp failed\n");
+        exit(-1);
+        }
+        // printf("gpu_qp[i]->qp_num: %d\n", s_ctx->gpu_qp[i]->qp_num);
+    }
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    union ibv_gid gid;; 
+    int gid_entry;
+    get_myglid(s_ctx->ctx, 1, &gid, &gid_entry);
+    int mylid;
+    get_mylid(s_ctx->ctx, 1, &mylid);
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    struct remote_qp_info buffer1; // = (struct remote_qp_info **) calloc(2, sizeof(struct remote_qp_info *));
+    // buffer.target_qp_num = (uint32_t *) calloc(s_ctx->n_bufs, sizeof(uint32_t));
+    for (int i = 0; i < num_qps; i++){
+        buffer1.target_qp_num[i] = s_ctx->gpu_qp->qp_num;
+        // printf("client qp num: %d\n", s_ctx->gpu_qp[i]->qp_num);
+        
+    }
+
+    buffer1.target_gid = gid;
+    buffer1.target_lid = mylid;
+
+    struct ibv_mr *my_mr1;
+    TEST_Z(my_mr1 = ibv_reg_mr(
+        s_ctx->pd, 
+        &buffer1, 
+        sizeof(buffer1), 
+        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ));
+    struct ibv_send_wr wr2, *bad_wr2 = NULL;
+    struct ibv_sge sge2;
+    memset(&wr2, 0, sizeof(wr2));
+    wr2.wr_id = (uintptr_t)conn;
+    wr2.opcode = IBV_WR_SEND;
+    wr2.next = NULL;
+    wr2.sg_list = &sge2;
+    wr2.num_sge = 1;
+    wr2.send_flags = IBV_SEND_SIGNALED;
+
+    sge2.addr = (uintptr_t)&buffer1;
+    sge2.length = sizeof(buffer1);
+    sge2.lkey = my_mr1->lkey;
+
+    TEST_NZ(ibv_post_send(conn->qp, &wr2, &bad_wr2));
+    // TEST_NZ(host_gpu_post_send(conn->qp, &wr2, &bad_wr2, 1));
+
+
+    gpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
+
+    if (wc.opcode == IBV_WC_SEND){
+        printf("QP info sent; qp_num: %d\n", buffer1.target_qp_num[0]);
+    }
+    // exit(0);
+
+    for(int i = 0; i < num_qps; i++){
+        struct ibv_qp_attr qp_attr1;
+        memset(&qp_attr1, 0, sizeof(qp_attr1));
+
+        qp_attr1.qp_state        = IBV_QPS_INIT;
+        qp_attr1.pkey_index      = 0;
+        qp_attr1.port_num = 1; // IB_PORT;
+        qp_attr1.qp_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC | IBV_ACCESS_REMOTE_WRITE;
+
+        ret = ibv_modify_qp (s_ctx->gpu_qp, &qp_attr1, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT  | IBV_QP_ACCESS_FLAGS); 
+        if(ret != 0)
+        {
+        printf("Failed to modify qp to INIT. ret: %d\n", ret);
+        exit(-1);
+        }
+        
+
+        memset(&qp_attr1, 0, sizeof(qp_attr1));
+        qp_attr1.qp_state = IBV_QPS_RTR;
+        qp_attr1.path_mtu = IBV_MTU_4096;
+        qp_attr1.dest_qp_num = buffer.target_qp_num[i];
+        qp_attr1.rq_psn = 0;
+
+        qp_attr1.min_rnr_timer = 12;
+        qp_attr1.ah_attr.is_global = 1;
+        qp_attr1.ah_attr.dlid = buffer.target_lid;
+        qp_attr1.ah_attr.sl = 0;
+        qp_attr1.max_dest_rd_atomic = 1;
+        qp_attr1.ah_attr.port_num = 1;
+        qp_attr1.ah_attr.grh.dgid = buffer.target_gid;
+        qp_attr1.ah_attr.grh.sgid_index = gid_entry;
+        qp_attr1.ah_attr.grh.hop_limit =  0xFF;
+        qp_attr1.ah_attr.grh.traffic_class = 0;
+        int flags = IBV_QP_STATE | IBV_QP_PATH_MTU | IBV_QP_AV;
+
+        ret = ibv_modify_qp(s_ctx->gpu_qp, &qp_attr1, IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+        if(ret != 0) {
+        printf("Failed to modify qp to RTR. ret: %d\n", ret);
+        exit(-1);
+        }
+
+        struct ibv_qp_attr qp_attr2; // = {
+                qp_attr2.qp_state = IBV_QPS_RTS,
+                qp_attr2.timeout = 14,
+                qp_attr2.retry_cnt = 7,
+                qp_attr2.rnr_retry = 7,
+                qp_attr2.sq_psn = 0,
+                qp_attr2.max_rd_atomic = 1,
+            //   };
+
+        ret = ibv_modify_qp(s_ctx->gpu_qp, &qp_attr2,
+                            IBV_QP_STATE | IBV_QP_TIMEOUT |
+                                IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY |
+                                IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
+                        
+        // ret = ibv_modify_qp(g_qp, &qp_attr2, IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+        if(ret != 0) {
+        printf("Failed to modify qp to RTS. ret: %d\n", ret);
+        exit(-1);
+        }
+    }
+
+
+
   /*Post some requests*/
   // read request:
   conn = (struct connection *)(uintptr_t)wc.wr_id;
@@ -528,113 +835,113 @@ int main(int argc, char **argv)
   // process_gpu_mr(read_after_write_buffer);
 
   /*post*/
-  uintptr_t wr_id = (uintptr_t) conn;
-  uint32_t peer_rkey  = conn->peer_mr.rkey;
-  uintptr_t peer_addr = (uintptr_t)conn->peer_mr.addr;
-  uintptr_t local_address = (uintptr_t)read_after_write_buffer;
-  uint32_t lkey = read_after_write_mr->lkey;
-  uint32_t qpn = conn->qp->qp_num;
+  // uintptr_t wr_id = (uintptr_t) conn;
+  // uint32_t peer_rkey  = conn->peer_mr.rkey;
+  // uintptr_t peer_addr = (uintptr_t)conn->peer_mr.addr;
+  // uintptr_t local_address = (uintptr_t)read_after_write_buffer;
+  // uint32_t lkey = read_after_write_mr->lkey;
+  // uint32_t qpn = conn->qp->qp_num;
 
-  void *dev_qpsq_wqe_head;
-  void *qp_buf = wqbuf; 
-  void *dev_qp_sq; 
-  void *dev_qp_db;
-  void *qp_sq_wrid; 
-  void *bf_reg;
+  // void *dev_qpsq_wqe_head;
+  // void *qp_buf = wqbuf; 
+  // void *dev_qp_sq; 
+  // void *dev_qp_db;
+  // void *qp_sq_wrid; 
+  // void *bf_reg;
 
-  struct mlx5_qp *qp = to_mqp(conn->qp);
+  // struct mlx5_qp *qp = to_mqp(conn->qp);
 
-  cudaError_t cudaState = cudaHostRegister(qp->sq.wqe_head, sizeof(qp->sq.wqe_head), cudaHostRegisterMapped);
-  if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState !=  cudaSuccess)
-        exit(0);
-  // get GPU pointer for qp->sq.wqe_head
-  if(cudaHostGetDevicePointer(&dev_qpsq_wqe_head, qp->sq.wqe_head, 0) != cudaSuccess)
-      exit(0);
+  // cudaError_t cudaState = cudaHostRegister(qp->sq.wqe_head, sizeof(qp->sq.wqe_head), cudaHostRegisterMapped);
+  // if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState !=  cudaSuccess)
+  //       exit(0);
+  // // get GPU pointer for qp->sq.wqe_head
+  // if(cudaHostGetDevicePointer(&dev_qpsq_wqe_head, qp->sq.wqe_head, 0) != cudaSuccess)
+  //     exit(0);
 
-  cudaState = cudaHostRegister(&qp->sq, sizeof(qp->sq), cudaHostRegisterMapped);
-  if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState !=  cudaSuccess)
-        exit(0);
-  // get GPU pointer for qp->sq
-  if(cudaHostGetDevicePointer(&dev_qp_sq, &qp->sq, 0) != cudaSuccess)
-      exit(0);
+  // cudaState = cudaHostRegister(&qp->sq, sizeof(qp->sq), cudaHostRegisterMapped);
+  // if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState !=  cudaSuccess)
+  //       exit(0);
+  // // get GPU pointer for qp->sq
+  // if(cudaHostGetDevicePointer(&dev_qp_sq, &qp->sq, 0) != cudaSuccess)
+  //     exit(0);
 
-  cudaState = cudaHostRegister(qp->db, sizeof(qp->db), cudaHostRegisterMapped);
-  if(cudaState != cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered)
-        exit(0);
-  // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
-  // get GPU pointer for qp->db
-  if(cudaHostGetDevicePointer(&dev_qp_db, qp->db, 0) != cudaSuccess)
-      exit(0);
+  // cudaState = cudaHostRegister(qp->db, sizeof(qp->db), cudaHostRegisterMapped);
+  // if(cudaState != cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered)
+  //       exit(0);
+  // // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  // // get GPU pointer for qp->db
+  // if(cudaHostGetDevicePointer(&dev_qp_db, qp->db, 0) != cudaSuccess)
+  //     exit(0);
 
-  cudaState = cudaHostRegister(qp->sq.wrid, sizeof(qp->sq.wrid), cudaHostRegisterMapped);
-  // printf("Function name: %s, line number: %d cudaStatus: %d\n", __func__, __LINE__, cudaState);
-  if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState != cudaSuccess)
-        exit(0);
-  // get GPU pointer for qp->sq
-  if(cudaHostGetDevicePointer(&qp_sq_wrid, qp->sq.wrid, 0) != cudaSuccess)
-      exit(0);
+  // cudaState = cudaHostRegister(qp->sq.wrid, sizeof(qp->sq.wrid), cudaHostRegisterMapped);
+  // // printf("Function name: %s, line number: %d cudaStatus: %d\n", __func__, __LINE__, cudaState);
+  // if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState != cudaSuccess)
+  //       exit(0);
+  // // get GPU pointer for qp->sq
+  // if(cudaHostGetDevicePointer(&qp_sq_wrid, qp->sq.wrid, 0) != cudaSuccess)
+  //     exit(0);
 
-  cudaError_t cudaStatus1;
+  // cudaError_t cudaStatus1;
 
-  cudaStatus1 = cudaHostRegister(qp->bf->reg,  8, cudaHostRegisterIoMemory);
-  if (cudaStatus1 != cudaSuccess and cudaStatus1 != cudaErrorHostMemoryAlreadyRegistered) {
-    exit(0);
-  }
-  cudaStatus1 = cudaHostGetDevicePointer(&bf_reg, qp->bf->reg, 0);
-  if (cudaStatus1 != cudaSuccess) {
-    printf("cudaHostGetDevicePointer successful with no error: %s\n", cudaGetErrorString(cudaStatus1));
-    exit(0);
-  }
+  // cudaStatus1 = cudaHostRegister(qp->bf->reg,  8, cudaHostRegisterIoMemory);
+  // if (cudaStatus1 != cudaSuccess and cudaStatus1 != cudaErrorHostMemoryAlreadyRegistered) {
+  //   exit(0);
+  // }
+  // cudaStatus1 = cudaHostGetDevicePointer(&bf_reg, qp->bf->reg, 0);
+  // if (cudaStatus1 != cudaSuccess) {
+  //   printf("cudaHostGetDevicePointer successful with no error: %s\n", cudaGetErrorString(cudaStatus1));
+  //   exit(0);
+  // }
     
 
-  /*poll*/
-  int ibv_cqe;
-  uint32_t cqe_sz; 
-  int n = 1;
-  uint64_t wrid_0; 
-  unsigned int wqe_head_0;
+  // /*poll*/
+  // int ibv_cqe;
+  // uint32_t cqe_sz; 
+  // int n = 1;
+  // uint64_t wrid_0; 
+  // unsigned int wqe_head_0;
 
-  void *dev_wq; 
-  void *cq_buf = cqbuf; 
-  uint32_t *cons_index; 
-  void *cq_dbrec; 
-  void *dev_rsc; 
-  void *dev_wrid;
-  struct mlx5_cq *cq = to_mcq(s_ctx->cq);
-  struct mlx5_context *mctx = container_of(cq->verbs_cq.cq.context, struct mlx5_context, ibv_ctx.context);
-  struct mlx5_resource *rsc = mctx->uidx_table[0].table[0];
+  // void *dev_wq; 
+  // void *cq_buf = cqbuf; 
+  // uint32_t *cons_index; 
+  // void *cq_dbrec; 
+  // void *dev_rsc; 
+  // void *dev_wrid;
+  // struct mlx5_cq *cq = to_mcq(s_ctx->cq);
+  // struct mlx5_context *mctx = container_of(cq->verbs_cq.cq.context, struct mlx5_context, ibv_ctx.context);
+  // struct mlx5_resource *rsc = mctx->uidx_table[0].table[0];
 
-  // struct mlx5_wq * wq_sq = &qp->sq;
-  cudaState = cudaHostRegister(&qp->sq, sizeof(qp->sq), cudaHostRegisterMapped);
-  if(cudaState !=  cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered) 
-      exit(0);
-  if(cudaHostGetDevicePointer(&dev_wq, &qp->sq, 0) != cudaSuccess)
-      exit(0);
+  // // struct mlx5_wq * wq_sq = &qp->sq;
+  // cudaState = cudaHostRegister(&qp->sq, sizeof(qp->sq), cudaHostRegisterMapped);
+  // if(cudaState !=  cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered) 
+  //     exit(0);
+  // if(cudaHostGetDevicePointer(&dev_wq, &qp->sq, 0) != cudaSuccess)
+  //     exit(0);
 
-  cudaState = cudaHostRegister(&cq->cons_index, sizeof(cq->cons_index), cudaHostRegisterMapped);
-  if(cudaState != cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered)
-      exit(0);
-  // get GPU pointer for cons index
-  if(cudaHostGetDevicePointer(&cons_index, &cq->cons_index, 0) != cudaSuccess)
-      exit(0);
+  // cudaState = cudaHostRegister(&cq->cons_index, sizeof(cq->cons_index), cudaHostRegisterMapped);
+  // if(cudaState != cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered)
+  //     exit(0);
+  // // get GPU pointer for cons index
+  // if(cudaHostGetDevicePointer(&cons_index, &cq->cons_index, 0) != cudaSuccess)
+  //     exit(0);
 
-  cudaState = cudaHostRegister(cq->dbrec, sizeof(cq->dbrec), cudaHostRegisterMapped);
-  if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState !=  cudaSuccess) 
-      exit(0);
-  if(cudaHostGetDevicePointer(&cq_dbrec, cq->dbrec, 0) != cudaSuccess)
-      exit(0);
+  // cudaState = cudaHostRegister(cq->dbrec, sizeof(cq->dbrec), cudaHostRegisterMapped);
+  // if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState !=  cudaSuccess) 
+  //     exit(0);
+  // if(cudaHostGetDevicePointer(&cq_dbrec, cq->dbrec, 0) != cudaSuccess)
+  //     exit(0);
 
-  cudaState = cudaHostRegister(rsc, sizeof(rsc), cudaHostRegisterMapped);
-  if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState !=  cudaSuccess) 
-      exit(0);
-  if(cudaHostGetDevicePointer(&dev_rsc, rsc, 0) != cudaSuccess)
-      exit(0);
+  // cudaState = cudaHostRegister(rsc, sizeof(rsc), cudaHostRegisterMapped);
+  // if(cudaState != cudaErrorHostMemoryAlreadyRegistered && cudaState !=  cudaSuccess) 
+  //     exit(0);
+  // if(cudaHostGetDevicePointer(&dev_rsc, rsc, 0) != cudaSuccess)
+  //     exit(0);
 
-  cudaState = cudaHostRegister(qp->rq.wrid, sizeof(qp->rq.wrid), cudaHostRegisterMapped);
-  if(cudaState != cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered) 
-      exit(0);
-  if(cudaHostGetDevicePointer(&dev_wrid, qp->rq.wrid, 0) != cudaSuccess)
-      exit(0);
+  // cudaState = cudaHostRegister(qp->rq.wrid, sizeof(qp->rq.wrid), cudaHostRegisterMapped);
+  // if(cudaState != cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered) 
+  //     exit(0);
+  // if(cudaHostGetDevicePointer(&dev_wrid, qp->rq.wrid, 0) != cudaSuccess)
+  //     exit(0);
 
   // int a = cudaDeviceSynchronize();
   // if (a != 0){
@@ -668,10 +975,10 @@ int main(int argc, char **argv)
   for(int i = 0; i < mesg_size; i++)
     cpu_buffer[i] = 0;
 
-  // TEST_Z(cpu_mr = ibv_reg_mr(
-  //   s_ctx->pd, cpu_buffer, RDMA_BUFFER_SIZE*sizeof(int),
-  //   IBV_ACCESS_LOCAL_WRITE
-  // ));
+  TEST_Z(cpu_mr = ibv_reg_mr(
+    s_ctx->pd, cpu_buffer, RDMA_BUFFER_SIZE*sizeof(int),
+    IBV_ACCESS_LOCAL_WRITE
+  ));
   // printf("conn->peer_mr.addr: 0x%llx conn->peer_mr.rkey: %d\n", conn->peer_mr.addr, conn->peer_mr.rkey);
   // struct ibv_wc wc1;
   // conn = (struct connection *)(uintptr_t)wc.wr_id;
@@ -755,13 +1062,17 @@ int main(int argc, char **argv)
     wr.send_flags = IBV_SEND_SIGNALED;
     wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr;
     wr.wr.rdma.rkey = conn->peer_mr.rkey;
-    sge.addr = (uintptr_t)read_after_write_mr->addr; // conn->rdma_local_region;
+    
     sge.length = mesg_size*sizeof(int);
-    sge.lkey = read_after_write_mr->lkey; // conn->rdma_local_mr->lkey;
+    // sge.addr = (uintptr_t)read_after_write_mr->addr; // conn->rdma_local_region;
+    // sge.lkey = read_after_write_mr->lkey; // conn->rdma_local_mr->lkey;
+    sge.addr = (uintptr_t) cpu_mr->addr;
+    sge.lkey = cpu_mr->lkey;
     printf("read_after_write_mr->addr: 0x%llx\n\n\n", read_after_write_mr->addr);
     printf("read_after_write_buffer: 0x%llx\n", read_after_write_buffer);
     struct timeval start1, end1, start2, end2;
     double time_taken1, time_taken2;
+    process_gpu_mr(read_after_write_buffer, mesg_size);
     if(control_on_cpu){
       gettimeofday(&start1, NULL);
       ibv_post_send(conn->qp, &wr, &bad_wr);
@@ -781,10 +1092,12 @@ int main(int argc, char **argv)
       printf("POLLING - INTERNAL MEASUREMENT: %f useconds to execute \n", time_taken2);
     }
     else{
-    cpu_benchmark_whole(s_ctx->cq, 1, &wc, conn->qp, &wr, &bad_wr, num_msg, mesg_size, &bandwidth);
+      // cpu_benchmark_whole(s_ctx->gpu_cq, 1, &wc, s_ctx->gpu_qp, &wr, &bad_wr, num_msg, mesg_size, &bandwidth);
+      ibv_post_send(s_ctx->gpu_qp, &wr, &bad_wr);
+      while(ibv_poll_cq(s_ctx->gpu_cq, 1, &wc) <= 0);
     }
     process_gpu_mr(read_after_write_buffer, mesg_size);
-    printf("Function: %s line number: %d bandwidth: %f\n",__func__, __LINE__, bandwidth);
+    printf("Function: %s line number: %d cpu_buffer[0]: %d, cpu_buffer[%d]: %d\n",__func__, __LINE__, bandwidth, cpu_buffer[0], mesg_size-1, cpu_buffer[mesg_size-1]);
     // delay(10);
   //   for (int c = 1; c <= 32767; c++)
   //      for (int d = 1; d <= 32767; d++)
@@ -799,7 +1112,8 @@ int main(int argc, char **argv)
   printf("Function: %s line number: %d bandwidth: %f\n",__func__, __LINE__, bandwidth);
 
 
-  process_gpu_mr(read_after_write_buffer, mesg_size);
+  // process_gpu_mr(read_after_write_buffer, mesg_size);
+  
   // int sum = calculate_matrix(cpu_buffer, mesg_size);
   // // result = calculate_matrix(array, mesg_size);
 
@@ -831,10 +1145,10 @@ int main(int argc, char **argv)
   // sge.length = RDMA_BUFFER_SIZE*sizeof(int)-4;
   // sge.lkey = read_after_write_mr->lkey; // conn->rdma_local_mr->lkey;
   // printf("read_after_write_mr->addr: 0x%llx\n\n\n", read_after_write_mr->addr);
-  // cpu_benchmark_whole(s_ctx->cq, 1, &wc, conn->qp, &wr, &bad_wr);
-  // // TEST_NZ(host_gpu_post_send(conn->qp, &wr, &bad_wr, offset));
+  // // cpu_benchmark_whole(s_ctx->cq, 1, &wc, conn->qp, &wr, &bad_wr);
+  // TEST_NZ(host_gpu_post_send(conn->qp, &wr, &bad_wr, 2));
   // // // TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
-  // // process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  // process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   // // start_polling_on_cpu(s_ctx->cq, 1, &wc);
   // // printf("\n\nread from remote buffer: %s\n\n", conn->rdma_local_region);
   // printf("Function: %s line number: %d\n",__func__, __LINE__);
@@ -858,6 +1172,7 @@ int main(int argc, char **argv)
 
   // for(int i = 0; i < mesg_size; i++)
   //   cpu_buffer[i] = 4;
+  unsigned long offset = 2;
 
   // conn = (struct connection *)(uintptr_t)wc.wr_id;
   // bad_wr = NULL;
@@ -879,27 +1194,65 @@ int main(int argc, char **argv)
   // process_work_completion_events (s_ctx->comp_channel, &wc, 1);
 
   // conn = (struct connection *)(uintptr_t)wc.wr_id;
-  // bad_wr = NULL;
-  // memset(&wr, 0, sizeof(wr));
-  // wr.wr_id = (uintptr_t)conn;
-  // wr.opcode = IBV_WR_RDMA_READ;
-  // wr.sg_list = &sge;
-  // wr.num_sge = 1;
-  // wr.send_flags = IBV_SEND_SIGNALED;
-  // wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr;
-  // wr.wr.rdma.rkey = conn->peer_mr.rkey;
-  // sge.addr = (uintptr_t)cpu_buffer; // conn->rdma_local_region;
-  // sge.length = RDMA_BUFFER_SIZE*sizeof(int)-4;
-  // sge.lkey = cpu_mr->lkey; // conn->rdma_local_mr->lkey;
-  // // printf("cpu_benchmark: \n\n\n");
-  // // cpu_benchmark(s_ctx->cq, 1, &wc, conn->qp, &wr, &bad_wr);
-  // TEST_NZ(host_gpu_post_send(conn->qp, &wr, &bad_wr, offset));
-  // // // TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
-  // process_work_completion_events (s_ctx->comp_channel, &wc, 1);
-  // // start_polling_on_cpu(s_ctx->cq, 1, &wc);
-  // // printf("\n\nread from remote buffer: %s\n\n", conn->rdma_local_region);
-  // printf("Function: %s line number: %d\n",__func__, __LINE__);
-  // // process_gpu_mr(read_after_write_buffer);
+
+
+
+
+
+
+
+        //   bad_wr = NULL;
+        //   memset(&wr, 0, sizeof(wr));
+        //   // wr.wr_id = (uintptr_t)conn;
+        //   wr.opcode = IBV_WR_RDMA_READ;
+        //   wr.sg_list = &sge;
+        //   wr.num_sge = 1;
+        //   wr.send_flags = IBV_SEND_SIGNALED;
+        //   wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr;
+        //   wr.wr.rdma.rkey = conn->peer_mr.rkey;
+        //   sge.addr = (uintptr_t)read_after_write_buffer; // conn->rdma_local_region;
+        //   sge.length = 128*sizeof(int);
+        //   sge.lkey = read_after_write_mr->lkey; // conn->rdma_local_mr->lkey;
+        //   // printf("cpu_benchmark: \n\n\n");
+        //   // cpu_benchmark(s_ctx->cq, 1, &wc, conn->qp, &wr, &bad_wr);
+        //   TEST_NZ(host_gpu_post_send(conn->qp, &wr, &bad_wr, offset));
+        //   // // TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
+        //     // process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+        //   // start_polling_on_cpu(s_ctx->cq, 1, &wc);
+        //   printf("\n\ncpu_buffer[%d]: %d\n\n", 0, cpu_buffer[0]);
+        //   printf("Function: %s line number: %d\n",__func__, __LINE__);
+
+
+        //   // conn = (struct connection *)(uintptr_t)wc.wr_id;
+        //   bad_wr = NULL;
+        //   memset(&wr, 0, sizeof(wr));
+        //   // wr.wr_id = (uintptr_t)conn;
+        //   wr.opcode = IBV_WR_RDMA_READ;
+        //   wr.sg_list = &sge;
+        //   wr.num_sge = 1;
+        //   wr.send_flags = IBV_SEND_SIGNALED;
+        //   wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr;
+        //   wr.wr.rdma.rkey = conn->peer_mr.rkey;
+        //   sge.addr = (uintptr_t)read_after_write_buffer + 128*sizeof(int); // conn->rdma_local_region;
+        //   sge.length = 128*sizeof(int); // RDMA_BUFFER_SIZE*sizeof(int)-4;
+        //   sge.lkey = read_after_write_mr->lkey; // conn->rdma_local_mr->lkey;
+        //   // printf("cpu_benchmark: \n\n\n");
+        //   // cpu_benchmark(s_ctx->cq, 1, &wc, conn->qp, &wr, &bad_wr);
+        // // TEST_NZ(host_gpu_post_send(conn->qp, &wr, &bad_wr, offset));
+        //   // // TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
+        //     // process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+        //   // start_polling_on_cpu(s_ctx->cq, 1, &wc);
+        //   printf("\n\ncpu_buffer[%d]: %d\n\n", 128, cpu_buffer[128]);
+        //   printf("Function: %s line number: %d\n",__func__, __LINE__);
+          
+        //   printf("\n\ncpu_buffer[%d]: %d\n\n", 256, cpu_buffer[256]);
+
+        //   process_gpu_mr(read_after_write_buffer, 128);
+        //   process_gpu_mr(read_after_write_buffer + 128, 128);
+        //   process_gpu_mr(read_after_write_buffer + 256, 128);
+
+
+
 
   // for(int i = 0; i < mesg_size; i++)
   //   printf("%d ", cpu_buffer[i]);
@@ -1105,21 +1458,21 @@ int process_work_completion_events2 (struct ibv_comp_channel *comp_channel,
 }
 
 int gpu_process_work_completion_events (struct ibv_comp_channel *comp_channel, 
-		struct ibv_wc *wc, int max_wc){
+		struct ibv_wc *wc, int max_wc, struct context *s_ctx){
   
-  struct ibv_cq *cq;
-  void *context = NULL;
+  // struct ibv_cq *cq;
+  // void *context = NULL;
 
-  TEST_NZ(ibv_get_cq_event(comp_channel, &cq, &context));
-  ibv_ack_cq_events(cq, 1);
-  TEST_NZ(ibv_req_notify_cq(cq, 0));
-  // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
-  // while (ibv_poll_cq(cq, 1, &wc))
-  //     on_completion(&wc);
+  // TEST_NZ(ibv_get_cq_event(comp_channel, &cq, &context));
+  // ibv_ack_cq_events(cq, 1);
+  // TEST_NZ(ibv_req_notify_cq(cq, 0));
+  // // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  // // while (ibv_poll_cq(cq, 1, &wc))
+  // //     on_completion(&wc);
 
   int total_wc = 0;
   do {
-    int ret = ibv_poll_cq(cq /* the CQ, we got notification for */, 
+    int ret = ibv_poll_cq(s_ctx->cq /* the CQ, we got notification for */, 
       1 - total_wc /* number of remaining WC elements*/,
       wc + total_wc/* where to store */);
 
@@ -1152,14 +1505,23 @@ void build_connection(struct rdma_cm_id *id)
 {
   struct connection *conn;
   struct ibv_qp_init_attr qp_attr;
+  printf("Function: %s line number: %d\n",__func__, __LINE__);
   build_context(id->verbs);
+  printf("Function: %s line number: %d\n",__func__, __LINE__);
   build_qp_attr(&qp_attr);
-  if(wq_buffer_gpu == 1 || wq_buffer_gpu == 2)
-    TEST_NZ(rdmax_create_qp(id, s_ctx->pd, &qp_attr, wqbuf, wqbuf_size));
-  else
+  printf("Function: %s line number: %d\n",__func__, __LINE__);
+  void *buf;
+  cudaMalloc((void **)&buf, 8192); 
+  // if(wq_buffer_gpu == 1 || wq_buffer_gpu == 2){
+    
+  //   TEST_NZ(rdmax_create_qp(id, s_ctx->pd, &qp_attr, buf, 8192));
+  //   TEST_Z(g_qp = ibvx_create_qp(s_ctx->pd, &qp_attr, wqbuf, wqbuf_size));
+    
+  // }
+  // else
     TEST_NZ(rdma_create_qp(id, s_ctx->pd, &qp_attr));
      
-  // printf("Function: %s line number: %d\n",__func__, __LINE__);
+  printf("Function: %s line number: %d\n",__func__, __LINE__);
 
   // printf("Function: %s line number: %d\n",__func__, __LINE__);
 
@@ -1197,8 +1559,8 @@ void post_receives(struct connection *conn)
   sge.length = sizeof(struct message);
   sge.lkey = conn->recv_mr->lkey;
   // printf("Function: %s line number: %d sge.length: %d\n",__func__, __LINE__, sge.length);
-  // TEST_NZ(ibv_post_recv(conn->qp, &wr, &bad_wr));
-  TEST_NZ(host_gpu_post_recv(conn->qp, &wr, &bad_wr));
+  TEST_NZ(ibv_post_recv(conn->qp, &wr, &bad_wr));
+  // TEST_NZ(host_gpu_post_recv(conn->qp, &wr, &bad_wr));
   // printf("Function: %s line number: %d\n",__func__, __LINE__);
 }
 
@@ -1314,11 +1676,16 @@ void build_context(struct ibv_context *verbs)
   TEST_Z(s_ctx->pd = ibv_alloc_pd(s_ctx->ctx));
   TEST_Z(s_ctx->comp_channel = ibv_create_comp_channel(s_ctx->ctx));
   if (cq_buffer_gpu == 1 || cq_buffer_gpu == 2){
-    TEST_Z(s_ctx->cq = ibvx_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0, cqbuf, cqbuf_size)); /* cqe=10 is arbitrary */
+    printf("Function: %s line number: %d\n",__func__, __LINE__);
+    // TEST_Z(s_ctx->gpu_cq = ibvx_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0, cqbuf2, cqbuf_size)); /* cqe=10 is arbitrary */
+    TEST_Z(s_ctx->gpu_cq = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */
+    TEST_NZ(ibv_req_notify_cq(s_ctx->gpu_cq, 0));
+    printf("Function: %s line number: %d\n",__func__, __LINE__);
   }
-  else
-    TEST_Z(s_ctx->cq = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */
+  // else
+  TEST_Z(s_ctx->cq = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */
   TEST_NZ(ibv_req_notify_cq(s_ctx->cq, 0));
+  
   
 
  
@@ -1341,7 +1708,7 @@ int on_addr_resolved(struct rdma_cm_id *id)
 int on_connection(struct rdma_cm_id *id, unsigned long offset)
 {
   on_connect(id->context);
-  send_mr(id->context, offset);
+  // send_mr(id->context, offset);
 
   return 0;
 }
@@ -2616,7 +2983,7 @@ int host_gpu_post_recv(struct ibv_qp *ibqp, struct ibv_recv_wr *wr,
 
 }
 
-__device__ int device_gpu_post_send(unsigned int qpbf_bufsize,/* unsigned int qpsq_cur_post,
+__device__ int device_gpu_post_send(unsigned int cur_post,/* unsigned int qpsq_cur_post,
           unsigned int qpsq_wqe_cnt,*/ uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
           uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, int wr_opcode, 
           unsigned int bf_offset, uint32_t qp_num, uint64_t wr_id, 
@@ -2668,7 +3035,7 @@ __device__ int device_gpu_post_send(unsigned int qpbf_bufsize,/* unsigned int qp
     unsigned int *qp_db = (unsigned int *) dev_qp_db; // qp->db
 
     uint64_t * qpsq_wrid = (uint64_t *) dev_wrid;// qp_sq->wrid[idx] = wr_id;
-    idx = qp_sq->cur_post & (qp_sq->wqe_cnt - 1);
+    idx = cur_post & (qp_sq->wqe_cnt - 1);
     seg = (qp_buf + 256 + (idx * 64)); // mlx5_get_send_wqe(qp, idx);
     ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
     *(uint32_t *)(seg + 8) = 0;
@@ -2697,13 +3064,13 @@ __device__ int device_gpu_post_send(unsigned int qpbf_bufsize,/* unsigned int qp
     size += 1; // sizeof(struct mlx5_wqe_data_seg) / 16;
     // read: 4 -> 16, write: 0 -> 8, send: 2 -> 10
     mlx5_opcode = wr_opcode*2 + 8 - 2*(wr_opcode == 2); // mlx5_ib_opcode[wr->opcode];
-    ctrl->opmod_idx_opcode = htonl(((qp_sq->cur_post & 0xffff) << 8) | mlx5_opcode);
+    ctrl->opmod_idx_opcode = htonl(((cur_post & 0xffff) << 8) | mlx5_opcode);
     ctrl->qpn_ds = htonl(size | (qp_num << 8));
     
-    qpsq_wrid[idx] = wr_id;
-    qpsq_wqe_head[idx] = qp_sq->head;
-    int tmp = (size * 16 + 64 - 1) / 64;
-    qp_sq->cur_post += tmp;
+    // qpsq_wrid[idx] = wr_id;
+    // qpsq_wqe_head[idx] = qp_sq->head;
+    int tmp = 1; // (size * 16 + 64 - 1) / 64;
+    // qp_sq->cur_post += tmp;
     // printf("Function name: %s, line number: %d\n", __func__, __LINE__); 
     // db update:
     // qp_sq->head += 1;
@@ -2823,8 +3190,14 @@ __global__ void global_gpu_post_send(
   int start = 0;
   timer[0] = clock();
   start = start + timer[0];
-  int err = device_gpu_post_send(qpbf_bufsize, wr_rdma_remote_addr, wr_rdma_rkey,
+  int cur_post = 0;
+  int err = device_gpu_post_send(cur_post, wr_rdma_remote_addr, wr_rdma_rkey,
           wr_sg_length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
+          bf_offset, qp_num, wr_id, qp_buf, /*dev_qpsq_wr_data,*/ 
+          dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, /*dev_wr_sg,*/ dev_wrid, first_dword, second_dword, bf_reg, timer);
+  cur_post++;
+   err = device_gpu_post_send(cur_post, wr_rdma_remote_addr+wr_sg_length, wr_rdma_rkey,
+          wr_sg_length, wr_sg_lkey, wr_sg_addr+wr_sg_length, wr_opcode, 
           bf_offset, qp_num, wr_id, qp_buf, /*dev_qpsq_wr_data,*/ 
           dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, /*dev_wr_sg,*/ dev_wrid, first_dword, second_dword, bf_reg, timer);
   timer[1] = clock();
@@ -3813,7 +4186,7 @@ out:
 }
 
 __device__ void device_process_gpu_mr(int *addr, int size){
-  printf("\n\nGpu memory read: %d, %d\n\n", addr[2], addr[size-1]);
+  printf("\n\nGpu memory read: addr[0]: %d, addr[size-1]: %d\n\n", addr[0], addr[size-1]);
 }
 
 __global__ void global_process_gpu_mr(int *addr, int size){
@@ -3885,7 +4258,8 @@ __device__ int read_write_post(
     unsigned int *qp_db = (unsigned int *) dev_qp_db; // qp->db
 
     uint64_t * qpsq_wrid = (uint64_t *) dev_wrid;// qp_sq->wrid[idx] = wr_id;
-    idx = qp_sq->cur_post & (qp_sq->wqe_cnt - 1);
+    // idx = qp_sq->cur_post & (qp_sq->wqe_cnt - 1);
+    idx = wr_id & (qp_sq->wqe_cnt - 1);
     seg = (qp_buf + 256 + (idx * 64)); // mlx5_get_send_wqe(qp, idx);
     ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
     *(uint32_t *)(seg + 8) = 0;
@@ -3914,26 +4288,27 @@ __device__ int read_write_post(
     size += 1; // sizeof(struct mlx5_wqe_data_seg) / 16;
     // read: 4 -> 16, write: 0 -> 8, send: 2 -> 10
     mlx5_opcode = wr_opcode*2 + 8 - 2*(wr_opcode == 2); // mlx5_ib_opcode[wr->opcode];
-    ctrl->opmod_idx_opcode = htonl(((qp_sq->cur_post & 0xffff) << 8) | mlx5_opcode);
+    // ctrl->opmod_idx_opcode = htonl(((qp_sq->cur_post & 0xffff) << 8) | mlx5_opcode);
+    ctrl->opmod_idx_opcode = htonl(((wr_id & 0xffff) << 8) | mlx5_opcode);
     ctrl->qpn_ds = htonl(size | (qp_num << 8));
     
-    qpsq_wrid[idx] = wr_id;
-    qpsq_wqe_head[idx] = qp_sq->head;
+    // qpsq_wrid[idx] = wr_id;
+    // qpsq_wqe_head[idx] = qp_sq->head;
     int tmp = (size * 16 + 64 - 1) / 64;
-    qp_sq->cur_post += tmp;
+    // qp_sq->cur_post += 1;
     // printf("Function name: %s, line number: %d\n", __func__, __LINE__); 
     // db update:
     // qp_sq->head += 1;
-    qp_db[MLX5_SND_DBR] = htonl(tmp & 0xffff);
+    qp_db[MLX5_SND_DBR] = htonl((wr_id+1) & 0xffff);
 
     void *addr = bf_reg; // + 0xa00;
     uint64_t val;
     /* Do 64 bytes at a time */
     // addr = bf_reg; // + bf_offset;
     val = *(uint64_t *) ctrl;
-
-    *(volatile uint32_t *)addr = htonl(htonl64(val) >> 32);
-    *(volatile uint32_t *)(addr+4) = htonl(htonl64(val));
+    *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl ;
+    // *(volatile uint32_t *)addr = htonl(htonl64(val) >> 32);
+    // *(volatile uint32_t *)(addr+4) = htonl(htonl64(val));
     // // bf->offset ^= bf->buf_size;
     
 	return 0;
@@ -4798,7 +5173,7 @@ int cpu_benchmark(struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *wc,
 }
 
 
-
+// int cur_post;
 int cpu_benchmark_whole(struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *wc,
                    struct ibv_qp *ibqp, struct ibv_send_wr *wr,
                    struct ibv_send_wr **bad_wr, int num_packets, int mesg_size, float *bandwidth){
@@ -4855,6 +5230,322 @@ int cpu_benchmark_whole(struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *w
       exit(0);
 
   // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  int cur_post = qp->sq.cur_post;
+  printf("Function name: %s, line number: %d cur_post: %d\n", __func__, __LINE__, cur_post);
+  success = cudaHostRegister(&qp->sq, sizeof(qp->sq), cudaHostRegisterMapped);
+  if(success != cudaErrorHostMemoryAlreadyRegistered && success !=  cudaSuccess)
+        exit(0);
+  // get GPU pointer for qp->sq
+  if(cudaHostGetDevicePointer(&dev_qp_sq, &qp->sq, 0) != cudaSuccess)
+      exit(0);
+
+  printf("Function name: %s, line number: %d bf->uar: 0x%llx\n", __func__, __LINE__, bf->uar);
+  cudaError_t cudaStatus1;
+
+  void *device_db;
+  cudaStatus1 = cudaHostRegister(bf->reg,  8, cudaHostRegisterIoMemory);
+  if (cudaStatus1 != cudaSuccess && cudaStatus1 != cudaErrorHostMemoryAlreadyRegistered) exit(0);
+  
+  cudaStatus1 = cudaHostGetDevicePointer(&device_db, bf->reg, 0);
+  if (cudaStatus1 != cudaSuccess) exit(0);
+
+
+  cudaError_t cudaState;
+  cudaState = cudaHostRegister(qp->db, sizeof(qp->db), cudaHostRegisterMapped);
+
+  if(cudaState != cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered)
+        exit(0);
+  if(cudaHostGetDevicePointer(&dev_qp_db, qp->db, 0) != cudaSuccess)
+      exit(0);
+  cudaError_t cudaStatus;
+  
+
+  cudaStatus = cudaHostRegister(qp->sq.wrid, sizeof(qp->sq.wrid), cudaHostRegisterMapped);
+  if(cudaStatus != cudaErrorHostMemoryAlreadyRegistered && cudaStatus != cudaSuccess)
+        exit(0);
+  // get GPU pointer for qp->sq
+  if(cudaHostGetDevicePointer(&dev_wrid1, qp->sq.wrid, 0) != cudaSuccess)
+      exit(0);
+  
+ 
+
+  struct mlx5_cq *cq = to_mcq(cq_ptr);
+  void *cqe;
+  // printf("Function: %s line number: %d cq->buf.length: %d\n",__func__, __LINE__, cq->buf_a.length);
+  struct mlx5_cqe64 *cqe64;
+  // int cond = 0;
+  uint32_t cons_index = cq->cons_index;
+ 
+  void *dev_cq_ptr; // cq pointer for GPU
+  void *dev_cons_index; // 
+  // void *dev_ret; // 
+  void *dev_total_wc; // 
+  void *dev_cq_dbrec;
+  struct mlx5_context *mctx = container_of(cq->verbs_cq.cq.context, struct mlx5_context, ibv_ctx.context);
+  // mctx->uidx_table[0].table
+  void *dev_mctx;
+  void **dev_table;
+  void *dev_rsc;
+  void *dev_qp_context;
+  void *dev_qp_buf;
+  int total_wc = 0, ret = -1;
+  struct mlx5_resource *rsc = mctx->uidx_table[0].table[0];
+  if(!rsc) printf("rsc is null\n\n\n");
+  qp = (struct mlx5_qp *)(rsc);
+  // printf("qp buf address: 0x%llx\n\n\n", qp->buf.buf);
+  struct mlx5_context *qp_ctx = to_mctx(qp->ibv_qp->pd->context); 
+  
+  cudaError_t crc = cudaSuccess;
+  // cudaError_t cudaStatus;
+ 
+  if (cq_buffer_gpu != 1){
+    cudaStatus = cudaHostRegister(cq->active_buf->buf /*cqbuf*/, cq->active_buf->length /*cqbuf_size*/, cudaHostRegisterMapped);
+    if(cudaStatus != cudaErrorHostMemoryAlreadyRegistered && cudaStatus != cudaSuccess) exit(0);
+    if(cudaHostGetDevicePointer(&dev_cq_ptr, /*cqbuf*/ cq->active_buf->buf, 0) !=  cudaSuccess) exit(0);
+  }
+  else dev_cq_ptr = cq->active_buf->buf;
+  
+   
+  cudaStatus = cudaHostRegister(&cq->cons_index, sizeof(cq->cons_index), cudaHostRegisterMapped);
+  if(cudaStatus != cudaSuccess && cudaStatus != cudaErrorHostMemoryAlreadyRegistered) exit(0);
+  if(cudaHostGetDevicePointer(&dev_cons_index, &cq->cons_index, 0) != cudaSuccess) exit(0);
+ 
+  cudaStatus = cudaHostRegister(&ret, sizeof(ret), cudaHostRegisterMapped);
+  if(cudaStatus != cudaErrorHostMemoryAlreadyRegistered && cudaStatus !=  cudaSuccess) exit(0);
+  if(cudaHostGetDevicePointer(&dev_ret, &ret, 0) != cudaSuccess) exit(0);
+      
+  cudaStatus = cudaHostRegister(cq->dbrec, sizeof(cq->dbrec), cudaHostRegisterMapped);
+  if(cudaStatus != cudaErrorHostMemoryAlreadyRegistered && cudaStatus !=  cudaSuccess) exit(0);
+  if(cudaHostGetDevicePointer(&dev_cq_dbrec, cq->dbrec, 0) != cudaSuccess)
+      exit(0);
+
+
+  cudaStatus = cudaHostRegister(rsc, sizeof(rsc), cudaHostRegisterMapped);
+  if(cudaStatus != cudaErrorHostMemoryAlreadyRegistered && cudaStatus !=  cudaSuccess) exit(0);
+  if(cudaHostGetDevicePointer(&dev_rsc, rsc, 0) != cudaSuccess) exit(0);
+
+  struct mlx5_wq *qp_rq = &qp->rq;
+ 
+  struct mlx5_wq * wq_sq = &qp->sq;
+  void *dev_wq;
+ 
+  cudaState = cudaHostRegister(wq_sq, sizeof(qp->sq), cudaHostRegisterMapped);
+  if(cudaState !=  cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered)  exit(0);
+  if(cudaHostGetDevicePointer(&dev_wq, wq_sq, 0) != cudaSuccess) exit(0);
+
+  cudaState = cudaHostRegister(qp_rq->wrid, sizeof(qp_rq->wrid), cudaHostRegisterMapped);
+  if(cudaState != cudaSuccess && cudaState != cudaErrorHostMemoryAlreadyRegistered) exit(0);
+  if(cudaHostGetDevicePointer(&dev_wrid, qp_rq->wrid, 0) != cudaSuccess) exit(0);
+
+	int cuda_device_id = 0;
+	int cuda_pci_bus_id;
+	int cuda_pci_device_id;
+	int index;
+	CUdevice cu_device;
+	CUdevice cuDevice_selected;
+
+	// printf("initializing CUDA\n");
+	CUresult error = cuInit(0);
+	if (error != CUDA_SUCCESS) {
+		// printf("cuInit(0) returned %d\n", error);
+		return -1;
+	}
+  // printf("Function name: %s, line number: %d cqe64->op_own >> 4: %d\n", __func__, __LINE__, cqe64->op_own >> 4);
+	int deviceCount = 0;
+	error = cuDeviceGetCount(&deviceCount);
+	if (error != CUDA_SUCCESS) {
+		// printf("cuDeviceGetCount() returned %d\n", error);
+		return -1;
+	}
+	/* This function call returns 0 if there are no CUDA capable devices. */
+	if (deviceCount == 0) {
+		// printf("There are no available device(s) that support CUDA\n");
+		return -1;
+	}
+  
+	for (int index = 0; index < deviceCount; index++) {
+		if(cuDeviceGet(&cu_device, index) != CUDA_SUCCESS) exit(0);
+		cuDeviceGetAttribute(&cuda_pci_bus_id, CU_DEVICE_ATTRIBUTE_PCI_BUS_ID , cu_device);
+		cuDeviceGetAttribute(&cuda_pci_device_id, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID , cu_device);
+		// printf("CUDA device %d: PCIe address is %02X:%02X\n", index, (unsigned int)cuda_pci_bus_id, (unsigned int)cuda_pci_device_id);
+	}
+
+
+	if(cuDeviceGet(&cuDevice_selected, cuda_device_id) != cudaSuccess){
+		// printf("error on cuDeviceGet\n");
+		exit(0);
+	}
+  // printf("Function name: %s, line number: %d cqe64->op_own >> 4: %d\n", __func__, __LINE__, cqe64->op_own >> 4);
+	char name[128];
+	if(cuDeviceGetName(name, sizeof(name), cuda_device_id) != cudaSuccess){
+		// printf("error on cuDeviceGetName\n");
+		exit(0);
+	}
+	// printf("[pid = %d, dev = %d] device name = [%s]\n", getpid(), cuDevice_selected, name);
+
+    struct timespec res;
+    long nano1,nano2;
+
+    clock_t start, end;
+    double cpu_time_used;
+    struct timeval cpu_timer[2];
+
+    size_t free_memory, total_memory;
+    cudaMemGetInfo(&free_memory, &total_memory);
+    // printf("free memory: %zu, total_memory: %zu\n", free_memory/(1024 * 1024), total_memory/(1024 * 1024));
+
+  int num_of_packets = num_packets;
+  int size_timer = num_of_packets*4;
+  clock_t *dtimer1 = NULL;
+	clock_t timer[size_timer], timer1[2];
+
+	if (cudaSuccess != cudaMalloc((void **)&dtimer1, sizeof(clock_t) * 2)) 
+		exit(0);
+  
+	cudaDeviceProp devProp;
+    cudaGetDeviceProperties(&devProp, 0);
+
+  struct ibv_send_wr wr1 = *wr;
+  clock_t *dtimer = NULL;
+  
+	if (cudaSuccess != cudaMalloc((void **)&dtimer, sizeof(clock_t) * size_timer)) 
+		exit(0);
+
+    //   int a = cudaDeviceSynchronize();
+    // printf("cudasynchronize: %d\n", a);
+    // gpu_whole<<<1, 1>>>(qpbf_bufsize, wr1, /*qpsq_cur_post, qpsq_wqe_cnt,*/
+          
+    //       wr_sg_length, wr_sg_lkey, wr_sg_addr,
+    //       wr_opcode, 
+    //       qp_num, wr_id, /*qp->buf.buf*/ qp_buf, 
+    //       dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, dev_wrid1, 
+    //       device_db,
+          
+    //       dev_cq_ptr, dev_cons_index, cq->verbs_cq.cq.cqe, cq->cqe_sz, 1, 
+    //       dev_cq_dbrec, dev_rsc,
+    //       dev_wrid,
+    //       dtimer, wq_sq->wrid[0], wq_sq->wqe_head[0],
+    //       dev_wq
+    //       );
+    int a = cudaDeviceSynchronize();
+    printf("cudasynchronize: %d\n", a);
+    
+    multiple_packets<<<1, 1>>>(num_of_packets,
+          qpbf_bufsize, wr1, /*qpsq_cur_post, qpsq_wqe_cnt,*/
+          mesg_size,
+          wr_sg_length, wr_sg_lkey, wr_sg_addr,
+          wr_opcode, 
+          qp_num, wr_id, /*qp->buf.buf*/ qp_buf, 
+          dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, dev_wrid1, 
+          device_db,
+          
+          dev_cq_ptr, dev_cons_index, cq->verbs_cq.cq.cqe, cq->cqe_sz, 1, 
+          dev_cq_dbrec, dev_rsc,
+          dev_wrid,
+          dtimer, wq_sq->wrid[0], wq_sq->wqe_head[0],
+          dev_wq);
+        
+    a = cudaDeviceSynchronize();
+    printf("cudasynchronize: %d\n", a);
+    clock_gettime(CLOCK_REALTIME,&res);
+    nano2 = res.tv_nsec;
+
+  cudaGetDeviceProperties(&devProp, 0);
+
+	cudaMemcpy(timer, dtimer, sizeof(clock_t) * size_timer, cudaMemcpyDeviceToHost);
+  cudaFree(dtimer);
+
+  clock_t poll = 0, post = 0;
+  for (int i = 0; i < num_of_packets; i++){
+      // printf("timer[i]: %d\n", timer[i]);
+      // printf("timer[i+1]: %d\n", timer[i+1]);
+      // printf("timer[i+2]: %d\n", timer[i+2]);
+      // printf("timer[i+3]: %d\n", timer[i+3]);
+  
+      poll += timer[4*i+3] - timer[4*i+2];
+      post += timer[4*i+1] - timer[4*i];
+  
+  }
+  printf("/*************************************************************/\n");
+  printf("Test results for %d packets each with %d bytes\n", num_of_packets, mesg_size*4);
+
+  printf("post: %d, poll: %d\n", post, poll );
+
+  float freq_post = (float)1/((float)devProp.clockRate*1000);
+	float g_usec_post = (float)((float)1/(devProp.clockRate*1000))*((post)) * 1000000;
+	printf("POST - INTERNAL MEASUREMENT: %f useconds to execute \n", g_usec_post / num_of_packets);
+  
+  float freq_poll = (float)1/(devProp.clockRate*1000);
+	float g_usec__poll = (float)((float)1/(devProp.clockRate*1000))*((poll)) * 1000000;
+	printf("POLLING - INTERNAL MEASUREMENT: %f useconds to execute \n", g_usec__poll / num_of_packets);
+
+  float total_usec = /*g_usec_post +*/ g_usec__poll;
+  printf("Total time: %f useconds for %d bytes data\n", total_usec, num_of_packets*mesg_size*4);
+
+  float throughtput = (float)(num_of_packets*mesg_size*4)/(total_usec*1e-6*1e9);
+  *bandwidth = throughtput;
+  printf("Throughput: %f GBps\n", throughtput);
+  printf("/*************************************************************/\n");
+}
+
+int multithreaded(struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *wc,
+                   struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+                   struct ibv_send_wr **bad_wr, int num_packets, int mesg_size, float *bandwidth){
+
+
+  int local_ret;
+  struct mlx5_qp *qp = to_mqp(ibqp);
+
+  struct mlx5_bf *bf = qp->bf;
+  // printf("Function name: %s, line number: %d, qp->buf.length: %d\n", __func__, __LINE__, qp->buf.length);
+  // input variables:
+  unsigned int qpbf_bufsize = qp->bf->buf_size; // 256
+  unsigned int qpsq_cur_post = qp->sq.cur_post;
+  unsigned int qpsq_wqe_cnt = qp->sq.wqe_cnt;
+  uint64_t wr_rdma_remote_addr = wr->wr.rdma.remote_addr;
+  uint32_t wr_rdma_rkey = wr->wr.rdma.rkey;
+  uint32_t wr_sg_length = wr->sg_list->length;
+  uint32_t wr_sg_lkey = wr->sg_list->lkey;
+  uint64_t wr_sg_addr = wr->sg_list->addr;
+  int wr_opcode = wr->opcode;
+  uint32_t qp_num = ibqp->qp_num;
+  unsigned int bf_offset = bf->offset; 
+  uint64_t wr_id = wr->wr_id;
+  // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  // pointers
+  void *qp_buf;
+  void *dev_qpsq_wr_data; //qp->sq.wr_data;
+  void *dev_qpsq_wqe_head;// qp->sq.wqe_head;
+  void *dev_qp_sq; // &qp->sq;
+  int *bf_reg = (int *) bf->reg; // bf->reg;
+  void *dev_qp_db; // qp->db
+  void *dev_wr_sg; // wr->sg_list
+  int *dev_ret; // &ret
+  void *dev_bf_reg; 
+  void *dev_wrid, *dev_wrid1; // qp->sq.wrid
+  void *dev_wqe_head; // qp->sq.wqe_head
+  
+  // printf("Function name: %s, line number: %d cudaHostRegister(qp->buf.buf, sizeof(qp->buf.buf), cudaHostRegisterMapped): %d\n", 
+  //         __func__, __LINE__, cudaHostRegister(qp->buf.buf, sizeof(qp->buf.buf), cudaHostRegisterMapped));
+  cudaError_t success;
+  // pin host memory and get device pointer:
+  if (wq_buffer_gpu != 1){
+    success = cudaHostRegister(qp->buf.buf, qp->buf.length, cudaHostRegisterMapped);
+    if(success !=  cudaSuccess && success != cudaErrorHostMemoryAlreadyRegistered) exit(0);
+    if(cudaHostGetDevicePointer(&qp_buf, qp->buf.buf, 0) != cudaSuccess) exit(0);
+  }
+  else qp_buf = qp->buf.buf;
+  
+  success = cudaHostRegister(qp->sq.wqe_head, sizeof(qp->sq.wqe_head), cudaHostRegisterMapped);
+  if(success != cudaErrorHostMemoryAlreadyRegistered && success !=  cudaSuccess)
+        exit(0);
+  // get GPU pointer for qp->sq.wqe_head
+  if(cudaHostGetDevicePointer(&dev_qpsq_wqe_head, qp->sq.wqe_head, 0) != cudaSuccess)
+      exit(0);
+
+  // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  int cur_post = qp->sq.cur_post;
+  printf("Function name: %s, line number: %d cur_post: %d\n", __func__, __LINE__, cur_post);
   success = cudaHostRegister(&qp->sq, sizeof(qp->sq), cudaHostRegisterMapped);
   if(success != cudaErrorHostMemoryAlreadyRegistered && success !=  cudaSuccess)
         exit(0);
@@ -5168,27 +5859,27 @@ __global__ void gpu_whole(
   sge.length = (uint32_t) RDMA_BUFFER_SIZE*sizeof(int); //RDMA_BUFFER_SIZE;
   sge.lkey = wr_sg_lkey; // conn->rdma_local_mr->lkey;
   int *addr = (int *) wr_sg_addr;
-
+  int cur_post = 0;
   timer[0] = clock();
   int ret = post(qpbf_bufsize, wr.wr.rdma.remote_addr, wr.wr.rdma.rkey,
           wr_sg_length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
-          qp_num, wr_id, &wr, qp_buf,
+          qp_num, wr_id, cur_post, &wr, qp_buf,
           dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, dev_wrid1, bf_reg);
   timer[1] = clock();
 
   
   timer[2] = clock();
-      while(poll(cq_buf /* the CQ, we got notification for */, 
-          &wc1, // twc/* where to store */,
-          (uint32_t *) cons_index,
-          ibv_cqe,
-          cqe_sz,
-          max_wc /* number of remaining WC elements*/,
-          (uint32_t *) dev_cq_dbrec,
+      // while(poll(cq_buf /* the CQ, we got notification for */, 
+      //     &wc1, // twc/* where to store */,
+      //     (uint32_t *) cons_index,
+      //     ibv_cqe,
+      //     cqe_sz,
+      //     max_wc /* number of remaining WC elements*/,
+      //     (uint32_t *) dev_cq_dbrec,
           
-          dev_rsc, 
-          dev_wrid, wrid_0, wqe_head_0,
-          dev_wq) < 0);
+      //     dev_rsc, 
+      //     dev_wrid, wrid_0, wqe_head_0,
+      //     dev_wq) < 0);
       // printf("gpu polling\n");
   // while (addr[RDMA_BUFFER_SIZE-2] == 0); 
   
@@ -5204,10 +5895,7 @@ __global__ void gpu_whole(
 }
 
 __device__ int poll( void *cq_buf, struct ibv_wc *wc, uint32_t *cons_index,
-                            int ibv_cqe, uint32_t cqe_sz, int n, void *cq_dbrec,
-                            void *dev_rsc, void *dev_wrid, 
-							              uint64_t wrid_0, unsigned int wqe_head_0,
-                            void *dev_wq) 
+                     int ibv_cqe, uint32_t cqe_sz, int n, void *cq_dbrec) 
 {
    
 	// timer[0] = clock();
@@ -5270,10 +5958,11 @@ __device__ int poll( void *cq_buf, struct ibv_wc *wc, uint32_t *cons_index,
   return 0;// err; 
 }
 
+
 __device__ int post(unsigned int qpbf_bufsize,
           uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
           uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, int wr_opcode, 
-          uint32_t qp_num, uint64_t wr_id, struct ibv_send_wr *wr, 
+          uint32_t qp_num, uint64_t wr_id, int cur_post, struct ibv_send_wr *wr, 
           void *qp_buf,  void *dev_qpsq_wqe_head, 
           void *dev_qp_sq, void *dev_qp_db, void *dev_wrid,
           void *bf_reg)
@@ -5288,10 +5977,12 @@ __device__ int post(unsigned int qpbf_bufsize,
   struct mlx5_wq *qp_sq = (struct mlx5_wq *) dev_qp_sq; // &qp->sq;
   unsigned int *qp_db = (unsigned int *) dev_qp_db; // qp->db
   uint64_t * qpsq_wrid = (uint64_t *) dev_wrid;// qp_sq->wrid[idx] = wr_id;
+  // printf("qp_sq->wqe_cnt: %d\n", qp_sq->wqe_cnt);
+  // idx = qp_sq->cur_post & (64 - 1);
   idx = qp_sq->cur_post & (qp_sq->wqe_cnt - 1);
-  // printf("idx: %d\n", idx);
+  printf("idx: %d\n", idx);
   seg = (qp_buf + 256 + (idx * 64)); // mlx5_get_send_wqe(qp, idx);
-  ctrl = (struct mlx5_wqe_ctrl_seg *) (qp_buf + 256 + (idx * 64));
+  ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
   
   
   mlx5_opcode = wr_opcode*2 + 8 - 2*(wr_opcode == 2); // mlx5_ib_opcode[wr->opcode];
@@ -5311,25 +6002,25 @@ __device__ int post(unsigned int qpbf_bufsize,
   data->byte_count = htonl(wr_sg_length); // htonl(wr_sg_list->length);
   data->lkey       = htonl(wr_sg_lkey); // htonl(wr_sg_list->lkey);
   data->addr       = htonl64(wr_sg_addr); // htonl64(wr_sg_list->addr);
-
+  cur_post++;
   
   qpsq_wrid[idx] = wr_id;
   qpsq_wqe_head[idx] = qp_sq->head;
   
   // int tmp = (size * 16 + 64 - 1) / 64;
   qp_sq->cur_post += 1; // tmp;
-  
-  qp_db[1] = htonl(1 & 0xffff);
+  qp_sq->head += 1;
+  qp_db[1] = htonl(qp_sq->cur_post & 0xffff);
   
   // void *addr = bf_reg; // + 0xa00;
   uint64_t val;
   /* Do 64 bytes at a time */
   // addr = bf_reg; // + bf_offset;
   val = *(uint64_t *) ctrl;
-  
+  __threadfence_system();
   *(volatile uint32_t *)bf_reg = htonl(htonl64(val) >> 32);
   *(volatile uint32_t *)(bf_reg+4) = htonl(htonl64(val));
-  
+  __threadfence_system();
   // printf("dif: %d\n",(int) end-start);
 	return 0;
 }
@@ -5373,60 +6064,81 @@ __global__ void multiple_packets(int num_of_packets,
   // printf("read_after_write_buffer: 0x%llx\n", read_after_write_buffer);
   sge.lkey = wr_sg_lkey; // conn->rdma_local_mr->lkey;
   int *addr = (int *) wr_sg_addr;
-
-  for(int p_num=0 ;  p_num < num_of_packets ; p_num++)
+  int cur_post = 0, ret;
+  for(int p_num=0;  p_num < 1 ; p_num++)
   {
-    for(int i = 0; i < mesg_size; i++)
-      addr[i] = 0;
-    int cons_index_dev = *(int *)cons_index;
-    uint32_t *gpu_dbrec = (uint32_t *) dev_cq_dbrec;
-    void *cqe = cq_buf + (cons_index_dev & ibv_cqe) * cqe_sz;
-    struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *)((cqe_sz == 64) ? cqe : cqe + 64);
-    int cond1 = (cqe64->op_own != 240) &&
-    !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1)));
-    timer[4*p_num] = clock64();
-    int ret = post(qpbf_bufsize, wr.wr.rdma.remote_addr, wr.wr.rdma.rkey,
-            sge.length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
-            qp_num, wr_id, &wr, qp_buf,
-            dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, dev_wrid1, bf_reg);
-    timer[4*p_num+1] = clock64();
-  
- 
-    // printf("cqe64->op_own: %d\n", cqe64->op_own);
-    
-    // printf("cons_index_dev: %d\n", cons_index_dev);
-    // printf("ibv_cqe: %d\n", ibv_cqe);
-    // printf("cqe_sz: %d\n", cqe_sz);
-  
-    timer[4*p_num+2] = clock64();
-    // while(poll(cq_buf /* the CQ, we got notification for */, 
-    //     &wc1, // twc/* where to store */,
-    //     (uint32_t *) cons_index,
-    //     ibv_cqe,
-    //     cqe_sz,
-    //     max_wc /* number of remaining WC elements*/,
-    //     (uint32_t *) dev_cq_dbrec,
-        
-    //     dev_rsc, 
-    //     dev_wrid, wrid_0, wqe_head_0,
-    //     dev_wq) < 0);
-        // printf("gpu polling\n");
-    // while (addr[mesg_size-1] == 0);
-    while(!((cqe64->op_own != 240) &&
-    !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1))))); 
-    timer[4*p_num+3] = clock64();
-   (*(int *)cons_index)++;
-    wc1.qp_num =  htonl(cqe64->sop_drop_qpn) & 0xffffff;
-    wc1.status = (ibv_wc_status) IBV_WC_SUCCESS;
-    gpu_dbrec[0] = htonl((*(int *)cons_index) & 0xffffff);
-    printf("addr[mesg_size-1]: %d\n", addr[mesg_size-1]);
-    // for(int i = 0; i < mesg_size; i++)
+    // for(int i = 0; i < 1; i++)
     //   addr[i] = 0;
-    if(wc1.status != IBV_WC_SUCCESS){
-      printf("WC1 status is not success: %d\n", wc1.status);
-      return;
+      int cons_index_dev = *(int *)cons_index;
+      uint32_t *gpu_dbrec = (uint32_t *) dev_cq_dbrec;
+      void *cqe = cq_buf + (cons_index_dev & ibv_cqe) * cqe_sz;
+      struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *)((cqe_sz == 64) ? cqe : cqe + 64);
+      int cond1 = (cqe64->op_own != 240) &&
+      !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1)));
+      timer[4*p_num] = clock64();
+      // ret = read_write_post(wr.wr.rdma.remote_addr + sge.length*1, wr.wr.rdma.rkey,
+      //         sge.length, wr_sg_lkey, wr_sg_addr + sge.length*1, wr_opcode, 
+      //         qp_num, cur_post, qp_buf,
+      //         dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, dev_wrid1, bf_reg);
+      // cur_post++;
+      ret = read_write_post(wr.wr.rdma.remote_addr, wr.wr.rdma.rkey,
+              sge.length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
+              qp_num, cur_post, qp_buf,
+              dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, dev_wrid1, bf_reg);
+      // int ret = post(qpbf_bufsize, wr.wr.rdma.remote_addr + sge.length*p_num, wr.wr.rdma.rkey,
+      //         sge.length, wr_sg_lkey, wr_sg_addr + sge.length*p_num, wr_opcode, 
+      //         qp_num, wr_id, cur_post, &wr, qp_buf,
+      //         dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, dev_wrid1, bf_reg);
+      timer[4*p_num+1] = clock64();
+    
+      cur_post += 1;
+      // printf("cqe64->op_own: %d\n", cqe64->op_own);
+      
+      // printf("cons_index_dev: %d\n", cons_index_dev);
+      // printf("ibv_cqe: %d\n", ibv_cqe);
+      // printf("cqe_sz: %d\n", cqe_sz);
+    
+      timer[4*p_num+2] = clock64();
+      // while(poll(cq_buf /* the CQ, we got notification for */, 
+      //     &wc1, // twc/* where to store */,
+      //     (uint32_t *) cons_index,
+      //     ibv_cqe,
+      //     cqe_sz,
+      //     max_wc /* number of remaining WC elements*/,
+      //     (uint32_t *) dev_cq_dbrec,
+          
+      //     dev_rsc, 
+      //     dev_wrid, wrid_0, wqe_head_0,
+      //     dev_wq) < 0);
+          // printf("gpu polling\n");
+      // while (addr[mesg_size-1] == 0);
+        while(((cqe64->op_own != 240) && !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1))))==0);
+        timer[4*p_num+3] = clock64();
+        (*(int *)cons_index)++;
+        wc1.qp_num =  htonl(cqe64->sop_drop_qpn) & 0xffffff;
+        wc1.status = (ibv_wc_status) IBV_WC_SUCCESS;
+        gpu_dbrec[0] = htonl((*(int *)cons_index) & 0xffffff);
+
+      printf("hello\n");
+      printf("addr[0]: %d\n", addr[0]);
+      printf("addr[0]: %d\n", addr[0]);
+      printf("addr[0]: %d\n", addr[0]);
+      printf("addr[0]: %d\n", addr[0]);
+      printf("addr[0]: %d\n", addr[0]);
+      printf("addr[0]: %d\n", addr[0]);
+      printf("addr[0]: %d\n", addr[0]);
+      printf("addr[0]: %d\n", addr[0]);
+      printf("addr[%d]: %d\n", 0 + sge.length/4, addr[0 + sge.length/4]);
+      printf("addr[%d]: %d\n", 0 + sge.length/4, addr[0 + sge.length/4]);
+      printf("addr[0 + sge.length*p_num]: %d\n", addr[0 + sge.length/4]);
+      
+      // for(int i = 0; i < mesg_size; i++)
+      //   addr[i] = 0;
+      if(wc1.status != IBV_WC_SUCCESS){
+        printf("WC1 status is not success: %d\n", wc1.status);
+        return;
+      }
     }
-  }
   
     // int p_num = 0;
     // for(p_num=0 ;  p_num<num_of_packets ; p_num++)
@@ -5451,3 +6163,138 @@ __global__ void multiple_packets(int num_of_packets,
 
     // timer[4*num_of_packets] = clock();
 }
+
+
+
+__global__ void multiple_thread(int num_of_packets,
+          unsigned int qpbf_bufsize, struct ibv_send_wr wr1, int mesg_size,
+          uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr,
+          int wr_opcode, uint32_t qp_num, uint64_t wr_id,
+          void *qp_buf, void *dev_qpsq_wqe_head, 
+          void *dev_qp_sq, void *dev_qp_db, void *dev_wrid1,
+          void *bf_reg,
+
+          void *cq_buf, void *cons_index,
+          int ibv_cqe, uint32_t cqe_sz, int max_wc, 
+          void *dev_cq_dbrec,
+          void* dev_rsc,
+          void *dev_wrid,
+          clock_t *timer, uint64_t wrid_0, 
+          unsigned int wqe_head_0, void *dev_wq    
+){
+
+  struct ibv_send_wr wr, *bad_wr = NULL;
+  struct ibv_sge sge;
+  struct ibv_wc wc1;
+  
+  printf("benchmark started\n");
+  struct connection *conn;
+  conn = (struct connection *)(uintptr_t) wr1.wr_id;
+  memset(&wr, 0, sizeof(wr));
+  wr.wr_id = (uintptr_t)conn;
+  wr.opcode = (ibv_wr_opcode) 4; // IBV_WR_RDMA_READ;
+  wr.sg_list = &sge;
+  wr.num_sge = 1;
+  wr.send_flags = 2; // IBV_SEND_SIGNALED;
+  wr.wr.rdma.remote_addr = (uintptr_t) wr1.wr.rdma.remote_addr; // wr_rdma_remote_addr; // conn->peer_mr.addr;
+  wr.wr.rdma.rkey = wr1.wr.rdma.rkey; // wr_rdma_rkey; // conn->peer_mr.rkey;
+  sge.addr = (uintptr_t) wr_sg_addr; // (uintptr_t)conn->rdma_local_region;
+  sge.length = (uint32_t) mesg_size*sizeof(int); // RDMA_BUFFER_SIZE*sizeof(int); //RDMA_BUFFER_SIZE;
+  printf("mesg_size: %d\n", mesg_size*sizeof(int));
+  printf("wr_sg_addr: 0x%llx\n", wr_sg_addr);
+  // printf("read_after_write_buffer: 0x%llx\n", read_after_write_buffer);
+  sge.lkey = wr_sg_lkey; // conn->rdma_local_mr->lkey;
+  int *addr = (int *) wr_sg_addr;
+  int cur_post = 0;
+  for(int p_num=0;  p_num < num_of_packets ; p_num++)
+  {
+    for(int i = 0; i < mesg_size; i++)
+      addr[i] = 0;
+      int cons_index_dev = *(int *)cons_index;
+      uint32_t *gpu_dbrec = (uint32_t *) dev_cq_dbrec;
+      void *cqe = cq_buf + (cons_index_dev & ibv_cqe) * cqe_sz;
+      struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *)((cqe_sz == 64) ? cqe : cqe + 64);
+      int cond1 = (cqe64->op_own != 240) &&
+      !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1)));
+      timer[4*p_num] = clock64();
+      int ret = post(qpbf_bufsize, wr.wr.rdma.remote_addr, wr.wr.rdma.rkey,
+              sge.length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
+              qp_num, wr_id, cur_post, &wr, qp_buf,
+              dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, dev_wrid1, bf_reg);
+      timer[4*p_num+1] = clock64();
+    
+      cur_post += 1;
+      // printf("cqe64->op_own: %d\n", cqe64->op_own);
+      
+      // printf("cons_index_dev: %d\n", cons_index_dev);
+      // printf("ibv_cqe: %d\n", ibv_cqe);
+      // printf("cqe_sz: %d\n", cqe_sz);
+    
+      timer[4*p_num+2] = clock64();
+      // while(poll(cq_buf /* the CQ, we got notification for */, 
+      //     &wc1, // twc/* where to store */,
+      //     (uint32_t *) cons_index,
+      //     ibv_cqe,
+      //     cqe_sz,
+      //     max_wc /* number of remaining WC elements*/,
+      //     (uint32_t *) dev_cq_dbrec,
+          
+      //     dev_rsc, 
+      //     dev_wrid, wrid_0, wqe_head_0,
+      //     dev_wq) < 0);
+          // printf("gpu polling\n");
+      // while (addr[mesg_size-1] == 0);
+      while(!((cqe64->op_own != 240) &&
+      !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1))))); 
+      timer[4*p_num+3] = clock64();
+      (*(int *)cons_index)++;
+      wc1.qp_num =  htonl(cqe64->sop_drop_qpn) & 0xffffff;
+      wc1.status = (ibv_wc_status) IBV_WC_SUCCESS;
+      gpu_dbrec[0] = htonl((*(int *)cons_index) & 0xffffff);
+      printf("addr[mesg_size-1]: %d\n", addr[mesg_size-1]);
+      // for(int i = 0; i < mesg_size; i++)
+      //   addr[i] = 0;
+      if(wc1.status != IBV_WC_SUCCESS){
+        printf("WC1 status is not success: %d\n", wc1.status);
+        return;
+      }
+    }
+  
+    // int p_num = 0;
+    // for(p_num=0 ;  p_num<num_of_packets ; p_num++)
+    // {
+    //     timer[4*p_num] = clock();
+    //     /* GPU Post send */
+    //     // gpu_post_send(buf, db_record, p_num, qpn, raddr, rkey, len,(uintptr_t)(laddr + p_num*len), lkey);
+    //     // timer[4*p_num+1] = clock();
+
+    //     // /* Ring door bell  */
+    //     // gpu_ring_doorbell(bf_addr + 0x800, db_val);
+    //     // timer[4*p_num+2] = clock();
+    
+    //     // /* GPU Poll a completion queue */
+    //     // while(gpu_poll_cq(cq_buf, n, wc + p_num*sizeof(struct ibv_wc), (uint32_t *)cons_index_p, ibv_cqe, cqe_sz, cq_dbrec) == 0);
+    //     // timer[4*p_num+3] = clock();
+
+    //     /* GPU check WC status */
+        
+    // }
+    __syncthreads();
+
+    // timer[4*num_of_packets] = clock();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

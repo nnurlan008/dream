@@ -13,7 +13,7 @@
 //#include "EvictionSetGenerator.cuh"
 
 #define stride 32
-#define EvictionBufferSize (17*1024*1024*1024)
+#define EvictionBufferSize (1*1024*1024)
 #define EvictionNumbers numHashedAddr
 #define dataType uint32_t
 #define dummyType float
@@ -55,7 +55,7 @@ __global__ void pointerChaseRead(dataType* p,
         dummysum = dummysum + tempDummy + start;
         end = clock();
         times[i] = end - start;
-        //printf("end-start: %lld\n",end -start);
+        printf("end-start: %lld\n",end -start);
         i++;
     }
 
@@ -120,7 +120,7 @@ int main()
 	if(cuDeviceGetName(name, sizeof(name), cuda_device_id) != cudaSuccess){
 		exit(0);
 	}
-
+    printf("GPU: %s\n", name);
 
 
     gpuErrchk(cudaMalloc((void **)&times,((EvictionBufferSize)/(stride))*sizeof(long long int)));
@@ -129,7 +129,11 @@ int main()
     times_host = (long long int*) malloc((EvictionBufferSize)/(stride)*sizeof(long long int));
     dummy_host = (dummyType *) malloc(sizeof(dummyType));
 
-    gpuErrchk(cudaMallocManaged((void **)&p,EvictionBufferSize));
+    __clock_t start, end;
+    start = clock();
+    cudaMallocManaged((void **)&p,EvictionBufferSize);
+    end = clock();
+    
     
     for(int i=0; i<(EvictionBufferSize)/(stride);i++)
     {

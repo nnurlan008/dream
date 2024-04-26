@@ -121,7 +121,11 @@ int on_connect_request(struct rdma_cm_id *id)
 
 int on_connection(struct rdma_cm_id *id)
 {
+  printf("sending mr info\n");
   on_connect(id->context);
+  send_mr(id->context);
+  // send_qp_info(id->context);
+  
 
   return 0;
 }
