@@ -14,6 +14,7 @@
 #define PORT 9700
 
 static int RDMA_BUFFER_SIZE = 1024*1024*50+1;
+static int N_QPs = 2;
 
 enum mode {
   M_WRITE,

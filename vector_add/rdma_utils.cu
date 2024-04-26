@@ -23,12 +23,16 @@
 #include <sys/time.h>
 #include <time.h>
 #include <sys/mman.h>
+// #include "runtime.h"
 
 extern "C"{
   #include "rdma_utils.h"
 }
 
 #include "rdma_utils.cuh"
+
+__device__ struct post_content *gpost_cont1;
+__device__ struct poll_content *gpoll_cont1;
 
 const int TIMEOUT_IN_MS = 500; /* ms */
 
@@ -412,7 +416,7 @@ int get_mylid(struct ibv_context *context, int port, int *lid) {
 // TODO: check nent and cqe_sz in your system; otherwise values are assumed as below
 __global__ void invalidate_cq(void *buf){
   int i;
-  int nent = 16;
+  int nent = 64;
   int cqe_sz = 64;
   struct mlx5_cqe64 *cqe;
   for (i = 0; i < nent; ++i) {
@@ -433,42 +437,46 @@ int connect(const char *ip, struct context *s_ctx){
     TEST_NZ(getaddrinfo(ip, "9700", NULL, &addr));
     printf("ip: %s\n", ip);
     TEST_Z(ec = rdma_create_event_channel());
-    TEST_NZ(rdma_create_id(ec, &conn_id, NULL, RDMA_PS_TCP));
+    TEST_NZ(rdma_create_id(ec, &conn_id, NULL, RDMA_PS_IB));
     TEST_NZ(rdma_resolve_addr(conn_id, NULL, addr->ai_addr, TIMEOUT_IN_MS));
 
     freeaddrinfo(addr);
 
     // s_ctx->n_bufs = 256;
-    s_ctx->cqbuf_size = 4096;
+    s_ctx->cqbuf_size = 4096*2;
     s_ctx->wqbuf_size = 8192;
     // s_ctx->gpu_buf_size = 3*1024*1024;
 
-    s_ctx->wqbuf = (void **) calloc(s_ctx->n_bufs, sizeof(void *));
+    s_ctx->wqbuf = (void ** volatile) calloc(s_ctx->n_bufs, sizeof(void *));
     s_ctx->cqbuf = (void **) calloc(s_ctx->n_bufs, sizeof(void *));
     for(int i = 0; i < s_ctx->n_bufs; i++){
-        ret = cudaMalloc((void **)&s_ctx->wqbuf[i], s_ctx->wqbuf_size);
+        void* volatile temp;
+        ret = cudaMalloc((void **)&temp, s_ctx->wqbuf_size);
         if (cudaSuccess != ret) {
             printf("error on cudaMalloc for wqbuf: %d\n", ret);
             exit(0);
         }
-        ret = cudaMemset(s_ctx->wqbuf[i], 0, s_ctx->wqbuf_size);
+        ret = cudaMemset(temp, 0, s_ctx->wqbuf_size);
         if (cudaSuccess != ret) {
             printf("error on cudaMemset for wqbuf: %d\n", ret);
             exit(0);
         }
+        s_ctx->wqbuf[i] = temp;
     }
     for(int i = 0; i < s_ctx->n_bufs; i++){
         // printf("s_ctx->wqbuf[i]: 0x%llx\n", s_ctx->wqbuf[i]);
-        ret = cudaMalloc((void **) &s_ctx->cqbuf[i], s_ctx->cqbuf_size);
+        void* volatile temp;
+        ret = cudaMalloc((void **) &temp, s_ctx->cqbuf_size);
         if (cudaSuccess != ret) {
             printf("error on cudaMalloc for cqbuf: %d\n", ret);
             exit(0);
         }
-        ret = cudaMemset(s_ctx->cqbuf[i], 0, s_ctx->cqbuf_size);
+        ret = cudaMemset(temp, 0, s_ctx->cqbuf_size);
         if (cudaSuccess != ret) {
             printf("error on cudaMemset for cqbuf: %d\n", ret);
             exit(0);
         }
+        s_ctx->cqbuf[i] = temp;
         invalidate_cq<<<1,1>>>(s_ctx->cqbuf[i]);
         printf("s_ctx->cqbuf[i]: 0x%llx\n", s_ctx->cqbuf[i]);
     }
@@ -527,7 +535,7 @@ int connect(const char *ip, struct context *s_ctx){
 
     // post for recv of qp info
 
-   
+   s_ctx->id = event_copy.id;
 
     struct remote_qp_info buffer; // = (struct remote_qp_info **) calloc(2, sizeof(struct remote_qp_info *));
     // buffer.target_qp_num = (uint32_t *) calloc(s_ctx->n_bufs, sizeof(uint32_t));
@@ -759,7 +767,7 @@ int connect(const char *ip, struct context *s_ctx){
         .ibqp = s_ctx->gpu_qp[0],
         .wr = &wr,
         .bad_wr = &bad_wr,
-        .num_packets = 1,
+        .num_packets = 2,
         .mesg_size = 128,
         .bandwidth = &b1,
     };
@@ -768,13 +776,13 @@ int connect(const char *ip, struct context *s_ctx){
     sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096;
 
     cont2 = {
-        .cq_ptr = s_ctx->gpu_cq[0],
+        .cq_ptr = s_ctx->gpu_cq[1],
         .num_entries = 1,
         .wc = &wc1,
         .ibqp = s_ctx->gpu_qp[1],
         .wr = &wr,
         .bad_wr = &bad_wr,
-        .num_packets = 1,
+        .num_packets = 2,
         .mesg_size = 128,
         .bandwidth = &b2,
     };
@@ -783,13 +791,13 @@ int connect(const char *ip, struct context *s_ctx){
     sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*2;
 
     cont3 = {
-        .cq_ptr = s_ctx->gpu_cq[0],
+        .cq_ptr = s_ctx->gpu_cq[2],
         .num_entries = 1,
         .wc = &wc1,
         .ibqp = s_ctx->gpu_qp[2],
         .wr = &wr,
         .bad_wr = &bad_wr,
-        .num_packets = 1,
+        .num_packets = 2,
         .mesg_size = 128,
         .bandwidth = &b2,
     };
@@ -798,13 +806,13 @@ int connect(const char *ip, struct context *s_ctx){
     sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*3;
 
     cont4 = {
-        .cq_ptr = s_ctx->gpu_cq[0],
+        .cq_ptr = s_ctx->gpu_cq[3],
         .num_entries = 1,
         .wc = &wc1,
         .ibqp = s_ctx->gpu_qp[3],
         .wr = &wr,
         .bad_wr = &bad_wr,
-        .num_packets = 1,
+        .num_packets = 2,
         .mesg_size = 128,
         .bandwidth = &b2,
     };
@@ -813,13 +821,13 @@ int connect(const char *ip, struct context *s_ctx){
     sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*4;
 
     cont5 = {
-        .cq_ptr = s_ctx->gpu_cq[0],
+        .cq_ptr = s_ctx->gpu_cq[4],
         .num_entries = 1,
         .wc = &wc1,
         .ibqp = s_ctx->gpu_qp[4],
         .wr = &wr,
         .bad_wr = &bad_wr,
-        .num_packets = 1,
+        .num_packets = 2,
         .mesg_size = 128,
         .bandwidth = &b2,
     };
@@ -828,13 +836,13 @@ int connect(const char *ip, struct context *s_ctx){
     sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*5;
 
     cont6 = {
-        .cq_ptr = s_ctx->gpu_cq[0],
+        .cq_ptr = s_ctx->gpu_cq[5],
         .num_entries = 1,
         .wc = &wc1,
         .ibqp = s_ctx->gpu_qp[5],
         .wr = &wr,
         .bad_wr = &bad_wr,
-        .num_packets = 1,
+        .num_packets = 2,
         .mesg_size = 128,
         .bandwidth = &b2,
     };
@@ -843,13 +851,13 @@ int connect(const char *ip, struct context *s_ctx){
     sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096*6;
 
     cont7 = {
-        .cq_ptr = s_ctx->gpu_cq[0],
+        .cq_ptr = s_ctx->gpu_cq[6],
         .num_entries = 1,
         .wc = &wc1,
         .ibqp = s_ctx->gpu_qp[6],
         .wr = &wr,
         .bad_wr = &bad_wr,
-        .num_packets = 1,
+        .num_packets = 2,
         .mesg_size = 128,
         .bandwidth = &b2,
     };
@@ -1056,16 +1064,16 @@ __global__ void global_gpu_post_send(
     int start = 0;
     timer[0] = clock();
     start = start + timer[0];
-    int cur_post = 0;
-    //   int err = device_gpu_post_send(qpbf_bufsize, wr_rdma_remote_addr, wr_rdma_rkey,
-    //           wr_sg_length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
-    //           bf_offset, qp_num, wr_id, qp_buf, /*dev_qpsq_wr_data,*/ 
-    //           dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, /*dev_wr_sg,*/ dev_wrid, first_dword, second_dword, bf_reg, timer);
+    int cur_post = 0, err;
+    err = device_gpu_post_send(qpbf_bufsize, wr_rdma_remote_addr, wr_rdma_rkey,
+              wr_sg_length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
+              bf_offset, qp_num, wr_id, qp_buf, /*dev_qpsq_wr_data,*/ 
+              dev_qpsq_wqe_head, dev_qp_sq, dev_qp_db, /*dev_wr_sg,*/ dev_wrid, first_dword, second_dword, bf_reg, timer);
 
-    int err = post(wr_rdma_remote_addr, wr_rdma_rkey,
+    err = post(wr_rdma_remote_addr, wr_rdma_rkey,
             wr_sg_length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
             qp_num, cur_post, qp_buf, /*dev_qpsq_wr_data,*/ 
-            bf_reg);    
+            bf_reg, (unsigned int *)dev_qp_db);    
     cur_post++;
     timer[1] = clock();
     start = timer[1] - start;
@@ -2154,9 +2162,111 @@ __device__ int post_s(struct post_wr wr, int cur_post, void *qp_buf, void *bf_re
 	return 0;
 }
 
+__device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+                      uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr,
+                      int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db, void *dev_qp_sq, int id)
+{
+    // printf("inside post\n");
+    // int wr_opcode = wr.wr_opcode;
+    // uint32_t qp_num = wr.qp_num;
+    // uint64_t wr_rdma_remote_addr = wr.wr_rdma_remote_addr;
+    // uint32_t wr_rdma_rkey = wr.wr_rdma_rkey;
+    // uint64_t wr_sg_addr = wr.wr_sg_addr;
+    // uint32_t wr_sg_length = wr.wr_sg_length;
+    // uint32_t wr_sg_lkey = wr.wr_sg_lkey;
+    struct mlx5_wq *qp_sq = (struct mlx5_wq *) dev_qp_sq; // &qp->sq;
+	void *seg;
+	// struct mlx5_wqe_ctrl_seg *ctrl = NULL;
+	// int err = 0;
+    // printf("qp_sq->wqe_cnt: %d\n", qp_sq->wqe_cnt);
+	unsigned int idx = cur_post & 63;
+	uint32_t mlx5_opcode;
+
+    seg = (qp_buf + 256 + (idx * 64)); // mlx5_get_send_wqe(qp, idx);
+    struct mlx5_wqe_ctrl_seg *ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+    // wqe_segment_ctrl *ctrl = (struct wqe_segment_ctrl *) seg;
+
+
+
+    // // ctrl->opmod      = 0;
+    // ctrl->wqe_index  = htons(cur_post);
+    // ctrl->opcode     = 8; //RDMA WRITE
+    // ctrl->qpn_ds     = htonl((qp_num *256) | 3); //DS = 3
+    // // ctrl->signature  = 0;
+    // // ctrl->rsvd       = 0;
+    // ctrl->fcs        = 8; //signaled
+    // // ctrl->imm        = 0;
+
+
+
+
+    // mlx5_opcode = 16;// wr_opcode*2 + 8 - 2*(wr_opcode == 2); // mlx5_ib_opcode[wr->opcode];
+    // *(uint64_t *) seg = (uint64_t) (htonl((uint16_t) cur_post * 256 | 16)) |  ((uint64_t) htonl(3 | (qp_num *256)) << 32);
+    ctrl->opmod_idx_opcode = htonl(((uint16_t) cur_post * 256) | 16);
+    // printf("id: %d, cur_post: %d qp_num: %d\n", id, cur_post, qp_num-gpost_cont1->qp_num);
+    // printf("ctrl: %p, &ctrl->opmod_idx_opcode: %p\n", ctrl, &ctrl->opmod_idx_opcode);
+    // printf("ctrl: %p, &ctrl->qpn_ds: %p\n", ctrl, &ctrl->qpn_ds);
+    ctrl->qpn_ds = htonl(3 | (qp_num *256));
+    ctrl->signature = 0;
+    ctrl->fm_ce_se = 8; // MLX5_WQE_CTRL_CQ_UPDATE;
+    ctrl->imm = 0; // 
+    // ctrl->dci_stream_channel_id = 0;
+
+    struct mlx5_wqe_raddr_seg *rdma = (struct mlx5_wqe_raddr_seg *)(seg + 16); // seg + 16; // sizeof(*ctrl);
+    rdma->raddr    = htonl64(wr_rdma_remote_addr);
+    rdma->rkey     = htonl(wr_rdma_rkey);
+    rdma->reserved = 0;
+
+    struct mlx5_wqe_data_seg *data = (struct mlx5_wqe_data_seg *) (seg + 32);
+    // *(unsigned long long *) (seg + 32) = ((unsigned long long)htonl(wr_sg_length) | (unsigned long long) htonl(wr_sg_lkey) << 32); 
+    // *(unsigned long long *) (seg + 96) = (unsigned long long) htonl64(wr_sg_addr) << 64;
+    // *(uint64_t *) (seg + 32) = (uint64_t) (htonl(wr_sg_length) | (uint64_t) htonl(wr_sg_lkey) << 32);
+    data->byte_count = htonl(wr_sg_length); // htonl(wr_sg_list->length);
+    data->lkey       = htonl(wr_sg_lkey); // htonl(wr_sg_list->lkey);
+    data->addr       = htonl64(wr_sg_addr); // htonl64(wr_sg_list->addr);
+    // if(id == 0)
+    // printf("data: %p, &data->addr: %p\n", data, &data->addr);
+
+    // *(uint64_t *) (seg + 40) = (uint64_t) htonl64(wr_sg_addr);
+    // printf("post_m id: %d, wr_opcode: %d cur_post: %d, qp_num: %d\n", id, wr_opcode, cur_post, qp_num);
+    // printf("post_m id: %d, wr_sg_length: %d wr_sg_lkey: %d, wr_sg_addr: %p\n", id, wr_sg_length, wr_sg_lkey, wr_sg_addr);
+    // printf("post_m id: %d, wr_rdma_remote_addr: 0x%llx wr_rdma_rkey: %d,\n", id, wr_rdma_remote_addr, wr_rdma_rkey);
+    // printf("post_m id: %d, bf_reg: %p\n", id, bf_reg);
+  
+    // // 
+    // printf("post_m id: %d, qp_buf: %p\n", id, qp_buf);
+    // printf("post_m id: %d, *bf_reg: %d, *bf_reg+4: %d\n", id, *(uint32_t *)bf_reg, *(uint32_t *)(bf_reg+4));
+    // cur_post++;
+    // qp_sq->cur_post += 1;
+    // qp_sq->head += 1;
+    
+    qp_db[0] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
+    __threadfence_system();
+    // uint32_t val[2];
+    // memcpy(val, ctrl, 2*sizeof(uint32_t));
+    // *(uint64_t *) val = *(uint64_t *) ctrl;
+    // uint64_t val;
+    // val = *(uint64_t *) ctrl;
+    // __threadfence_system();
+    // if(id == 0){
+    //     *(volatile uint32_t *)bf_reg = (uint32_t) htonl(htonl64(val) >> 32);
+    // *(volatile uint32_t *)(bf_reg+4) = (uint32_t) htonl(htonl64(val));
+        // *(volatile uint32_t *)(bf_reg+4) = (uint32_t) htonl(htonl64(val));
+        *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl ;// 
+        // *(volatile uint64_t *)bf_reg = ((uint64_t) val[1] << 32 | val[0]);
+        __threadfence_system();
+    // }
+    // __threadfence_system();
+    // printf("after id: %d, *bf_reg: %lld, *bf_reg+4: %lld\n", id, *(uint32_t *)bf_reg, *(uint32_t *)(bf_reg+4));
+    // printf("id: %d, htonl(htonl64(val) >> 32: %d, htonl(htonl64(val)): %d\n", id, htonl(htonl64(val) >> 32), htonl(htonl64(val)));
+    // __threadfence_system()
+    
+	return 0;
+}
+
 __device__ int post(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
                     uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, 
-                    int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg)
+                    int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db)
 {
     // printf("inside post\n");
     // int wr_opcode = wr.wr_opcode;
@@ -2192,12 +2302,18 @@ __device__ int post(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     data->byte_count = htonl(wr_sg_length); // htonl(wr_sg_list->length);
     data->lkey       = htonl(wr_sg_lkey); // htonl(wr_sg_list->lkey);
     data->addr       = htonl64(wr_sg_addr); // htonl64(wr_sg_list->addr);
-    // __threadfence_system();
+    printf("bf_reg: %p\n", bf_reg);
+    printf("*bf_reg: %lld, *bf_reg+4: %lld\n", *(uint32_t *)bf_reg, *(uint32_t *)(bf_reg+4));
+    cur_post++;
+    qp_db[0] = htonl(cur_post & 0xffff);
     uint64_t val;
     val = *(uint64_t *) ctrl;
-    *(volatile uint32_t *)bf_reg = htonl(htonl64(val) >> 32);
-    *(volatile uint32_t *)(bf_reg+4) = htonl(htonl64(val));
-    // __threadfence_system();
+    *(volatile uint32_t *)bf_reg = (volatile uint32_t) htonl(htonl64(val) >> 32);
+    *(volatile uint32_t *)(bf_reg+4) = (volatile uint32_t) htonl(htonl64(val));
+    printf("after *bf_reg: %lld, *bf_reg+4: %lld\n", *(volatile uint32_t *)bf_reg, *(volatile uint32_t *)(bf_reg+4));
+    printf("htonl(htonl64(val) >> 32: %lld, htonl(htonl64(val)): %lld\n", htonl(htonl64(val) >> 32), htonl(htonl64(val)));    
+    // __threadfence_system()
+    
 	return 0;
 }
 
@@ -2210,20 +2326,27 @@ __device__ int poll(void *cq_buf, struct ibv_wc *wc, uint32_t *cons_index,
     uint32_t cons_index_dev = *cons_index;
     cqe = cq_buf + (cons_index_dev & ibv_cqe) * cqe_sz;
     cqe64 = (struct mlx5_cqe64 *)((cqe_sz == 64) ? cqe : cqe + 64);
-    printf("cqe64->op_own: %d\n", cqe64->op_own);
-    if(((cqe64->op_own != 240) && !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1))))==0)
-        return 0;
+    // printf("cqe64->op_own: %d\n", cqe64->op_own);
+        // if(((cqe64->op_own != 240) && !((cqe64->op_own & 1) ^ !!(cons_index_dev & (ibv_cqe + 1))))==0){
+        //     // gpu_dbrec[0] = htonl(*cons_index & 0xffffff);
+        //     return 0;
+        // }
     
-    // while(((cqe64->op_own != 240) && !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1))))==0){
-    //     // printf("cqe64->op_own: %d\n", cqe64->op_own);
+    // while(((cqe64->op_own != 240) && !((cqe64->op_own & 1) ^ !!(*cons_index & (ibv_cqe + 1))))==0);
+    while(cqe64->op_own == 240);
+    // if((cqe64->op_own >> 4) != 0) //Check opcode
+    // {
+    //     struct mlx5_err_cqe *err_cqe = (struct mlx5_err_cqe *)cqe64;
+    //     printf("Got completion with error, opcode = %d , syndrome = %d\n",(cqe64->op_own >> 4), err_cqe->syndrome);
+    //     wc->status = IBV_WC_GENERAL_ERR;
     // }
-    printf("cqe64->op_own: %d\n", cqe64->op_own);
+    // printf("cqe64->op_own: %d\n", cqe64->op_own);
     // __threadfence_system();
-    (*cons_index)++;
+    *cons_index = cons_index_dev + 1;
     wc->qp_num =  htonl(cqe64->sop_drop_qpn) & 0xffffff;
-    wc->status = (ibv_wc_status) IBV_WC_SUCCESS;
+    wc->status = (ibv_wc_status) 0; // (ibv_wc_status) IBV_WC_SUCCESS;
     // __threadfence_system();
-    gpu_dbrec[0] = htonl((*cons_index) & 0xffffff);
+    *gpu_dbrec = (uint32_t) htonl((cons_index_dev + 1) & 0xffffff);
     return 1;// err; 
 }
 
@@ -2234,22 +2357,25 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
     cudaError_t success;
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     struct mlx5_qp *qp_0 = to_mqp(s_ctx->gpu_qp[0]);
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     post_cont->wr_rdma_remote_addr = (uintptr_t)s_ctx->server_mr.addr;
     post_cont->wr_rdma_rkey = s_ctx->server_mr.rkey;
     post_cont->wr_sg_length = 4096; // fixed for now by default
     post_cont->wr_sg_lkey = s_ctx->gpu_mr->lkey;
-    post_cont->wr_sg_addr = (uintptr_t) s_ctx->gpu_mr->addr;
+    post_cont->wr_sg_addr = (uintptr_t) s_ctx->gpu_buffer;
     post_cont->wr_opcode = IBV_WR_RDMA_READ; // for read request by default
     post_cont->qp_num = s_ctx->gpu_qp[0]->qp_num;
     post_cont->qp_buf = qp_0->buf.buf;
     post_cont->qpbf_bufsize = qp_0->bf->buf_size;
 
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    printf("qp->sq.wqe_cnt: %d\n", qp_0->sq.wqe_cnt);
     for(int i = 0; i < s_ctx->n_bufs; i++){
         printf("qp_num[%d]: %d\n", i, s_ctx->gpu_qp[i]->qp_num);
         struct mlx5_qp *qp = to_mqp(s_ctx->gpu_qp[i]);
         printf("qp->bf->reg[%d]: %p\n", i, qp->bf->reg);
         printf("qp->buf.buf[%d]: %p \n", i, qp->buf.buf);
+
         void *device_db;
         // printf("qp->bf->reg[%d]: 0x%llx\n", i, qp->bf->reg);
         success = cudaHostRegister(qp->bf->reg,  8, cudaHostRegisterIoMemory);
@@ -2258,8 +2384,27 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
         if (success != cudaSuccess) return -1;
         printf("device_db[%d]: 0x%llx\n", i, device_db);
         // printf("device_db[%d]: 0x%llx\n", i, qp->cqe);
-        post_cont->bf_reg[i] = (long long int) device_db;
-        
+        post_cont->bf_reg[i] = /*(long long int)*/ device_db;
+
+        void *dev_qp_db;
+        success = cudaHostRegister(qp->db, sizeof(qp->db), cudaHostRegisterMapped);
+        if(success != cudaSuccess && success != cudaErrorHostMemoryAlreadyRegistered)
+            return -1;
+        if(cudaHostGetDevicePointer(&dev_qp_db, qp->db, 0) != cudaSuccess)
+            return -1;
+        printf("dev_qp_db[%d]: %p \n", i, dev_qp_db);
+        post_cont->qp_db[i] = (unsigned int *) dev_qp_db;
+
+        void *dev_qp_sq;
+        success = cudaHostRegister(&qp->sq, sizeof(qp->sq), cudaHostRegisterMapped);
+        if(success != cudaErrorHostMemoryAlreadyRegistered && success !=  cudaSuccess)
+                exit(0);
+        // get GPU pointer for qp->sq
+        if(cudaHostGetDevicePointer(&dev_qp_sq, &qp->sq, 0) != cudaSuccess)
+            exit(0);
+        post_cont->dev_qp_sq[i] = dev_qp_sq;
+        post_cont->n_post[i] = 0;
+        post_cont->cq_lock[i] = 0;
     }
 
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
@@ -2268,6 +2413,8 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
     
     poll_cont->ibv_cqe = cq1->verbs_cq.cq.cqe;
     poll_cont->cqe_sz = cq1->cqe_sz;
+    printf("poll_cont->ibv_cqe: %d\n",poll_cont->ibv_cqe);
+    printf("poll_cont->cqe_sz: %d\n",poll_cont->cqe_sz);
     poll_cont->n = 1; // subject to change
     
     for(int i = 0; i < s_ctx->n_bufs; i++){
@@ -2677,7 +2824,7 @@ __global__ void multiple_packets(int num_of_packets,
     wr.wr.rdma.remote_addr = (uintptr_t) wr1.wr.rdma.remote_addr; // wr_rdma_remote_addr; // conn->peer_mr.addr;
     wr.wr.rdma.rkey = wr1.wr.rdma.rkey; // wr_rdma_rkey; // conn->peer_mr.rkey;
     sge.addr = (uintptr_t) wr_sg_addr; // (uintptr_t)conn->rdma_local_region;
-    sge.length = (uint32_t) mesg_size*sizeof(int); // RDMA_BUFFER_SIZE*sizeof(int); //RDMA_BUFFER_SIZE;
+    sge.length =  1500; // (uint32_t) mesg_size*sizeof(int); // RDMA_BUFFER_SIZE*sizeof(int); //RDMA_BUFFER_SIZE;
     printf("mesg_size: %d\n", mesg_size*sizeof(int));
     printf("wr_sg_addr: 0x%llx\n", wr_sg_addr);
     // printf("read_after_write_buffer: 0x%llx\n", read_after_write_buffer);
@@ -2703,9 +2850,9 @@ __global__ void multiple_packets(int num_of_packets,
         int cond1 = (cqe64->op_own != 240) &&
         !((cqe64->op_own & 1) ^ !!(1 & (ibv_cqe + 1)));
         timer[4*p_num] = clock64();
-        int ret = post(wr.wr.rdma.remote_addr, wr.wr.rdma.rkey,
-                sge.length, wr_sg_lkey, wr_sg_addr, wr_opcode, 
-                qp_num, cur_post, qp_buf, bf_reg);
+        int ret = post(wr.wr.rdma.remote_addr + sge.length*p_num, wr.wr.rdma.rkey,
+                sge.length, wr_sg_lkey, wr_sg_addr + sge.length*p_num, wr_opcode, 
+                qp_num, cur_post, qp_buf, bf_reg, (unsigned int *) dev_qp_db);
         timer[4*p_num+1] = clock64();
     
         cur_post += 1;
@@ -2732,12 +2879,12 @@ __global__ void multiple_packets(int num_of_packets,
         // wc1.qp_num =  htonl(cqe64->sop_drop_qpn) & 0xffffff;
         // wc1.status = (ibv_wc_status) IBV_WC_SUCCESS;
         // gpu_dbrec[0] = htonl((*(int *)cons_index) & 0xffffff);
-        printf("addr[0]: %d\n", addr[0]);
+        printf("addr[0+ sge.length*p_num]: %d\n", addr[0]);
         printf("addr[mesg_size-1]: %d\n", addr[mesg_size-1]);
-        printf("addr[0]: %d\n", addr[0]);
-        printf("addr[0]: %d\n", addr[0]);
-        printf("addr[0]: %d\n", addr[0]);
-        printf("addr[1]: %d\n", addr[1]);
+        printf("addr[%d]: %d\n", 0+ sge.length/4*p_num, addr[0+ sge.length/4*p_num]);
+        printf("addr[0+ sge.length*p_num]: %d\n", addr[0+ sge.length/4*p_num]);
+        printf("addr[0+ sge.length*p_num]: %d\n", addr[0+ sge.length/4*p_num]);
+        printf("addr[1+ sge.length*p_num]: %d\n", addr[1+ sge.length/4*p_num]);
         // for(int i = 0; i < mesg_size; i++)
         //   addr[i] = 0;
         if(wc1.status != IBV_WC_SUCCESS){
@@ -2745,4 +2892,586 @@ __global__ void multiple_packets(int num_of_packets,
         return;
         }
     }
+}
+
+
+__device__ int get_qp(int id){
+    printf("qp_num: %d\n", gpost_cont1->qp_num);
+}
+
+__global__ void alloc_content(struct post_content *post_cont, struct poll_content *poll_cont){
+    // copy poll and post content to global 
+    gpost_cont1 = post_cont;
+    gpoll_cont1 = poll_cont;
+    printf("qp_num: %d\n", gpost_cont1->qp_num);
+}
+
+__global__ void add_vectors_rdma_64MB_512KB(int *a, int *b, int *c, int size, \
+                                uint8_t *tlb_A, uint8_t *tlb_B, uint8_t *tlb_C, clock_t *timer,
+                                /*struct post_content *post_cont1, struct poll_content *poll_cont1,*/ int data_size1, int num_iter)
+{   
+
+    
+    // get_qp(0);
+	int id = blockDim.x * blockIdx.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    
+        int single_thread = threadIdx.x;
+      
+        struct ibv_wc wc;
+    // printf("id: %d\n", id);
+        int cur_post = 0;
+            int data_size = 512*1024; // data_size1;
+            int index = blockIdx.x;
+            int index_poll = blockIdx.x;
+            int tlb_id;;
+            index = id/131072;
+            /********************************************************************************************/
+            uint64_t remote_addr = gpost_cont1->wr_rdma_remote_addr; // + data_size*4*index;
+            uint64_t local_addr = gpost_cont1->wr_sg_addr; // + data_size*4*index;
+            void *qp_buf = gpost_cont1->qp_buf + 8192*index;
+            uint32_t qp_num = gpost_cont1->qp_num + index;
+            void *dev_qp_sq = gpost_cont1->dev_qp_sq[index];
+            void *bf_reg = (void *) gpost_cont1->bf_reg[index];
+            unsigned int *qp_db = gpost_cont1->qp_db[index];
+            void *cq_buf = gpoll_cont1->cq_buf + 4096*index;
+            uint32_t *cons_index = (uint32_t *) gpoll_cont1->cons_index[index];
+            void *cq_dbrec = (void *) gpoll_cont1->cq_dbrec[index];
+            uint32_t length = 4*data_size;
+            int wr_opcode = gpost_cont1->wr_opcode;
+            uint64_t wr_rdma_remote_addr = remote_addr;
+            uint32_t wr_rdma_rkey = gpost_cont1->wr_rdma_rkey;
+            int wr_sg_length = data_size;
+            uint32_t wr_sg_lkey = gpost_cont1->wr_sg_lkey;
+            uint64_t wr_sg_addr = local_addr;
+            /********************************************************************************************/
+        
+        for(int i = id; i < 16777216; i += 524288)
+        {
+            tlb_id = (int)i/131072;
+            remote_addr = wr_rdma_remote_addr + data_size*tlb_id;
+            local_addr = wr_sg_addr + data_size*tlb_id;
+
+            if(tlb_A[tlb_id] == 0){
+                if(id % 131072 == 0){
+                    post_m(remote_addr, wr_rdma_rkey, 
+                            wr_sg_length, wr_sg_lkey, local_addr, wr_opcode, 
+                            qp_num, cur_post, qp_buf, bf_reg, qp_db, dev_qp_sq, id);
+                    cur_post++;
+                    tlb_A[tlb_id] = 1;
+                }
+                while(tlb_A[tlb_id] == 0);
+            }
+
+            if(tlb_B[tlb_id] == 0){
+                if(id % 131072 == 0){
+                    void *cqe = cq_buf + (cur_post & 15) * 64;
+                    struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+                    post_m(remote_addr+64*1024*1024, wr_rdma_rkey, 
+                            wr_sg_length, wr_sg_lkey, local_addr+64*1024*1024, wr_opcode, 
+                            qp_num, cur_post, qp_buf, bf_reg, qp_db, dev_qp_sq, id);
+                    cur_post++;
+                    while(cqe64->op_own == 240);
+                    *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post ) & 0xffffff);
+                    cqe64->op_own = 240;
+                    
+                    tlb_B[tlb_id] = 1;
+                }
+                while(tlb_B[tlb_id] == 0);
+            }
+            
+            c[i] = a[i] + b[i];
+            
+        }
+        
+}
+
+__global__ void add_vectors_rdma_64MB_64KB(int *a, int *b, int *c, int size, \
+                                uint8_t *tlb_A, uint8_t *tlb_B, uint8_t *tlb_C, clock_t *timer,
+                                /*struct post_content *post_cont1, struct poll_content *poll_cont1,*/ int data_size1, int num_iter)
+{   
+
+    
+    // get_qp(0);
+	int id = blockDim.x * blockIdx.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    
+        int single_thread = threadIdx.x;
+      
+        struct ibv_wc wc;
+    // printf("id: %d\n", id);
+        int cur_post = 0;
+            int data_size = 64*1024; // data_size1;
+            int index = blockIdx.x;
+            int index_poll = blockIdx.x;
+            int tlb_id;;
+            index = id/16384;
+            /********************************************************************************************/
+            uint64_t remote_addr = gpost_cont1->wr_rdma_remote_addr; // + data_size*4*index;
+            uint64_t local_addr = gpost_cont1->wr_sg_addr; // + data_size*4*index;
+            void *qp_buf = gpost_cont1->qp_buf + 8192*index;
+            uint32_t qp_num = gpost_cont1->qp_num + index;
+            void *dev_qp_sq = gpost_cont1->dev_qp_sq[index];
+            void *bf_reg = (void *) gpost_cont1->bf_reg[index];
+            unsigned int *qp_db = gpost_cont1->qp_db[index];
+            void *cq_buf = gpoll_cont1->cq_buf + 4096*index;
+            uint32_t *cons_index = (uint32_t *) gpoll_cont1->cons_index[index];
+            void *cq_dbrec = (void *) gpoll_cont1->cq_dbrec[index];
+            uint32_t length = 4*data_size;
+            int wr_opcode = gpost_cont1->wr_opcode;
+            uint64_t wr_rdma_remote_addr = remote_addr;
+            uint32_t wr_rdma_rkey = gpost_cont1->wr_rdma_rkey;
+            int wr_sg_length = data_size;
+            uint32_t wr_sg_lkey = gpost_cont1->wr_sg_lkey;
+            uint64_t wr_sg_addr = local_addr;
+            /********************************************************************************************/
+        
+        for(int i = id; i < 16777216; i += 524288)
+        {
+            tlb_id = (int)i/16384;
+            remote_addr = wr_rdma_remote_addr + data_size*tlb_id;
+            local_addr = wr_sg_addr + data_size*tlb_id;
+           
+            if(tlb_A[tlb_id] == 0){
+                if(id % 16384 == 0){
+                    // void *cqe = cq_buf + (cur_post & 15) * 64;
+                    // struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+                    
+                    post_m(remote_addr, wr_rdma_rkey, 
+                            wr_sg_length, wr_sg_lkey, local_addr, wr_opcode, 
+                            qp_num, cur_post, qp_buf, bf_reg, qp_db, dev_qp_sq, id);
+                    
+
+                    cur_post++;
+                    // while(cqe64->op_own == 240);
+                    // *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post ) & 0xffffff);
+                    // poll(cq_buf, &wc, cons_index, gpoll_cont1->ibv_cqe, gpoll_cont1->cqe_sz, 1, cq_dbrec);
+                   
+            
+                    tlb_A[tlb_id] = 1;
+                    
+                }
+                while(tlb_A[tlb_id] == 0);
+                // __syncthreads();
+            }
+           
+            if(tlb_B[tlb_id] == 0){
+                if(id % 16384 == 0){
+                    // printf(" B: id: %d, index: %d\n", id, data_size*index);
+                    // for(int i = 0; i < num_iter; i++){
+                    // __syncthreads();
+                    // if (/*(threadIdx.x | threadIdx.y | threadIdx.z)*/ threadIdx.x == 0) {
+                        
+                        void *cqe = cq_buf + (cur_post & 15) * 64;
+                        struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+                        // uint32_t cons_index_dev = cur_post; // = *cons_index;
+                        // cqe = cq_buf + (cur_post & 15/*gpoll_cont1->ibv_cqe*/) * 64 /*gpoll_cont1->cqe_sz*/;
+                        // printf("gpoll_cont1->ibv_cqe: %d gpoll_cont1->cqe_sz: %d\n", gpoll_cont1->ibv_cqe, gpoll_cont1->cqe_sz);
+                        // cqe64 = (struct mlx5_cqe64 *) ((gpoll_cont1->cqe_sz == 64) ? cqe : cqe + 64);
+
+                    // timer[4*blockIdx.x] = clock();
+                    post_m(remote_addr+64*1024*1024, wr_rdma_rkey, 
+                            wr_sg_length, wr_sg_lkey, local_addr+64*1024*1024, wr_opcode, 
+                            qp_num, cur_post, qp_buf, bf_reg, qp_db, dev_qp_sq, id);
+                    // timer[4*blockIdx.x+1] = clock();
+                    
+                    // ((cqe64->op_own != 240) && !((cqe64->op_own & 1) ^ !!(1 & (poll_cont.ibv_cqe + 1))))==0
+
+                        cur_post++;
+                        // // // timer[4*blockIdx.x] = clock();
+                        // cons_index_dev = cur_post; // *cons_index;
+                        // uint32_t *gpu_dbrec = (uint32_t *) cq_dbrec;
+
+                    // timer[4*blockIdx.x+2] = clock();
+                        while(cqe64->op_own == 240);
+                        // poll(cq_buf, &wc, cons_index, gpoll_cont1->ibv_cqe, gpoll_cont1->cqe_sz, 1, cq_dbrec);
+                    // timer[4*blockIdx.x+3] = clock();
+                    
+                    
+                        // *cons_index = cons_index_dev + 1;
+                        *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post ) & 0xffffff);
+                        cqe64->op_own = 240;
+                        // gpu_dbrec[0] = htonl((cons_index_dev ) & 0xffffff);
+                    // while(poll(cq_buf, &wc, cons_index, poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, cq_dbrec)==0);
+
+                    tlb_B[tlb_id] = 1;
+                    // printf(" B: id: %d, index: %d tlb_B[%d]: %d\n", id, data_size*index, tlb_id, tlb_B[tlb_id]);
+                }
+                while(tlb_B[tlb_id] == 0);
+                // __syncthreads();
+            }
+            if(i == 4194336){
+                printf("i: %d, id: %d, a[i]: %d, b[i]: %d\n", i, id, a[i], b[i]);
+                printf("i: %d, id: %d, tlb_B[%d]: %d\n", i, id, tlb_id, tlb_B[tlb_id]);
+            }
+            c[i] = a[i] + b[i];
+            
+        }
+        
+}
+
+
+__global__ void add_vectors_rdma(int *a, int *b, int *c, int size, \
+                                uint8_t *tlb_A, uint8_t *tlb_B, uint8_t *tlb_C, clock_t *timer,
+                                /*struct post_content *post_cont1, struct poll_content *poll_cont1,*/ int data_size1, int num_iter)
+{   
+
+    
+    // get_qp(0);
+	int id = blockDim.x * blockIdx.x + threadIdx.x;
+    
+    
+        int single_thread = threadIdx.x;
+        // if (tlb_A[blockIdx.x] == 0){
+            
+            
+        // struct post_content post_cont = *gpost_cont1; 
+        // struct poll_content poll_cont = *gpoll_cont1;
+        struct ibv_wc wc;
+        // configure work request here
+        // default works fpr this request
+        // post and poll using CQ
+        struct post_wr wr;
+        // wr.qp_num = post_cont.qp_num;
+        // wr.wr_opcode = IBV_WR_RDMA_READ; // post_cont.wr_opcode;
+        // wr.wr_rdma_remote_addr = post_cont.wr_rdma_remote_addr;
+        // wr.wr_rdma_rkey = post_cont.wr_rdma_rkey;
+        // wr.wr_sg_addr = post_cont.wr_sg_addr;
+        // wr.wr_sg_length = 128*4; // post_cont.wr_sg_length;
+        // wr.wr_sg_lkey = post_cont.wr_sg_lkey;
+        int cur_post = 0;
+        
+        
+        // if(threadIdx.x == 0){
+            cur_post = 0;
+            int data_size = data_size1;
+            int index = blockIdx.x;
+            int index_poll = blockIdx.x;
+            /*********************************************************************************************/
+            // uint64_t remote_addr = post_cont.wr_rdma_remote_addr + data_size*4*index;
+            // uint64_t local_addr = post_cont.wr_sg_addr + data_size*4*index;
+            // void *qp_buf = post_cont.qp_buf + 8192*index;
+            // uint32_t qp_num = post_cont.qp_num + index;
+            // void *dev_qp_sq = post_cont.dev_qp_sq[index];
+            // void *bf_reg = (void *) post_cont.bf_reg[index];
+            // unsigned int *qp_db = post_cont.qp_db[index];
+            // void *cq_buf = poll_cont.cq_buf + 4096*index;
+            // uint32_t *cons_index = (uint32_t *) poll_cont.cons_index[index];
+            // void *cq_dbrec = (void *) poll_cont.cq_dbrec[index];
+            // uint32_t length = 4*data_size;
+            // int wr_opcode = post_cont.wr_opcode;
+            // uint64_t wr_rdma_remote_addr = remote_addr;
+            // uint32_t wr_rdma_rkey = post_cont.wr_rdma_rkey;
+            // int wr_sg_length = data_size*4;
+            // uint32_t wr_sg_lkey = post_cont.wr_sg_lkey;
+            // uint64_t wr_sg_addr = local_addr;
+            /********************************************************************************************/
+            uint64_t remote_addr = gpost_cont1->wr_rdma_remote_addr + data_size*4*index*1*num_iter;
+            uint64_t local_addr = gpost_cont1->wr_sg_addr + data_size*4*index*1*num_iter;
+            void *qp_buf = gpost_cont1->qp_buf + 8192*index;
+            uint32_t qp_num = gpost_cont1->qp_num + index;
+            void *dev_qp_sq = gpost_cont1->dev_qp_sq[index];
+            void *bf_reg = (void *) gpost_cont1->bf_reg[index];
+            unsigned int *qp_db = gpost_cont1->qp_db[index];
+            void *cq_buf = gpoll_cont1->cq_buf + 4096*index_poll;
+            uint32_t *cons_index = (uint32_t *) gpoll_cont1->cons_index[index_poll];
+            void *cq_dbrec = (void *) gpoll_cont1->cq_dbrec[index_poll];
+            uint32_t length = 4*data_size;
+            int wr_opcode = gpost_cont1->wr_opcode;
+            uint64_t wr_rdma_remote_addr = remote_addr;
+            uint32_t wr_rdma_rkey = gpost_cont1->wr_rdma_rkey;
+            int wr_sg_length = data_size*4;
+            uint32_t wr_sg_lkey = gpost_cont1->wr_sg_lkey;
+            uint64_t wr_sg_addr = local_addr;
+            /********************************************************************************************/
+            
+            // __syncthreads();
+            // if(blockIdx.x >= 0){
+                // timer[4*blockIdx.x+1] = clock();
+                // if(id == 0){
+                    // printf("id: %d, blockIdx.x: %d, qp_num: %d: post_cont.wr_rdma_rkey: %d\n",id, index, qp_num, gpost_cont1->wr_rdma_rkey);
+                    // printf("id: %d, blockIdx.x: %d, remote_addr: %p: local_addr: %p\n",id, index, remote_addr, local_addr);
+                    
+                // if(tlb_A[blockIdx.x]==0){
+                    if(threadIdx.x == 0){
+                        for (int i = 0; i < num_iter; i++){
+                        // for(int i = 0; i < 1; i++){
+                        // __syncthreads();
+                        // if (/*(threadIdx.x | threadIdx.y | threadIdx.z)*/ threadIdx.x == 0) {
+                            
+                                
+                            // printf("wr_sg_length: %d local_addr: %p\n", wr_sg_length, local_addr + data_size*4*0);
+                            timer[4*blockIdx.x] = clock();
+                            // request qp atomically
+                            post_m(remote_addr + wr_sg_length*i, wr_rdma_rkey, 
+                                    wr_sg_length, wr_sg_lkey, local_addr  + wr_sg_length*i, wr_opcode, 
+                                    qp_num, cur_post, qp_buf, bf_reg, qp_db, dev_qp_sq, id);
+                            // timer[4*blockIdx.x+1] = clock();
+                            
+                           
+                            // printf("wr_sg_length: %d local_addr: %p\n", wr_sg_length, local_addr + data_size*4*0);
+                            // ((cqe64->op_own != 240) && !((cqe64->op_own & 1) ^ !!(1 & (poll_cont.ibv_cqe + 1))))==0
+
+                                cur_post++;
+                            
+                            
+                            // post_m(remote_addr + wr_sg_length*0.5, wr_rdma_rkey, 
+                            //         wr_sg_length*0.5, wr_sg_lkey, local_addr  + wr_sg_length*0.5, wr_opcode, 
+                            //         qp_num, cur_post, qp_buf, bf_reg, qp_db, dev_qp_sq, id);
+                            //     timer[4*blockIdx.x] = clock();
+                                // post_m(remote_addr + wr_sg_length*i, wr_rdma_rkey, 
+                                //         wr_sg_length, wr_sg_lkey, local_addr + wr_sg_length*i, wr_opcode, 
+                                //         qp_num, cur_post, qp_buf, bf_reg, qp_db, dev_qp_sq, id);
+                                timer[4*blockIdx.x+1] = clock();
+
+                            
+
+                                // cqe = cq_buf + (cur_post & 15) * 64;
+                                // cqe64 = (struct mlx5_cqe64 *) cqe;
+
+                                
+                                // // // timer[4*blockIdx.x] = clock();
+                                // cons_index_dev = *cons_index;
+                                // uint32_t *gpu_dbrec = (uint32_t *) cq_dbrec;
+
+                            // 
+                                // while(cqe64->op_own == 240){
+                                //     // gpu_dbrec[0] = htonl(*cons_index & 0xffffff);
+                                // }
+
+                               
+
+                                // poll(cq_buf, &wc, cons_index, gpoll_cont1->ibv_cqe, gpoll_cont1->cqe_sz, 1, cq_dbrec);
+                            
+                            
+                            
+                                // *cons_index = cons_index_dev + 1;
+                                // gpu_dbrec[0] = htonl((cons_index_dev + 1) & 0xffffff);
+                            // while(poll(cq_buf, &wc, cons_index, poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, cq_dbrec)==0);
+                    
+                            // tlb_A[blockIdx.x] = 1;
+                        // }
+                        }
+                        cur_post--;
+                        
+                        timer[4*blockIdx.x+2] = clock();                        
+
+                        int icqe = cur_post;
+                        void *cqe = cq_buf + (icqe & 15) * 64;
+                        struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+                        timer[4*blockIdx.x+2] = clock();
+                        // while (icqe>=0){
+                            while(cqe64->op_own == 240){
+                            }
+                            // *(uint32_t *) cq_dsbrec = (uint32_t) htonl((icqe +1) & 0xffffff);
+                        //     icqe--;
+                        //     cqe = cq_buf + (icqe & 15) * 64;
+                        //     cqe64 = (struct mlx5_cqe64 *) cqe;
+                        // }
+                        timer[4*blockIdx.x+3] = clock();
+                        //  *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post ) & 0xffffff);
+                        // cqe64->op_own = 240;
+                        // tlb_A[blockIdx.x] = 1;
+                    }
+                    // while (tlb_A[blockIdx.x]==0)
+                    // {
+                    //     /* code */
+                    // }
+                    
+               
+        __syncthreads();    
+       
+        // if (a[id] == 2)
+        // // //     // printf("a[%d]: %d a[%d]: %d\n", id, a[id], id+blockDim.x, a[id+blockDim.x]);
+        //     printf("a[%d]: %d b[%d]: %d\n", id, a[id], id, b[id]);
+        // c[id] = a[id] + b[id];
+        // __syncthreads();
+	// }
+
+}
+
+
+// __global__ void add_vectors_rdma(int *a, int *b, int *c, int size, \
+//                                 uint8_t *tlb_A, uint8_t *tlb_B, uint8_t *tlb_C, clock_t *timer,
+//                                 struct post_content *post_cont1, struct poll_content *poll_cont1, int data_size1)
+// {   
+
+    
+
+// 	int id = blockDim.x * blockIdx.x + threadIdx.x;
+    
+    
+//         int single_thread = threadIdx.x;
+//         // if (tlb_A[blockIdx.x] == 0){
+            
+            
+//         struct post_content post_cont = *post_cont1; 
+//         struct poll_content poll_cont = *poll_cont1;
+//         struct ibv_wc wc;
+//         // configure work request here
+//         // default works fpr this request
+//         // post and poll using CQ
+//         struct post_wr wr;
+//         // wr.qp_num = post_cont.qp_num;
+//         // wr.wr_opcode = IBV_WR_RDMA_READ; // post_cont.wr_opcode;
+//         // wr.wr_rdma_remote_addr = post_cont.wr_rdma_remote_addr;
+//         // wr.wr_rdma_rkey = post_cont.wr_rdma_rkey;
+//         // wr.wr_sg_addr = post_cont.wr_sg_addr;
+//         // wr.wr_sg_length = 128*4; // post_cont.wr_sg_length;
+//         // wr.wr_sg_lkey = post_cont.wr_sg_lkey;
+//         int cur_post = 0;
+        
+        
+//         // if(threadIdx.x == 0){
+//             cur_post = 0;
+//             int data_size = data_size1;
+//             int index = id; // threadIdx.x;
+//             uint64_t remote_addr = post_cont.wr_rdma_remote_addr + 1*4*index;
+//             uint64_t local_addr = post_cont.wr_sg_addr + 1*4*index;
+//             void *qp_buf = post_cont.qp_buf + 8192*index;
+//             uint32_t qp_num = post_cont.qp_num + index;
+//             void *dev_qp_sq = post_cont.dev_qp_sq[index];
+//             void *bf_reg = (void *) post_cont.bf_reg[index];
+//             unsigned int *qp_db = post_cont.qp_db[index];
+//             void *cq_buf = poll_cont.cq_buf + 4096*index;
+//             uint32_t *cons_index = (uint32_t *) poll_cont.cons_index[index];
+//             void *cq_dbrec = (void *) poll_cont.cq_dbrec[index];
+//             uint32_t length = 4*1;
+//             int wr_opcode = post_cont.wr_opcode;
+//             uint64_t wr_rdma_remote_addr = remote_addr;
+//             uint32_t wr_rdma_rkey = post_cont.wr_rdma_rkey;
+//             int wr_sg_length = 1*4;
+//             uint32_t wr_sg_lkey = post_cont.wr_sg_lkey;
+//             uint64_t wr_sg_addr = local_addr;
+//             printf("id: %d, blockIdx.x: %d, qp_num: %d: remote_addr: %p qp_buf: %p\n", id, index, qp_num, remote_addr, qp_buf);
+//             // __syncthreads();
+//             // if(blockIdx.x >= 0){
+                
+//                 // if(tlb_A[threadIdx.x]==0){
+//                 //     if(threadIdx.x == 0){
+//                         // __syncthreads();
+//                         // if (/*(threadIdx.x | threadIdx.y | threadIdx.z)*/ threadIdx.x == 0) {
+//                         // timer[4*threadIdx.x] = clock(); 
+//                         void *cqe;
+//                         struct mlx5_cqe64 *cqe64;
+//                         uint32_t cons_index_dev = *cons_index;
+//                         cqe = cq_buf + (cons_index_dev & poll_cont.ibv_cqe) * poll_cont.cqe_sz;
+                        
+//                         cqe64 = (struct mlx5_cqe64 *)((poll_cont.cqe_sz == 64) ? cqe : cqe + 64);
+                        
+//                         post_m(remote_addr, post_cont.wr_rdma_rkey, 
+//                                 wr_sg_length, post_cont.wr_sg_lkey, local_addr, wr_opcode, 
+//                                 qp_num, 0, qp_buf, bf_reg, qp_db, dev_qp_sq, id);
+                        
+                        
+//                         // ((cqe64->op_own != 240) && !((cqe64->op_own & 1) ^ !!(1 & (poll_cont.ibv_cqe + 1))))==0
+
+//                         // cons_index_dev = *cons_index;
+//                         uint32_t *gpu_dbrec = (uint32_t *) cq_dbrec;
+//                         // while(cqe64->op_own == 240){
+//                         //     // gpu_dbrec[0] = htonl(*cons_index & 0xffffff);
+//                         // }
+
+//                          if((cqe64->op_own >> 4) != 0) //Check opcode
+//                         {
+//                             struct mlx5_err_cqe *err_cqe = (struct mlx5_err_cqe *)cqe64;
+//                             printf("Got completion with error, opcode = %d , syndrome = %d\n",(cqe64->op_own >> 4), err_cqe->syndrome);
+//                             // wc->status = IBV_WC_GENERAL_ERR;
+//                         }
+
+//                         // poll(cq_buf, &wc, cons_index, poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, cq_dbrec);
+                        
+                        
+//                         *cons_index = cons_index_dev + 1;
+//                         gpu_dbrec[0] = htonl((cons_index_dev + 1) & 0xffffff);
+//                         // timer[4*threadIdx.x+1] = clock();
+//                         // while(poll(cq_buf, &wc, cons_index, poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, cq_dbrec)==0);
+//                         // 
+                        
+//                         // uint64_t local_addr1 = post_cont.wr_rdma_rkey + wr_sg_length;
+//                         // uint64_t remote_addr = post_cont.wr_rdma_remote_addr + wr_sg_length;
+//                         // post_m(remote_addr + wr_sg_length, post_cont.wr_rdma_rkey, 
+//                         //         wr_sg_length, post_cont.wr_sg_lkey, local_addr + wr_sg_length, wr_opcode, 
+//                         //         qp_num, 1, qp_buf, bf_reg, qp_db, dev_qp_sq, id); 
+
+                        
+                            
+//                         // while(poll(cq_buf, &wc, cons_index, poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, cq_dbrec)==0);
+//                 //         tlb_A[blockIdx.x] = 1;
+//                 //     }
+//                 //     while(tlb_A[blockIdx.x]==0);
+//                 //     // __syncthreads();
+//                 // }
+            
+//             // }
+            
+//             // if(tlb_B[blockIdx.x]==0){
+//             //     if(threadIdx.x == 0){
+//                     // void *cqe;
+//                     // struct mlx5_cqe64 *cqe64;
+//                     // uint32_t cons_index_dev = *cons_index;
+//                     // uint32_t *gpu_dbrec = (uint32_t *) cq_dbrec;
+//                     // cqe = cq_buf + (*cons_index & poll_cont.ibv_cqe) * poll_cont.cqe_sz;
+                    
+//                     // cqe64 = (struct mlx5_cqe64 *)((poll_cont.cqe_sz == 64) ? cqe : cqe + 64);
+                    
+//                     // post_m(remote_addr + 1024*1024, post_cont.wr_rdma_rkey, 
+//                     //     wr_sg_length, post_cont.wr_sg_lkey, local_addr + 1024*1024, wr_opcode, 
+//                     //     qp_num, 1, qp_buf, bf_reg, qp_db, dev_qp_sq, id);
+                     
+                    
+                    
+//                     // // while(cqe64->op_own == 240){
+//                     // //     // gpu_dbrec[0] = htonl(*cons_index & 0xffffff);
+//                     // // }
+//                     // // while(poll(cq_buf, &wc, cons_index, poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, cq_dbrec)==0);
+//                     // timer[4*blockIdx.x+2] = clock();
+//                     // poll(cq_buf, &wc, cons_index, poll_cont.ibv_cqe, poll_cont.cqe_sz, 1, cq_dbrec);
+//                     // timer[4*blockIdx.x+3] = clock();  
+//                     // *cons_index++;
+//                     // gpu_dbrec[0] = htonl((*cons_index) & 0xffffff);
+//             //         tlb_B[blockIdx.x] = 1;    
+//             //     }
+//             //     while(tlb_B[blockIdx.x]==0);
+                
+//             // }
+            
+//             __syncthreads();
+            
+//         // __syncthreads();
+//         for(int del = 0; del < 20000000; del++);
+//         __syncthreads();    
+       
+//         // if (a[id] != 2)
+//         //     // printf("a[%d]: %d a[%d]: %d\n", id, a[id], id+blockDim.x, a[id+blockDim.x]);
+//         // for(int i = data_size*index; i < data_size*2*index; i++)
+//             printf("a[%d]: %d b[%d]: %d\n", id, a[id], id, b[id]);
+
+//         c[id] = a[id] + b[id];
+
+//         // __syncthreads();
+       
+// 	// }
+    
+// }
+
+int destroy(struct context *s_ctx){
+    struct connection *conn = (struct connection *)s_ctx;
+    rdma_destroy_qp(s_ctx->id);
+    printf("line number %d\n", __LINE__);
+    for(int i = 0; i < s_ctx->n_bufs; i++){
+        if( 1 != 0) {
+            printf("line number ibv_destroy_qp(s_ctx->gpu_qp[i]): %d, %d\n", ibv_destroy_qp(s_ctx->gpu_qp[i]), __LINE__);
+            printf("Destroy failed on qp: %d\n", i);
+            return -1;
+        }
+    }
+}
+
+// __device__ struct post_content *post_cont;
+// __device__ struct poll_content *poll_cont;
+__device__ int qps[256];
+
+__device__ int get_qp(void){
+    return 1;
 }

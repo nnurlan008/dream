@@ -41,6 +41,9 @@ struct context {
   struct ibv_cq *cq;
   struct ibv_comp_channel *comp_channel;
 
+  struct ibv_qp *gpu_qp;
+  struct ibv_cq *gpu_cq;
+
   pthread_t cq_poller_thread;
 };
 

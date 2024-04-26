@@ -597,7 +597,7 @@ void register_memory(struct connection *conn)
   conn->send_msg = malloc(sizeof(struct message));
   conn->recv_msg = malloc(sizeof(struct message));
 
-  conn->rdma_local_region = malloc(RDMA_BUFFER_SIZE);
+  conn->rdma_local_region = malloc(RDMA_BUFFER_SIZE * sizeof(int));
   conn->rdma_remote_region = malloc(RDMA_BUFFER_SIZE * sizeof(int));
 
   TEST_Z(conn->send_mr = ibv_reg_mr(

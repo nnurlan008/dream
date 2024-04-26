@@ -9,24 +9,30 @@ CFLAGS  := -Wall  -g
 LD      := gcc
 LDLIBS  := ${LDLIBS} -lrdmacm -libverbs -lpthread
 
+folder_path := /home/nurlan/Desktop/02_read-write
+freest := -I $(folder_path)/freestanding/include 
 mlx5_path := /home/nurlan/Desktop/rdma-core-installed_use_this_one
 nvidia_driver := /home/nurlan/Downloads/NVIDIA-Linux-x86_64-470.223.02
 cuda_memalloc = /usr/lib/x86_64-linux-gnu
-add_flags := -I $(mlx5_path)/providers/mlx5 -I $(mlx5_path)/build/include/ -I $(mlx5_path)/buildlib/sparse-include/ -I$(cuda_memalloc)
+add_flags := -I $(mlx5_path)/providers/mlx5 -I $(mlx5_path)/build/include/ -I $(mlx5_path)/buildlib/sparse-include/ -I$(cuda_memalloc) 
 
 CUDA_ROOT:=/usr/local/cuda-11.4
 CUDA_LIBS= -I $(CUDA_ROOT)/lib64 #-I $(nvidia_driver)/kernel/nvidia
 CUDA_INCLUDE=-I $(CUDA_ROOT)/include -I$(CUDA_SDK_ROOT)/C/common/inc 
 NVCC=$(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_35,arch=compute_35 $(CUDA_INCLUDE)
+NVCC2=$(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_80,arch=compute_80 $(CUDA_INCLUDE)
 
 CXXARGS = -w -std=c++14 -g -arch=sm_35
 
-APPS    := main server temp_cuda
+APPS    := main server temp_cuda uvm
 
 all: ${APPS}
 
+uvm:  uvm.o 
+	$(NVCC) $^ -lcuda -o $@
+
 main:  main.o rdma_utils.o
-	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@ $(add_flags)
+	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@ $(add_flags) $(freest)
 
 temp_cuda:  temp_cuda.o  rdma_utils.o
 	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@ $(add_flags)
@@ -37,7 +43,7 @@ rdma_utils:  rdma_utils.o
 # server-utils.o: server-utils.c
 # 	${LD}  server-utils.c -o server-utils.o ${LDLIBS}
 
-main.o temp_cuda.o: rdma_utils.cuh
+main.o temp_cuda.o: rdma_utils.cuh runtime.h
 
 server: server-utils.o server.o
 	${LD} -o $@ $^ ${LDLIBS}
@@ -46,7 +52,10 @@ temp_cuda.o: temp_cuda.cu
 	$(NVCC) -dc temp_cuda.cu -o temp_cuda.o -libverbs -lrdmacm -lcuda -lcudart $(CUDA_LIBS)
 
 main.o: main.cu 
-	$(NVCC) -dc main.cu -o main.o -libverbs -lrdmacm -lcuda -lcudart $(CUDA_LIBS) $(add_flags)
+	$(NVCC) -dc main.cu -o main.o -libverbs -lrdmacm -lcuda -lcudart $(CUDA_LIBS) $(add_flags) $(freest)
+
+uvm.o: uvm.cu 
+	$(NVCC) -dc uvm.cu -o uvm.o -lcuda -lcudart $(CUDA_LIBS)
 
 rdma_utils.o: rdma_utils.cu 
 	$(NVCC) -dc rdma_utils.cu -o rdma_utils.o -libverbs -lrdmacm -lcuda -lcudart $(CUDA_LIBS) $(add_flags)

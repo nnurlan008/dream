@@ -10,10 +10,10 @@
 
 const int TIMEOUT_IN_MS = 500; /* ms */
 
-static int on_addr_resolved(struct rdma_cm_id *id);
+static int on_addr_resolved(struct rdma_cm_id *id, struct context *s_ctx);
 static int on_connection(struct rdma_cm_id *id);
 static int on_disconnect(struct rdma_cm_id *id);
-static int on_event(struct rdma_cm_event *event);
+static int on_event(struct rdma_cm_event *event, struct context *s_ctx);
 static int on_route_resolved(struct rdma_cm_id *id);
 static void usage(const char *argv0);
 
@@ -78,7 +78,7 @@ static void usage(const char *argv0);
 //   M_READ
 // };
 
-static struct context *s_ctx = NULL;
+
 static enum mode s_mode = M_WRITE;
 
 void die(const char *reason)
@@ -159,7 +159,7 @@ void send_message(struct connection *conn)
   while (!conn->connected);
   printf("send message\n");
   // TEST_NZ(my_post_send(conn->qp, &wr, &bad_wr));
-  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
+  // TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
 }
 
 void send_mr(void *context)
@@ -178,18 +178,61 @@ int process_cm_event(struct rdma_event_channel *cm_channel,
                      struct rdma_cm_event *copy_event);
 
 int process_work_completion_events (struct ibv_comp_channel *comp_channel, 
-		struct ibv_wc *wc, int max_wc);
+		struct ibv_wc *wc, int max_wc, struct context *s_ctx);
 
 char *read_after_write_buffer = NULL;
 struct ibv_mr *read_after_write_mr;
 
+int get_myglid(struct ibv_context *ctx, int port, union ibv_gid *gid1, int *gid_entry1) {
+    
+    struct ibv_port_attr attr;
+    TEST_NZ(ibv_query_port(ctx, port, &attr));
+    int gid_tlb_len = attr.gid_tbl_len;
+    union ibv_gid gid;
+    int gid_entry;
+    for (int i = 0; i < gid_tlb_len; i++)
+    {
+        if (ibv_query_gid(ctx, port, i, &gid) == 0)
+        {
+            printf("found at index %d \n", i);
+            gid_entry = i;
+            break;
+        }
+    }
+    
+    for (int i = 0; i < 16; i++)
+    {
+        printf("%d: ", gid.raw[i]);
+    }
+    *gid1 = gid;
+    *gid_entry1 = gid_entry;
+    printf("the entry is %d\n", gid_entry);
+
+    return 0;
+}
+
+int get_mylid(struct ibv_context *context, int port, int *lid) {
+    struct ibv_port_attr attr;
+    TEST_NZ(ibv_query_port(context, port, &attr));
+    *lid = attr.lid;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
+  static struct context *s_ctx = NULL;
+  s_ctx = (struct context *)malloc(sizeof(struct context));
+  static struct context *s_ctx2 = NULL;
+  s_ctx2 = (struct context *)malloc(sizeof(struct context));
   struct addrinfo *addr;
   struct rdma_cm_event *event = NULL;
   struct rdma_cm_event event_copy;
-  struct rdma_cm_id *conn_id= NULL;
+  struct rdma_cm_event *event2 = NULL;
+  struct rdma_cm_event event_copy2;
+  struct rdma_cm_id *conn_id = NULL;
+  struct rdma_cm_id *conn_id2 = NULL;
   struct rdma_event_channel *ec = NULL;
+  struct rdma_event_channel *ec2 = NULL;
   printf("Hello\n");
   if (argc != 4)
     usage(argv[0]);
@@ -204,19 +247,24 @@ int main(int argc, char **argv)
   TEST_NZ(getaddrinfo(argv[2], "9700", NULL, &addr));
 
   TEST_Z(ec = rdma_create_event_channel());
-  TEST_NZ(rdma_create_id(ec, &conn_id, NULL, RDMA_PS_IB));
+  
+  TEST_NZ(rdma_create_id(ec, &conn_id, NULL, RDMA_PS_TCP));
+  
   TEST_NZ(rdma_resolve_addr(conn_id, NULL, addr->ai_addr, TIMEOUT_IN_MS));
+ 
 
   freeaddrinfo(addr);
 
   if (process_cm_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, &event, &event_copy))
     return -1;
- 
-  if (on_addr_resolved(event_copy.id)){
+  
+  
+
+  if (on_addr_resolved(event_copy.id, s_ctx)){
     printf("error on on_addr_resolved\n");
     return -1;
   }
-
+  int ret;
   if (process_cm_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, &event, &event_copy))
     return -1;
 
@@ -235,22 +283,199 @@ int main(int argc, char **argv)
   }
 
   struct ibv_wc wc;
-  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  // cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
-  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
   struct connection *conn = (struct connection *)(uintptr_t)wc.wr_id;
   if (wc.opcode & IBV_WC_RECV){
     printf("receive completed\n");
     memcpy(&conn->peer_mr, &conn->recv_msg->data.mr, sizeof(conn->peer_mr));
-    post_receives(conn);
+    // post_receives(conn);
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   }
+
+  // post for recv of qp info
+
+  struct remote_qp_info{
+    uint32_t target_qp_num[2];
+    uint16_t target_lid;
+    union ibv_gid target_gid;
+  }; 
+
+  struct remote_qp_info buffer; // = (struct remote_qp_info **) calloc(2, sizeof(struct remote_qp_info *));
+  // for(int i = 0; i < 2; i++){
+  //   buffer[i] = (struct remote_qp_info *) malloc(sizeof(struct remote_qp_info));
+  // }
+  struct ibv_mr *my_mr;
+  TEST_Z(my_mr = ibv_reg_mr(
+    s_ctx->pd, 
+    &buffer, 
+    sizeof(buffer), 
+    IBV_ACCESS_LOCAL_WRITE));
+  struct ibv_recv_wr wr1, *bad_wr1 = NULL;
+  struct ibv_sge sge1;
+
+  wr1.wr_id = (uintptr_t)conn;
+  wr1.next = NULL;
+  wr1.sg_list = &sge1;
+  wr1.num_sge = 1;
+
+  sge1.addr = (uintptr_t)&buffer;
+  sge1.length = sizeof(buffer);
+  sge1.lkey = my_mr->lkey;
+
+  TEST_NZ(ibv_post_recv(conn->qp, &wr1, &bad_wr1));
+  // post_receives(conn);
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
+
+  if (wc.opcode & IBV_WC_RECV){
+    printf("receive completed\n");
+    // memcpy(&conn->peer_mr, &conn->recv_msg->data.mr, sizeof(conn->peer_mr));
+    // post_receives(conn);
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    printf("Function name: %s, line number: %d conn->peer_mr: %d buffer->target_lid: %d\n", __func__, __LINE__, buffer.target_qp_num[0], buffer.target_lid);
+    // exit(0);
+  }
+
+  // we received server side info for qp
+  // now we need to send the qp info from our side
+
+  struct ibv_qp **g_qp = (struct ibv_qp **) calloc(2, sizeof(struct ibv_qp *));
+  for(int i = 0; i < 2; i++){
+    struct ibv_qp_init_attr qp_attr;
+    memset(&qp_attr, 0, sizeof(qp_attr));
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    qp_attr.send_cq = s_ctx->cq;
+    qp_attr.recv_cq = s_ctx->cq;
+    qp_attr.qp_type = IBV_QPT_RC;
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    qp_attr.cap.max_send_wr = 10;
+    qp_attr.cap.max_recv_wr = 10;
+    qp_attr.cap.max_send_sge = 1;
+    qp_attr.cap.max_recv_sge = 1;
+    TEST_Z(g_qp[i] = ibv_create_qp(s_ctx->pd, &qp_attr));
+    if (!g_qp[i]){
+      printf("g_qp failed\n");
+      exit(-1);
+    }
+  }
+
+  union ibv_gid gid;; 
+  int gid_entry;
+  get_myglid(s_ctx->ctx, 1, &gid, &gid_entry);
+   int mylid;
+  get_mylid(s_ctx->ctx, 1, &mylid);
+
+  struct remote_qp_info buffer1; // = (struct remote_qp_info **) calloc(2, sizeof(struct remote_qp_info *));
+  for (int i = 0; i < 2; i++){
+    buffer1.target_qp_num[i] = g_qp[i]->qp_num;
+    // printf("client qp num: %d\n", g_qp->qp_num);
+    
+  }
+
+  buffer1.target_gid = gid;
+  buffer1.target_lid = mylid;
+
+  struct ibv_mr *my_mr1;
+  TEST_Z(my_mr1 = ibv_reg_mr(
+    s_ctx->pd, 
+    &buffer1, 
+    sizeof(buffer1), 
+    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ));
+  struct ibv_send_wr wr2, *bad_wr2 = NULL;
+  struct ibv_sge sge2;
+  memset(&wr2, 0, sizeof(wr2));
+  wr2.wr_id = (uintptr_t)conn;
+  wr2.opcode = IBV_WR_SEND;
+  wr2.next = NULL;
+  wr2.sg_list = &sge2;
+  wr2.num_sge = 1;
+  wr2.send_flags = IBV_SEND_SIGNALED;
+
+  sge2.addr = (uintptr_t)&buffer1;
+  sge2.length = sizeof(buffer1);
+  sge2.lkey = my_mr1->lkey;
+
+  TEST_NZ(ibv_post_send(conn->qp, &wr2, &bad_wr2));
+
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
+
+  if (wc.opcode == IBV_WC_SEND){
+    printf("QP info sent; qp_num: %d\n", buffer1.target_qp_num[0]);
+  }
+  // exit(0);
+
+  for(int i = 0; i < 2; i++){
+    struct ibv_qp_attr qp_attr1;
+    memset(&qp_attr1, 0, sizeof(qp_attr1));
+
+    qp_attr1.qp_state        = IBV_QPS_INIT;
+    qp_attr1.pkey_index      = 0;
+    qp_attr1.port_num = 1; // IB_PORT;
+    qp_attr1.qp_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC | IBV_ACCESS_REMOTE_WRITE;
+
+    ret = ibv_modify_qp (g_qp[i], &qp_attr1, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT  | IBV_QP_ACCESS_FLAGS); 
+    if(ret != 0)
+    {
+      printf("Failed to modify qp to INIT. ret: %d\n", ret);
+      exit(-1);
+    }
+    
+
+    memset(&qp_attr1, 0, sizeof(qp_attr1));
+    qp_attr1.qp_state = IBV_QPS_RTR;
+    qp_attr1.path_mtu = IBV_MTU_4096;
+    qp_attr1.dest_qp_num = buffer.target_qp_num[i];
+    qp_attr1.rq_psn = 0;
+
+    qp_attr1.min_rnr_timer = 12;
+    qp_attr1.ah_attr.is_global = 1;
+    qp_attr1.ah_attr.dlid = buffer.target_lid;
+    qp_attr1.ah_attr.sl = 0;
+    qp_attr1.max_dest_rd_atomic = 1;
+    qp_attr1.ah_attr.port_num = 1;
+    qp_attr1.ah_attr.grh.dgid = buffer.target_gid;
+    qp_attr1.ah_attr.grh.sgid_index = gid_entry;
+    qp_attr1.ah_attr.grh.hop_limit = 0xFF;
+    qp_attr1.ah_attr.grh.traffic_class = 0;
+
+    ret = ibv_modify_qp(g_qp[i], &qp_attr1, IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+    if(ret != 0) {
+      printf("Failed to modify qp to RTR. ret: %d\n", ret);
+      exit(-1);
+    }
+
+    struct ibv_qp_attr qp_attr2 = {
+              .qp_state = IBV_QPS_RTS,
+              .timeout = 14,
+              .retry_cnt = 7,
+              .rnr_retry = 7,
+              .sq_psn = 0,
+              .max_rd_atomic = 1,
+          };
+
+    ret = ibv_modify_qp(g_qp[i], &qp_attr2,
+                        IBV_QP_STATE | IBV_QP_TIMEOUT |
+                            IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY |
+                            IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
+                      
+    // ret = ibv_modify_qp(g_qp, &qp_attr2, IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+    if(ret != 0) {
+      printf("Failed to modify qp to RTS. ret: %d\n", ret);
+      exit(-1);
+    }
+  }
+
+
+
+
 
   /*Post some requests*/
   // read request:
-  conn = (struct connection *)(uintptr_t)wc.wr_id;
+  // conn = (struct connection *)(uintptr_t)wc.wr_id;
   struct ibv_send_wr wr, *bad_wr = NULL;
   struct ibv_sge sge;
-
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   // if (s_mode == M_WRITE)
   //   printf("received MSG_MR. writing message to remote memory...\n");
   // else // M_READ
@@ -287,8 +512,8 @@ int main(int argc, char **argv)
   // TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
   // process_work_completion_events (s_ctx->comp_channel, &wc, 1);
   // printf("remote buffer: %s\n", conn->rdma_local_region);
-
-
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  struct ibv_wc wc1;
   conn = (struct connection *)(uintptr_t)wc.wr_id;
   bad_wr = NULL;
   memset(&wr, 0, sizeof(wr));
@@ -302,10 +527,16 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)conn->rdma_local_region;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = conn->rdma_local_mr->lkey;
-  TEST_NZ(my_post_send(conn->qp, &wr, &bad_wr));
-  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  // ret = ibv_post_send(g_qp, &wr, &bad_wr);
+  // printf("ret: %d\n", ret);
+  // exit(0);
+  TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc1, 1, s_ctx);
   printf("read remote buffer: %s\n", conn->rdma_local_region);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  // exit(0);
+
 
   conn = (struct connection *)(uintptr_t)wc.wr_id;
   bad_wr = NULL;
@@ -320,10 +551,15 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)conn->rdma_remote_region;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = conn->rdma_remote_mr->lkey;
-  TEST_NZ(my_post_send(conn->qp, &wr, &bad_wr));
-  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  ret = ibv_post_send(g_qp[0], &wr, &bad_wr);
+  printf("ret: %d\n", ret);
+  
+  // TEST_NZ(ret = ibv_post_send(conn->qp, &wr, &bad_wr));
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
   printf("write to remote buffer: %s\n", conn->rdma_remote_region);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  // exit(0);
+
 
   conn = (struct connection *)(uintptr_t)wc.wr_id;
   bad_wr = NULL;
@@ -338,10 +574,13 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)read_after_write_mr->addr;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = read_after_write_mr->lkey;
-  TEST_NZ(my_post_send(conn->qp, &wr, &bad_wr));
-  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  ret = ibv_post_send(g_qp[1], &wr, &bad_wr);
+  printf("ret: %d\n", ret);
+  // TEST_NZ(my_post_send(conn->qp, &wr, &bad_wr));
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
   printf("read remote buffer: %s\n", read_after_write_buffer);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  // exit(0);
 
   sprintf(conn->rdma_remote_region, "I'm doing well. Hbu? with %d", getpid());
   conn = (struct connection *)(uintptr_t)wc.wr_id;
@@ -357,10 +596,14 @@ int main(int argc, char **argv)
   sge.addr = (uintptr_t)conn->rdma_remote_region;
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = conn->rdma_remote_mr->lkey;
-  TEST_NZ(my_post_send(conn->qp, &wr, &bad_wr));
-  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  ret = ibv_post_send(g_qp[0], &wr, &bad_wr);
+  printf("ret: %d\n", ret);
+  // TEST_NZ(my_post_send(conn->qp, &wr, &bad_wr));
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
   printf("write to remote buffer: %s\n", conn->rdma_remote_region);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  // exit(0);
+
 
   conn = (struct connection *)(uintptr_t)wc.wr_id;
   bad_wr = NULL;
@@ -376,9 +619,11 @@ int main(int argc, char **argv)
   sge.length = RDMA_BUFFER_SIZE;
   sge.lkey = read_after_write_mr->lkey;
   // printf("ibv_post_send(conn->qp, &wr, &bad_wr): %d\n", ibv_post_send(conn->qp, &wr, &bad_wr));
+  // ret = ibv_post_send(g_qp, &wr, &bad_wr);
+  // printf("ret: %d\n", ret);
   TEST_NZ(my_post_send(conn->qp, &wr, &bad_wr));
   printf("polling... \n");
-  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1);
+  cpu_process_work_completion_events (s_ctx->comp_channel, &wc, 1, s_ctx);
   printf("read remote buffer: %s\n", read_after_write_buffer);
   printf("final: Function name: %s, line number: %d\n", __func__, __LINE__);
   // while (rdma_get_cm_event(ec, &event) == 0) {
@@ -399,7 +644,8 @@ int main(int argc, char **argv)
 int process_cm_event(struct rdma_event_channel *cm_channel,
                      enum rdma_cm_event_type expected_event,
                      struct rdma_cm_event **cm_event,
-                     struct rdma_cm_event *copy_event){
+                     struct rdma_cm_event *copy_event)
+{
 
   int ret = rdma_get_cm_event(cm_channel, cm_event);
 
@@ -424,7 +670,7 @@ int process_cm_event(struct rdma_event_channel *cm_channel,
 }
 
 int process_work_completion_events (struct ibv_comp_channel *comp_channel, 
-		struct ibv_wc *wc, int max_wc){
+		struct ibv_wc *wc, int max_wc, struct context *s_ctx){
   
   struct ibv_cq *cq;
   void *context = NULL;
@@ -472,7 +718,7 @@ int process_work_completion_events (struct ibv_comp_channel *comp_channel,
 }
 
 int cpu_process_work_completion_events (struct ibv_comp_channel *comp_channel, 
-		struct ibv_wc *wc, int max_wc){
+		struct ibv_wc *wc, int max_wc, struct context *s_ctx){
   
   // struct ibv_cq *cq;
   // void *context = NULL;
@@ -499,7 +745,7 @@ int cpu_process_work_completion_events (struct ibv_comp_channel *comp_channel,
     /* ret is errno here */
       // return ret;
     }
-    printf("polling\n");
+    // printf("polling\n");
     total_wc += ret;
   } while (total_wc < 1);
 
@@ -519,25 +765,30 @@ int cpu_process_work_completion_events (struct ibv_comp_channel *comp_channel,
   return 0;
 }
 
-void build_connection(struct rdma_cm_id *id)
+void build_connection(struct rdma_cm_id *id, struct context *s_ctx)
 {
   struct connection *conn;
   struct ibv_qp_init_attr qp_attr;
-  build_context(id->verbs);
-  build_qp_attr(&qp_attr);
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  build_context(id->verbs, s_ctx);
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  build_qp_attr(&qp_attr, s_ctx);
+  // build_qp_attr(&qp_attr2);
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   TEST_NZ(rdma_create_qp(id, s_ctx->pd, &qp_attr));
+  // TEST_Z(g_qp = ibv_create_qp(s_ctx->pd, &qp_attr));
   
   id->context = conn = (struct connection *)malloc(sizeof(struct connection));
-
+  printf("address resolved.\n");
   conn->id = id;
   conn->qp = id->qp;
 
-  conn->send_state = SS_INIT;
-  conn->recv_state = RS_INIT;
+  // conn->send_state = SS_INIT;
+  // conn->recv_state = RS_INIT;
 
   conn->connected = 0;
-
-  register_memory(conn);
+  printf("address resolved.\n");
+  register_memory(conn,s_ctx);
   post_receives(conn);
 }
 
@@ -555,16 +806,16 @@ void post_receives(struct connection *conn)
   sge.length = sizeof(struct message);
   sge.lkey = conn->recv_mr->lkey;
 
-  TEST_NZ(mlx5_post_recv(conn->qp, &wr, &bad_wr));
+  TEST_NZ(ibv_post_recv(conn->qp, &wr, &bad_wr));
 }
 
-void register_memory(struct connection *conn)
+void register_memory(struct connection *conn, struct context *s_ctx)
 {
   conn->send_msg = malloc(sizeof(struct message));
   conn->recv_msg = malloc(sizeof(struct message));
 
-  conn->rdma_local_region = malloc(RDMA_BUFFER_SIZE);
-  conn->rdma_remote_region = malloc(RDMA_BUFFER_SIZE);
+  // conn->rdma_local_region = malloc(RDMA_BUFFER_SIZE);
+  // conn->rdma_remote_region = malloc(RDMA_BUFFER_SIZE);
 
   read_after_write_buffer = malloc(RDMA_BUFFER_SIZE);
 
@@ -585,63 +836,63 @@ void register_memory(struct connection *conn)
     sizeof(struct message), 
     IBV_ACCESS_LOCAL_WRITE));
 
-  TEST_Z(conn->rdma_local_mr = ibv_reg_mr(
-    s_ctx->pd, 
-    conn->rdma_local_region, 
-    RDMA_BUFFER_SIZE, 
-    ((s_mode == M_WRITE) ? 0 :  IBV_ACCESS_LOCAL_WRITE)));
+  // TEST_Z(conn->rdma_local_mr = ibv_reg_mr(
+  //   s_ctx->pd, 
+  //   conn->rdma_local_region, 
+  //   RDMA_BUFFER_SIZE, 
+  //   ((s_mode == M_WRITE) ? 0 :  IBV_ACCESS_LOCAL_WRITE)));
 
-  TEST_Z(conn->rdma_remote_mr = ibv_reg_mr(
-    s_ctx->pd, 
-    conn->rdma_remote_region, 
-    RDMA_BUFFER_SIZE, 
-    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ));
-    // ((s_mode == M_WRITE) ? (IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE) : IBV_ACCESS_REMOTE_READ)));
+  // TEST_Z(conn->rdma_remote_mr = ibv_reg_mr(
+  //   s_ctx->pd, 
+  //   conn->rdma_remote_region, 
+  //   RDMA_BUFFER_SIZE, 
+  //   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ));
+  //   // ((s_mode == M_WRITE) ? (IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE) : IBV_ACCESS_REMOTE_READ)));
 }
 
-void build_qp_attr(struct ibv_qp_init_attr *qp_attr)
+void build_qp_attr(struct ibv_qp_init_attr *qp_attr, struct context *s_ctx)
 {
   memset(qp_attr, 0, sizeof(*qp_attr));
-
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   qp_attr->send_cq = s_ctx->cq;
   qp_attr->recv_cq = s_ctx->cq;
   qp_attr->qp_type = IBV_QPT_RC;
-
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   qp_attr->cap.max_send_wr = 10;
   qp_attr->cap.max_recv_wr = 10;
   qp_attr->cap.max_send_sge = 1;
   qp_attr->cap.max_recv_sge = 1;
 }
 
-void build_context(struct ibv_context *verbs)
+void build_context(struct ibv_context *verbs, struct context *s_ctx)
 {
-  if (s_ctx) {
-    if (s_ctx->ctx != verbs)
-      die("cannot handle events in more than one context.");
+  // if (s_ctx) {
+  //   if (s_ctx->ctx != verbs)
+  //     die("cannot handle events in more than one context.");
 
-    return;
-  }
-
-  s_ctx = (struct context *)malloc(sizeof(struct context));
+  //   return;
+  // }
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+  
 
   s_ctx->ctx = verbs;
-
+  printf("Function name: %s, line number: %d\n", __func__, __LINE__);
   TEST_Z(s_ctx->pd = ibv_alloc_pd(s_ctx->ctx));
   TEST_Z(s_ctx->comp_channel = ibv_create_comp_channel(s_ctx->ctx));
   TEST_Z(s_ctx->cq = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */
   TEST_NZ(ibv_req_notify_cq(s_ctx->cq, 0));
-
+  printf("Function name: %s, line number: %d s_ctx->cq: 0x%llx\n", __func__, __LINE__, s_ctx->cq);
  
 
   // TEST_NZ(pthread_create(&s_ctx->cq_poller_thread, NULL, poll_cq, NULL));
 }
 
-int on_addr_resolved(struct rdma_cm_id *id)
+int on_addr_resolved(struct rdma_cm_id *id, struct context *s_ctx)
 {
   printf("address resolved.\n");
 
-  build_connection(id);
-  sprintf(get_local_message_region(id->context), "Hello my friend.  with pid %d", getpid());
+  build_connection(id, s_ctx);
+  // sprintf(get_local_message_region(id->context), "Hello my friend.  with pid %d", getpid());
   TEST_NZ(rdma_resolve_route(id, TIMEOUT_IN_MS));
 
   return 0;
@@ -651,7 +902,7 @@ int on_connection(struct rdma_cm_id *id)
 {
   on_connect(id->context);
   printf("Function name: %s, line number: %d\n", __func__, __LINE__);
-  send_mr(id->context);
+  // send_mr(id->context);
 
   return 0;
 }
@@ -664,12 +915,12 @@ int on_disconnect(struct rdma_cm_id *id)
   return 1; /* exit event loop */
 }
 
-int on_event(struct rdma_cm_event *event)
+int on_event(struct rdma_cm_event *event, struct context *s_ctx)
 {
   int r = 0;
 
   if (event->event == RDMA_CM_EVENT_ADDR_RESOLVED)
-    r = on_addr_resolved(event->id);
+    r = on_addr_resolved(event->id, s_ctx);
   else if (event->event == RDMA_CM_EVENT_ROUTE_RESOLVED)
     r = on_route_resolved(event->id);
   else if (event->event == RDMA_CM_EVENT_ESTABLISHED)
