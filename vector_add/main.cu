@@ -558,12 +558,19 @@ __global__ void test(rdma_buf<int> *a, rdma_buf<int> *b, rdma_buf<int> *c){
     // rdma_buf<int> A = *a;
     // rdma_buf<int> B = *b;
     int id = blockDim.x * blockIdx.x + threadIdx.x;
-    if(id == 0) printf("a->size: %d\n", a->size);
+    // if(id == 0) printf("a->size: %d\n", a->size);
     // if(id==0) ( *a)[id] = 0;
-    if(id == 15728640)
-        printf("b[15728640]: %d a[15728640]: %d\n", (*a)[id], (*b)[id]);
-    if(id < a->size)
-        c->rvalue(id, (*a)[id] + (*b)[id]);//  
+    // if(id == 15728640)
+    //     printf("b[15728640]: %d a[15728640]: %d\n", (*a)[id], (*b)[id]);
+
+    for(int i = id; i < 16777216; i += 524288){
+        c->rvalue(i, (*a)[i] + (*b)[i]);
+    }
+
+    // if(id < a->size){
+    //     c->rvalue(id, (*a)[id] + (*b)[id]);
+
+    // }  
     
     // c[id] = (*a)[id] + (*b)[id];
     // printf("buf1[2]: %d buf1->address: %p, buf1->size: %d, REQUEST_SIZE12: %d\n", (*buf1)[2], buf1->gpu_address, buf1->size, 1);
@@ -642,16 +649,16 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    // int thr_per_blk = 2048; // s_ctx->n_bufs;
-	// int blk_in_grid = 256;
+    int thr_per_blk = 2048*2; // s_ctx->n_bufs;
+	int blk_in_grid = 256;
 
-    int thr_per_blk = s_ctx->n_bufs;
-	int blk_in_grid = 512;
+    // int thr_per_blk = s_ctx->n_bufs;
+	// int blk_in_grid = 512;
     
 
     // Allocate TLB for array A
     uint8_t *tlb_A, *tlb_B, *tlb_C, *h_tlb;
-    int tlb_size = bytes/(512*1024);// divided by access size //16*1024*1024/(64*1024); // thr_per_blk;
+    int tlb_size = bytes/(64*1024); // divided by access size //16*1024*1024/(64*1024); // thr_per_blk;
     cudaError_t ret1 = cudaMalloc((void **)&tlb_A, tlb_size*sizeof(uint8_t));
     cudaError_t ret2 = cudaMalloc((void **)&tlb_B, tlb_size*sizeof(uint8_t));
     cudaError_t ret3 = cudaMalloc((void **)&tlb_C, tlb_size*sizeof(uint8_t));
@@ -747,10 +754,10 @@ int main(int argc, char **argv)
     cudaEventRecord(event1, (cudaStream_t)1); //where 0 is the default stream
     
     // add_vectors_uvm<<< thr_per_blk,sblk_in_grid >>>(dev_a, dev_a, dev_c, thr_per_blk*blk_in_grid);
-    // add_vectors_rdma_64MB_512KB<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, /*d_post, d_poll,*/ data_size, num_iteration);
+    // add_vectors_rdma_64MB_512KB<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, data_size, num_iteration);
     // add_vectors_rdma<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, /*d_post, d_poll,*/ data_size, num_iteration);
     // test<<<2048*16, 512>>>(buf1, buf2, (int *) C);
-    test<<<2048*16, 512>>>(buf1, buf2, buf3);
+    test<<<2048, 256>>>(buf1, buf2, buf3);
     cudaEventRecord(event2, (cudaStream_t) 1);
     clock_gettime(CLOCK_REALTIME, &finish);
     ret1 = cudaDeviceSynchronize();
