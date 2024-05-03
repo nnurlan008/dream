@@ -2934,7 +2934,7 @@ __global__ void add_vectors_rdma_64MB_512KB(int *a, int *b, int *c, int size, \
             void *dev_qp_sq = gpost_cont1->dev_qp_sq[index];
             void *bf_reg = (void *) gpost_cont1->bf_reg[index];
             unsigned int *qp_db = gpost_cont1->qp_db[index];
-            void *cq_buf = gpoll_cont1->cq_buf + 4096*index;
+            void *cq_buf = gpoll_cont1->cq_buf + 8192*index;
             uint32_t *cons_index = (uint32_t *) gpoll_cont1->cons_index[index];
             void *cq_dbrec = (void *) gpoll_cont1->cq_dbrec[index];
             uint32_t length = 4*data_size;
@@ -2965,7 +2965,7 @@ __global__ void add_vectors_rdma_64MB_512KB(int *a, int *b, int *c, int size, \
 
             if(tlb_B[tlb_id] == 0){
                 if(id % 131072 == 0){
-                    void *cqe = cq_buf + (cur_post & 15) * 64;
+                    void *cqe = cq_buf + (cur_post & 63) * 64;
                     struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
                     post_m(remote_addr+64*1024*1024, wr_rdma_rkey, 
                             wr_sg_length, wr_sg_lkey, local_addr+64*1024*1024, wr_opcode, 
@@ -3014,7 +3014,7 @@ __global__ void add_vectors_rdma_64MB_64KB(int *a, int *b, int *c, int size, \
             void *dev_qp_sq = gpost_cont1->dev_qp_sq[index];
             void *bf_reg = (void *) gpost_cont1->bf_reg[index];
             unsigned int *qp_db = gpost_cont1->qp_db[index];
-            void *cq_buf = gpoll_cont1->cq_buf + 4096*index;
+            void *cq_buf = gpoll_cont1->cq_buf + 8192*index;
             uint32_t *cons_index = (uint32_t *) gpoll_cont1->cons_index[index];
             void *cq_dbrec = (void *) gpoll_cont1->cq_dbrec[index];
             uint32_t length = 4*data_size;
@@ -3062,7 +3062,7 @@ __global__ void add_vectors_rdma_64MB_64KB(int *a, int *b, int *c, int size, \
                     // __syncthreads();
                     // if (/*(threadIdx.x | threadIdx.y | threadIdx.z)*/ threadIdx.x == 0) {
                         
-                        void *cqe = cq_buf + (cur_post & 15) * 64;
+                        void *cqe = cq_buf + (cur_post & 63) * 64;
                         struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
                         // uint32_t cons_index_dev = cur_post; // = *cons_index;
                         // cqe = cq_buf + (cur_post & 15/*gpoll_cont1->ibv_cqe*/) * 64 /*gpoll_cont1->cqe_sz*/;
@@ -3100,10 +3100,10 @@ __global__ void add_vectors_rdma_64MB_64KB(int *a, int *b, int *c, int size, \
                 while(tlb_B[tlb_id] == 0);
                 // __syncthreads();
             }
-            if(i == 4194336){
-                printf("i: %d, id: %d, a[i]: %d, b[i]: %d\n", i, id, a[i], b[i]);
-                printf("i: %d, id: %d, tlb_B[%d]: %d\n", i, id, tlb_id, tlb_B[tlb_id]);
-            }
+            // if(i == 4194336){
+            //     printf("i: %d, id: %d, a[i]: %d, b[i]: %d\n", i, id, a[i], b[i]);
+            //     printf("i: %d, id: %d, tlb_B[%d]: %d\n", i, id, tlb_id, tlb_B[tlb_id]);
+            // }
             c[i] = a[i] + b[i];
             
         }

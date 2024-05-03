@@ -192,6 +192,10 @@ __global__ void add_vectors_rdma(int *a, int *b, int *c, int size, \
 __global__ void add_vectors_rdma_64MB_512KB(int *a, int *b, int *c, int size, \
                                 uint8_t *tlb_A, uint8_t *tlb_B, uint8_t *tlb_C, clock_t *timer,
                                 /*struct post_content *post_cont1, struct poll_content *poll_cont1,*/ int data_size1, int num_iter);
+                          
+__global__ void add_vectors_rdma_64MB_64KB(int *a, int *b, int *c, int size, \
+                                uint8_t *tlb_A, uint8_t *tlb_B, uint8_t *tlb_C, clock_t *timer,
+                                /*struct post_content *post_cont1, struct poll_content *poll_cont1,*/ int data_size1, int num_iter);
 
 __global__ void alloc_content(struct post_content *post_cont, struct poll_content *poll_cont);
 
