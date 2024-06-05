@@ -289,7 +289,7 @@ struct rdma_buf {
             
             // allocate memory on gpu and host
             alloc_memory((T *) host_address, (T *) gpu_address);
-            // printf("gpu_address: %p\n", user_address + offset);
+            printf("gpu_address: %p\n", user_address + offset);
 
             // allocate TLB on device for now
             if(alloc_tlb()){
@@ -307,7 +307,7 @@ struct rdma_buf {
             host_buffer = (T *) remote_address;
             
             device_buffer = (T *) gpu_address;
-            Address_Offset = Address_Offset + size*sizeof(T);
+            Address_Offset = Address_Offset + size;
             // check if the offset does not exceed allowed memory
             return 0; // for success
         }
@@ -315,7 +315,7 @@ struct rdma_buf {
         
         int alloc_tlb(){
             int req_size = REQUEST_SIZE;
-            tlb_size = ceil(((double)size*sizeof(T))/req_size);
+            tlb_size = ceil((double)size/req_size);
             
             if(cudaSuccess != cudaMalloc(&tlb_buffer, tlb_size*sizeof(unsigned int)))
                 return -1;
@@ -409,7 +409,8 @@ struct rdma_buf {
                 // printf("sadasdrequest_size: %d che: %d checkTLB(0, tlb_buffer): %d\n", request_size, che, checkTLB(0, tlb_buffer));
                 // TODO: for oversubscription, first check if gpu has enough free memory
                 // __syncthreads();
-                if(/*checkTLB(che, tlb_buffer)*/tlb_buffer[che] == 0){
+
+                // if(/*checkTLB(che, tlb_buffer)*/tlb_buffer[che] == 0){
                     // if(id % 16384 == 0){
                     // opcode: 4 for read, 0 for write
                     
@@ -512,7 +513,7 @@ struct rdma_buf {
                         
                         bool isSet = false;
                         volatile uint *cq_lock = &gpost_cont.cq_lock[qp_index];
-                        while(atomicCAS((unsigned int *)cq_lock, 0, 1) == 1);
+                        while(atomicCAS((unsigned int *)cq_lock, 0, 1) != 0);
                         // do 
                         // {
                         //     printf("id: %d qp_index: %d\n", id, qp_index);
@@ -542,7 +543,7 @@ struct rdma_buf {
                                        cur_post, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
                                 volatile uint8_t *op_flag = &cqe64->op_own;
                                 while(/*cqe64->op_own == 240*/*op_flag == 240){
-                                    // printf("id: %d isSet: %d cqe64->op_own: %d qp_index: %d\n", id, isSet, cqe64->op_own);
+                                    // printf("id: %d isSet: %d cqe64->op_own: %d qp_index: %d\n", id, isSet, cqe64->op_own, qp_index);
                                 }
                                 // printf("chunk: %d - %d\n", che*data_size/4, che*data_size/4+data_size/4);
                                 // cqe64->op_own = 240;
@@ -575,11 +576,11 @@ struct rdma_buf {
                     // wait_on_tlb;
                     // while(tlb_buffer[che] != 2);
                     
-                }
+                // }
                 // if(checkTLB(che, tlb_buffer) == 1){
                     // printf("id: %d tlb_buffer[%d]: %d\n", id, che, tlb_buffer[che]);
                     
-                    while(*entry == 1);
+                    while(*entry != 2);
                     // printf("id: %d tlb_buffer[%d]: %d\n", id, che, tlb_buffer[che]);
                     // __syncthreads();
                 // }

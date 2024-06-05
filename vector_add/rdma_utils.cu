@@ -2239,6 +2239,7 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // qp_sq->head += 1;
     
     qp_db[0] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
+    __threadfence_system();
     // __threadfence_system();
     // uint32_t val[2];
     // memcpy(val, ctrl, 2*sizeof(uint32_t));
