@@ -24,7 +24,7 @@ struct context {
   int n_bufs;
 
   void *gpu_buffer;
-  int gpu_buf_size; // 3 MB
+  unsigned int gpu_buf_size; // 3 MB
 
   struct ibv_mr *gpu_mr;
   struct ibv_mr server_mr;

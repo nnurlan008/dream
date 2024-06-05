@@ -579,7 +579,7 @@ __global__ void test(rdma_buf<int> *a, rdma_buf<int> *b, rdma_buf<int> *c){
 __global__ void test2(rdma_buf<int> *a, rdma_buf<int> *b, rdma_buf<int> *c){
     int id = blockDim.x * blockIdx.x + threadIdx.x;
 
-    int k = (*a)[id]; // + (*b)[id];
+    int k = (*a)[id] + (*b)[id] + (*c)[id];
 
     // c->rvalue(id, (*a)[id] + (*b)[id]); 
 }
@@ -603,7 +603,7 @@ int main(int argc, char **argv)
 
     int num_iteration = num_msg;
     s_ctx->n_bufs = num_bufs;
-    s_ctx->gpu_buf_size = N*sizeof(int)*3;
+    s_ctx->gpu_buf_size = N*sizeof(int)*3llu;
 
     int ret = connect(argv[2], s_ctx);
     ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont);
@@ -761,7 +761,7 @@ int main(int argc, char **argv)
     // add_vectors_rdma<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, /*d_post, d_poll,*/ data_size, num_iteration);
     // test<<<2048*16, 512>>>(buf1, buf2, (int *) C);
     // test<<<2048, 256>>>(buf1, buf2, buf3);
-    test2<<< 4096, 1024>>>(buf1, buf2, buf3);
+    test2<<< 4096*2, 1024>>>(buf1, buf2, buf3);
     cudaEventRecord(event2, (cudaStream_t) 1);
     clock_gettime(CLOCK_REALTIME, &finish);
     ret1 = cudaDeviceSynchronize();
@@ -887,7 +887,7 @@ int main(int argc, char **argv)
         return -1;
     }
     for(int i = 0; i < bytes/4; i++){
-        if(h_array[i] != 4){ 
+        if(h_array[i] != 2){ 
             printf("error in C: C[%d]: %d\n", i, h_array[i]);
             break;
         }

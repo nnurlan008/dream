@@ -625,6 +625,8 @@ void register_memory(struct connection *conn)
     RDMA_BUFFER_SIZE*sizeof(int), 
     IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ));
     /*((s_mode == M_WRITE) ? (IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE) : IBV_ACCESS_REMOTE_READ)));*/
+    printf("Registered server address: 0x%p, server rkey: %d length: %llu\n\n\n", \
+    conn->rdma_remote_mr->addr, conn->rdma_remote_mr->rkey, conn->rdma_remote_mr->length);
 }
 
 void send_message(struct connection *conn)
