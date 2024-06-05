@@ -2174,6 +2174,7 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // uint64_t wr_sg_addr = wr.wr_sg_addr;
     // uint32_t wr_sg_length = wr.wr_sg_length;
     // uint32_t wr_sg_lkey = wr.wr_sg_lkey;
+    
     struct mlx5_wq *qp_sq = (struct mlx5_wq *) dev_qp_sq; // &qp->sq;
 	void *seg;
 	// struct mlx5_wqe_ctrl_seg *ctrl = NULL;
@@ -2196,9 +2197,6 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // // ctrl->rsvd       = 0;
     // ctrl->fcs        = 8; //signaled
     // // ctrl->imm        = 0;
-
-
-
 
     // mlx5_opcode = 16;// wr_opcode*2 + 8 - 2*(wr_opcode == 2); // mlx5_ib_opcode[wr->opcode];
     // *(uint64_t *) seg = (uint64_t) (htonl((uint16_t) cur_post * 256 | 16)) |  ((uint64_t) htonl(3 | (qp_num *256)) << 32);
@@ -2241,7 +2239,7 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // qp_sq->head += 1;
     
     qp_db[0] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
-    __threadfence_system();
+    // __threadfence_system();
     // uint32_t val[2];
     // memcpy(val, ctrl, 2*sizeof(uint32_t));
     // *(uint64_t *) val = *(uint64_t *) ctrl;

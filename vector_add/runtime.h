@@ -7,7 +7,7 @@
 
 
 #include <iostream>
-#include <simt/atomic>
+// #include <simt/atomic>
 
 #include "rdma_utils.cuh"
 
@@ -31,7 +31,7 @@ __device__ struct poll_content gpoll_cont;
 #define MAX_POST 3 
 // request size
 
-#define REQUEST_SIZE 512*1024 // bytes
+#define REQUEST_SIZE 1*1024 // bytes
 
 // define globale vaiable to save the number of post requests
 // and compare them to max_post
@@ -251,7 +251,7 @@ struct rdma_buf {
         // ibv_mr *host_mr, *dev_mr;
         // size_t offset=0;
         // private:
-        unsigned int *tlb_buffer;
+        unsigned int * tlb_buffer;
         size_t tlb_size;
         //  rdma_buf_d<T> *dev_buf;
 
@@ -405,7 +405,7 @@ struct rdma_buf {
                 struct ibv_wc wc;
                 che = floor((double)index/request_size); //getTLBindex(index, request_size);
                 // select which qp and cq to use:
-                
+                volatile uint *entry = &tlb_buffer[che];
                 // printf("sadasdrequest_size: %d che: %d checkTLB(0, tlb_buffer): %d\n", request_size, che, checkTLB(0, tlb_buffer));
                 // TODO: for oversubscription, first check if gpu has enough free memory
                 // __syncthreads();
@@ -414,10 +414,11 @@ struct rdma_buf {
                     // opcode: 4 for read, 0 for write
                     
                     // lock entry:
-                    if(/*lock_tlb_entry(che)*/atomicCAS((unsigned int *)&tlb_buffer[che], 0, 1) == 0){
-                        int qp_index = che % 100;
+                    if(/*lock_tlb_entry(che)*/atomicCAS((unsigned int *)entry, 0, 1) == 0){
+                        int qp_index = che % 128;
                         // printf("lvlue\n");
                         int data_size = request_size*sizeof(T);
+                        // printf("data_size: %d\n", data_size);
                         /********************************************************************************************/
                         // uint64_t remote_addr = host_address + che*65536; // + data_size*4*index;
                         // uint64_t local_addr = gpu_address + che*65536; // + data_size*4*index;
@@ -440,8 +441,8 @@ struct rdma_buf {
                         
                             // printf("qp_index: %d gpost_cont.cq_lock[index]: %d\n", qp_index, gpost_cont.cq_lock[qp_index]);
                             // int cur_post = gpost_cont->n_post[qp_index];gpost_cont->n_post[qp_index]++;
-                            int cur_post = atomicAdd((unsigned long long int *)&gpost_cont.n_post[qp_index], (unsigned long long int ) 1);
-                            // printf("cur_post & 127: %d\n", cur_post);
+                            
+                            // printf("cur_post: %d\n", cur_post);
                             // printf("before while: id: %d qp_index: %d\n", id, qp_index);
                             // printf("before while: id: %d cur_post: %d\n", id, cur_post);
                             // printf("before while: id: %d gpost_cont.n_post[qp_index]: %d\n", id, gpost_cont.n_post[qp_index]);
@@ -459,16 +460,20 @@ struct rdma_buf {
                             // sleep_d(che*2);
                             // int cur_post = atomicAdd((unsigned long long int *)&gpost_cont.n_post[qp_index], (unsigned long long int ) 1);
                             // printf("locked by id: %d tlb_buffer[che]: %d che: %d qp_num: %d\n", id, tlb_buffer[che], che, qp_index);
-                            // printf("request_size: %d\n", request_size);
+                            // printf("__line: %d\n", __LINE__);
 
-                                    void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
-                                    struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+
+                                    // volatile size_t *p_index = &gpost_cont.n_post[qp_index];
+                                    // int cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+                                    // // (cons_index_dev & ibv_cqe) * cqe_sz
+                                    // void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
+                                    // struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
                                     
-                                    post_m(host_address + che*data_size, gpost_cont.wr_rdma_rkey, data_size, gpost_cont.wr_sg_lkey, gpu_address + che*data_size, 4, gpost_cont.qp_num + qp_index, 
-                                        cur_post, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
+                                    // post_m(host_address + che*data_size, gpost_cont.wr_rdma_rkey, data_size, gpost_cont.wr_sg_lkey, gpu_address + che*data_size, 4, gpost_cont.qp_num + qp_index, 
+                                    //     cur_post, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
                             
                               
-                            
+                            // printf("__line: %d\n", __LINE__);
                             // cqe64->op_own = 240;
                             // void *cq_dbrec;// = (void *) gpoll_cont.cq_dbrec[qp_index];
                             
@@ -478,15 +483,23 @@ struct rdma_buf {
                             // tlb_buffer[che] = 2;
                         // if(lock_cq_entry(qp_index)){
 
-                            /* working part */
-                            while(cqe64->op_own == 240){
-                                // printf("id: %d cqe64->op_own: %d\n",id, cqe64->op_own);
-                                // sleep_d(500);
-                            }
-                            cqe64->op_own = 240;
-                            *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post +1) & 0xffffff);
-                            __threadfence();
-                            tlb_buffer[che] = 2;
+                            // /* working part */
+                            // // while(atomicCAS((unsigned int *)&cqe64->op_own, 0, 240) == 240){
+                            // //     printf("id: %d cqe64->op_own: %d\n",id, cqe64->op_own);
+                            // // }
+                            // // printf("__line: %d\n", __LINE__);
+                            // volatile uint8_t *op_flag = &cqe64->op_own;
+                            // // printf("__line: %d\n", __LINE__);
+                            // while(/*atomicCAS((unsigned int *)op_flag, 0, 240) == 240*/*op_flag == 240){
+                            //     // *op_flag = cqe64->op_own;
+                            //     printf("id: %d cqe64->op_own: %d\n",id, cqe64->op_own);
+                            //     // sleep_d(500);
+                            // }
+                            
+                            // *op_flag = 240;
+                            // *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post +1) & 0xffffff);
+                            // // __threadfence();
+                            // *entry = 2;
 
 
                             // gpost_cont.cq_lock[qp_index] = 0;
@@ -497,42 +510,55 @@ struct rdma_buf {
                         
                         // printf("cur_post & 15: %d cqe64->op_own: %d gpost_cont.cq_lock[%d]: %d\n", cur_post & 15, cqe64->op_own, cur_post & 15, gpost_cont.cq_lock[cur_post & 15]);
                         
-                        // bool isSet = false;
+                        bool isSet = false;
+                        volatile uint *cq_lock = &gpost_cont.cq_lock[qp_index];
+                        while(atomicCAS((unsigned int *)cq_lock, 0, 1) == 1);
                         // do 
                         // {
-                        //     // printf("qp_index: %d cur_post: %d cqe64->op_own: %d gpost_cont.cq_lock[%d]: %d\n",qp_index, cur_post, cqe64->op_own, cur_post & 15, gpost_cont.cq_lock[cur_post & 15]);
-                        //     if (isSet = atomicCAS((unsigned int *)&gpost_cont.cq_lock[cur_post & 15], 0, 1) == 0) 
+                        //     printf("id: %d qp_index: %d\n", id, qp_index);
+                        //     if ((atomicCAS((unsigned int *)cq_lock, 0, 1) == 0)) 
                         //     {
-                                
-                        //     // printf("id: %d, che: %d cur_post: %d qp_index: %d\n", id, che, cur_post, qp_index);
-                        //     // printf("locked by id: %d tlb_buffer[che]: %d che: %d qp_num: %d\n", id, tlb_buffer[che], che, qp_index);
-                        //     // printf("qp_index: %d cur_post: %d cqe64->op_own: %d gpost_cont.cq_lock[%d]: %d\n",qp_index, cur_post, cqe64->op_own, cur_post & 15, gpost_cont.cq_lock[cur_post & 15]);
-                        //     // cqe = gpoll_cont.cq_buf+4096*qp_index + (cur_post & 15) * 64;
-                        //     // cqe64 = (struct mlx5_cqe64 *) cqe;
-                        //     // cqe64->op_own = 240;
-                        //     // cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
+                        //         isSet = true;
+
+                            // printf("id: %d, che: %d cur_post: %d qp_index: %d\n", id, che, cur_post, qp_index);
+                            // printf("locked by id: %d tlb_buffer[che]: %d che: %d qp_num: %d\n", id, tlb_buffer[che], che, qp_index);
+                            // printf("qp_index: %d cur_post: %d cqe64->op_own: %d gpost_cont.cq_lock[%d]: %d\n",qp_index, cur_post, cqe64->op_own, cur_post & 15, gpost_cont.cq_lock[cur_post & 15]);
+                            // cqe = gpoll_cont.cq_buf+4096*qp_index + (cur_post & 15) * 64;
+                            // cqe64 = (struct mlx5_cqe64 *) cqe;
+                            // cqe64->op_own = 240;
+                            // cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
                                 
                                    
-                        //     }
-                        //     if (isSet) 
-                        //     {
-                        //         void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
-                        //         struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+                           
+                                volatile size_t *p_index = &gpost_cont.n_post[qp_index];
+                                int cur_post =  atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+                                // gpost_cont.n_post[qp_index]++;
+                                void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
+                                struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
                                 
-                        //         post_m(host_address + che*data_size, gpost_cont.wr_rdma_rkey, data_size, gpost_cont.wr_sg_lkey, gpu_address + che*data_size, 4, gpost_cont.qp_num + qp_index, 
-                        //         cur_post, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
-                        //         while(cqe64->op_own == 240){
-                        //         // printf("id: %d isSet: %d cqe64->op_own: %d qp_index: %d\n", id, isSet, cqe64->op_own);
-                        //         }
-                        //         // printf("chunk: %d - %d\n", che*data_size/4, che*data_size/4+data_size/4);
-                        //         cqe64->op_own = 240;
-                        //         *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post +1) & 0xffffff);
-                        //         __threadfence();
-                        //         gpost_cont.cq_lock[cur_post & 15] = 0;
+                                // post_m(host_address + che*data_size, gpost_cont.wr_rdma_rkey, data_size, gpost_cont.wr_sg_lkey, gpu_address + che*data_size, 4, gpost_cont.qp_num + qp_index, 
+                                // cur_post, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
+                                post_m(host_address + che*data_size, gpost_cont.wr_rdma_rkey, data_size, gpost_cont.wr_sg_lkey, gpu_address + che*data_size, 4, gpost_cont.qp_num + qp_index, 
+                                       cur_post, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
+                                volatile uint8_t *op_flag = &cqe64->op_own;
+                                while(/*cqe64->op_own == 240*/*op_flag == 240){
+                                    // printf("id: %d isSet: %d cqe64->op_own: %d qp_index: %d\n", id, isSet, cqe64->op_own);
+                                }
+                                // printf("chunk: %d - %d\n", che*data_size/4, che*data_size/4+data_size/4);
+                                // cqe64->op_own = 240;
+                                *op_flag = 240;
+                                *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post +1) & 0xffffff);
+                                __threadfence();
+                                // atomicCAS((unsigned int *)&cq_lock, 1, 0);
+                                
+                                *entry = 2;
+                                // break;
                         //     }
                         // } 
                         // while (!isSet);
+                        *cq_lock = 0;
 
+                        // gpost_cont.cq_lock[qp_index] = 0;
                             // __threadfence();
                             
                             // atomicCAS((unsigned int *)&cqe64->op_own, 0, 240);
@@ -547,13 +573,16 @@ struct rdma_buf {
                         
                     }
                     // wait_on_tlb;
-                    while(tlb_buffer[che] != 2);
+                    // while(tlb_buffer[che] != 2);
                     
                 }
-                if(checkTLB(che, tlb_buffer) == 1){
-                    while(tlb_buffer[che] != 2);
+                // if(checkTLB(che, tlb_buffer) == 1){
+                    // printf("id: %d tlb_buffer[%d]: %d\n", id, che, tlb_buffer[che]);
+                    
+                    while(*entry == 1);
+                    // printf("id: %d tlb_buffer[%d]: %d\n", id, che, tlb_buffer[che]);
                     // __syncthreads();
-                }
+                // }
                 // while(tlb_buffer[che] != 2);
                 // __syncthreads();
                 // if(15728640)
