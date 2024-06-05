@@ -9,7 +9,7 @@ nvidia_driver := /home/nurlan/Downloads/NVIDIA-Linux-x86_64-470.223.02
 cuda_memalloc = /usr/lib/x86_64-linux-gnu
 add_flags := -I $(mlx5_path)/providers/mlx5 -I $(mlx5_path)/build/include/ -I $(mlx5_path)/buildlib/sparse-include/ -I$(cuda_memalloc)
 
-CUDA_ROOT:=/usr/local/cuda-11.4
+CUDA_ROOT:=/usr/local/cuda-12.4
 CUDA_LIBS= -I $(CUDA_ROOT)/lib64 #-I $(nvidia_driver)/kernel/nvidia
 CUDA_INCLUDE=-I $(CUDA_ROOT)/include -I$(CUDA_SDK_ROOT)/C/common/inc 
 NVCC=$(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_35,arch=compute_35 $(CUDA_INCLUDE)

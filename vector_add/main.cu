@@ -10,7 +10,7 @@
 
 
 // Size of array
-#define N 256*1024
+#define N 1024*1024*150llu
 
 // Kernel
 __global__ void add_vectors_uvm(int *a, int *b, int *c, int size)
@@ -578,7 +578,10 @@ __global__ void test(rdma_buf<int> *a, rdma_buf<int> *b, rdma_buf<int> *c){
 
 __global__ void test2(rdma_buf<int> *a, rdma_buf<int> *b, rdma_buf<int> *c){
     int id = blockDim.x * blockIdx.x + threadIdx.x;
-    c->rvalue(id, (*a)[id] + (*b)[id]); 
+
+    int k = (*a)[id]; // + (*b)[id];
+
+    // c->rvalue(id, (*a)[id] + (*b)[id]); 
 }
 
 // Main program
@@ -600,7 +603,7 @@ int main(int argc, char **argv)
 
     int num_iteration = num_msg;
     s_ctx->n_bufs = num_bufs;
-    s_ctx->gpu_buf_size = 192*1024*1024;
+    s_ctx->gpu_buf_size = N*sizeof(int)*3;
 
     int ret = connect(argv[2], s_ctx);
     ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont);
@@ -615,10 +618,10 @@ int main(int argc, char **argv)
     cudaMallocManaged(&buf3, sizeof(rdma_buf<int>));
     // cudaMallocManaged(&b, sizeof(int)*100);
     // printf("s_ctx->gpu_buffer: %p, buf1->size: %d, Address_Offset: %d\n", s_ctx->gpu_buffer, buf1->size, Address_Offset);
-    buf1->start((uint64_t) s_ctx->gpu_buffer, (uint64_t) s_ctx->server_mr.addr, 2048*16*512);
+    buf1->start((uint64_t) s_ctx->gpu_buffer, (uint64_t) s_ctx->server_mr.addr, N*sizeof(int));
     // printf("s_ctx->gpu_buffer: %p, buf1->size: %d, Address_Offset: %d\n", s_ctx->gpu_buffer, buf1->size, Address_Offset);
-    buf2->start((uint64_t) s_ctx->gpu_buffer, (uint64_t) s_ctx->server_mr.addr, 2048*16*512);
-    buf3->start((uint64_t) s_ctx->gpu_buffer, (uint64_t) s_ctx->server_mr.addr, 2048*16*512);
+    buf2->start((uint64_t) s_ctx->gpu_buffer, (uint64_t) s_ctx->server_mr.addr, N*sizeof(int));
+    buf3->start((uint64_t) s_ctx->gpu_buffer, (uint64_t) s_ctx->server_mr.addr, N*sizeof(int));
     // buf1->address = (uint64_t) s_ctx->gpu_buffer;
     // buf1->size = 100;
     printf("buf1->address: %p, buf1->size: %d, REQUEST_SIZE: %d buf1->host_address : %p\n", buf1->gpu_address, buf1->size, REQUEST_SIZE, buf1->host_address);
@@ -628,7 +631,7 @@ int main(int argc, char **argv)
     printf("Function name: %s, line number: %d mesg_size: %d num_iteration: %d sizeof(int): %d\n", __func__, __LINE__, mesg_size, num_msg, sizeof(int));
     // exit(0);
     uint8_t access_size = sizeof(int);
-    size_t bytes = N*sizeof(int)*64;
+    size_t bytes = N*sizeof(int);
     void *A = (void *) s_ctx->gpu_buffer;
     void *B = (void *) s_ctx->gpu_buffer + bytes;
     void *C = (void *) s_ctx->gpu_buffer + 2*bytes;
@@ -757,7 +760,8 @@ int main(int argc, char **argv)
     // add_vectors_rdma_64MB_512KB<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, data_size, num_iteration);
     // add_vectors_rdma<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, /*d_post, d_poll,*/ data_size, num_iteration);
     // test<<<2048*16, 512>>>(buf1, buf2, (int *) C);
-    test<<<2048, 256>>>(buf1, buf2, buf3);
+    // test<<<2048, 256>>>(buf1, buf2, buf3);
+    test2<<< 4096, 1024>>>(buf1, buf2, buf3);
     cudaEventRecord(event2, (cudaStream_t) 1);
     clock_gettime(CLOCK_REALTIME, &finish);
     ret1 = cudaDeviceSynchronize();
@@ -850,13 +854,13 @@ int main(int argc, char **argv)
     for(int i = 0; i < bytes/4; i++){
         if(h_array[i] != 2){ 
             if(i>0 && h_array[i-1] == 2){
-                printf("start: A[%d]: %d qp: %d\n", i, h_array[i], (i/16384)%15);
+                printf("start: A[%d]: %d qp: %d\n", i, h_array[i], (i/(REQUEST_SIZE/4))%15);
             }
             else if(i == 0){
-                printf("start: A[%d]: %d qp: %d\n", i, h_array[i], (i/16384)%15);
+                printf("start: A[%d]: %d qp: %d\n", i, h_array[i], (i/(REQUEST_SIZE/4))%15);
             }
             else if(h_array[i+1] == 2){
-                printf("end: A[%d]: %d qp: %d\n", i, h_array[i], (i/16384)%15);
+                printf("end: A[%d]: %d qp: %d\n", i, h_array[i], (i/(REQUEST_SIZE/4))%15);
             }
            
         }
