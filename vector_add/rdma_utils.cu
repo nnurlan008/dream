@@ -2237,8 +2237,8 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // cur_post++;
     // qp_sq->cur_post += 1;
     // qp_sq->head += 1;
-    
-    qp_db[0] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
+    // if(cur_post == 0)
+    // qp_db[0] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
     __threadfence_system();
     // __threadfence_system();
     // uint32_t val[2];
@@ -2253,7 +2253,7 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
         // *(volatile uint32_t *)(bf_reg+4) = (uint32_t) htonl(htonl64(val));
         *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl ;// 
         // *(volatile uint64_t *)bf_reg = ((uint64_t) val[1] << 32 | val[0]);
-        __threadfence_system();
+        // __threadfence_system();
     // }
     // __threadfence_system();
     // printf("after id: %d, *bf_reg: %lld, *bf_reg+4: %lld\n", id, *(uint32_t *)bf_reg, *(uint32_t *)(bf_reg+4));
