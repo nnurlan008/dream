@@ -416,7 +416,7 @@ struct rdma_buf {
                     
                     // lock entry:
                     if(/*lock_tlb_entry(che)*/atomicCAS((unsigned int *)entry, 0, 1) == 0){
-                        int qp_index = che % 128;
+                        int qp_index = che % 256;
                         // printf("lvlue\n");
                         int data_size = request_size*sizeof(T);
                         // printf("data_size: %d\n", data_size);
@@ -548,8 +548,9 @@ struct rdma_buf {
                                 // printf("chunk: %d - %d\n", che*data_size/4, che*data_size/4+data_size/4);
                                 // cqe64->op_own = 240;
                                 *op_flag = 240;
+                                // if(cur_post == 0)
                                 *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post +1) & 0xffffff);
-                                __threadfence();
+                                // __threadfence();
                                 // atomicCAS((unsigned int *)&cq_lock, 1, 0);
                                 
                                 *entry = 2;

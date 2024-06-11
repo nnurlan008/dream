@@ -106,7 +106,7 @@ int main()
     cudaDeviceGetAttribute(&numberOfSMs, cudaDevAttrMultiProcessorCount, deviceId);
 
     printf("sizeof(float): %d\n", sizeof(float));
-    const int N = 64*1024*1024/sizeof(float); // (2<<24)/8;
+    const int N = 256*1024*1024/sizeof(float); // (2<<24)/8;
     size_t size = N * sizeof(float);
     printf("size: %d MB\n", size/1024/1024);
     float *a;
@@ -131,8 +131,8 @@ int main()
     cudaError_t asyncErr;
 
     for (int i = 0; i < N; i++){
-        a[i] = 3;
-        b[i] = 4;
+        a[i] = 2;
+        b[i] = 2;
     }
 
     // initWith<<<numberOfBlocks, threadsPerBlock>>>(3, a, N);
@@ -164,7 +164,7 @@ int main()
     printf("dt_ms: %f\n", dt_ms);
     // cudaMemPrefetchAsync(c, size, cudaCpuDeviceId);
 
-    checkElementsAre(7, c, N);
+    checkElementsAre(4, c, N);
 
     cudaFree(a);
     cudaFree(b);
