@@ -4,7 +4,7 @@
 //   #include "rdma_utils.h"
 // }
 
-#include "rdma_utils.cuh"
+#include "../src/rdma_utils.cuh"
 #include <time.h>
 #include "runtime.h"
 
@@ -316,8 +316,7 @@ int main(int argc, char **argv)
 {   
     if (argc != 7)
         usage(argv[0]);
-    // else
-    //     usage(argv[0]);
+    
     init_gpu(0);
     printf("Function: %s line number: %d 1024MB: %d bytes REQUEST_SIZE: %d\n",__func__, __LINE__, MB(1024), REQUEST_SIZE);
     int num_msg = (unsigned long) atoi(argv[4]);
@@ -360,123 +359,18 @@ int main(int argc, char **argv)
     // cudaMemcpy(buf1, &buf, sizeof(rdma_buf<int>), cudaMemcpyHostToDevice);
     // printf("buf[2]: %d a: %p\n", buf[2], a);
     printf("Function name: %s, line number: %d mesg_size: %d num_iteration: %d sizeof(int): %d\n", __func__, __LINE__, mesg_size, num_msg, sizeof(int));
-    // exit(0);
-    // uint8_t access_size = sizeof(int);
-    // size_t bytes = N*sizeof(int);
-    // void *A = (void *) s_ctx->gpu_buffer;
-    // void *B = (void *) s_ctx->gpu_buffer + bytes;
-    // void *C = (void *) s_ctx->gpu_buffer + 2*bytes;
-    // // int *C_dev;
-    // int *h_array = (int *) malloc(bytes);
-    // for(int i = 0; i < bytes/sizeof(int); i++)
-    //     h_array[i] = 0;
-
+   
     // allocate poll and post content
-
-    printf("alloc synDev ret: %d\n", cudaDeviceSynchronize());
-    alloc_global_cont(&post_cont, &poll_cont, &post_cont2);
-    // if(cudaSuccess != ){    
-    printf("alloc synDev ret1: %d\n", cudaDeviceSynchronize());
-        // return -1;
-    // }
-
-    cudaError_t rtr1; // = cudaMemcpy(A, h_array, bytes, cudaMemcpyHostToDevice);
-    cudaError_t rtr2; // = cudaMemcpy(B, h_array, bytes, cudaMemcpyHostToDevice);
-    cudaError_t rtr3; // = cudaMemcpy(C, h_array, bytes, cudaMemcpyHostToDevice);
-    // if(rtr1 != cudaSuccess || rtr2 != cudaSuccess || rtr3 != cudaSuccess){
-    //     printf("Error on array copy! line: %d\n", __LINE__);
-    //     return -1;
-    // }
+    alloc_global_cont(&post_cont, &poll_cont, &post_cont2);  
 
     int thr_per_blk = 2048*2; // s_ctx->n_bufs;
 	int blk_in_grid = 256;
 
-    // int thr_per_blk = s_ctx->n_bufs;
-	// int blk_in_grid = 512;
-    
-
-    // Allocate TLB for array A
-    // uint8_t *tlb_A, *tlb_B, *tlb_C, *h_tlb;
-    // int tlb_size = bytes/(64*1024); // divided by access size //16*1024*1024/(64*1024); // thr_per_blk;
-    cudaError_t ret1; // = cudaMalloc((void **)&tlb_A, tlb_size*sizeof(uint8_t));
-    cudaError_t ret2; // = cudaMalloc((void **)&tlb_B, tlb_size*sizeof(uint8_t));
-    cudaError_t ret3; // = cudaMalloc((void **)&tlb_C, tlb_size*sizeof(uint8_t));
-    // if(ret1 != cudaSuccess || ret2 != cudaSuccess || ret3 != cudaSuccess){
-    //     printf("Error on allocation TLB!\n");
-    //     return -1;
-    // }
-    // h_tlb = (uint8_t *) malloc(tlb_size*sizeof(uint8_t));
-    // for (int i = 0; i < tlb_size; i++) h_tlb[i] = 0;
-    // ret1 = cudaMemcpy(tlb_A, h_tlb, tlb_size*sizeof(uint8_t), cudaMemcpyHostToDevice);
-    // ret2 = cudaMemcpy(tlb_B, h_tlb, tlb_size*sizeof(uint8_t), cudaMemcpyHostToDevice);
-    // ret3 = cudaMemcpy(tlb_C, h_tlb, tlb_size*sizeof(uint8_t), cudaMemcpyHostToDevice);
-    // if(ret1 != cudaSuccess || ret2 != cudaSuccess || ret3 != cudaSuccess){
-    //     printf("Error on allocation TLB!\n");
-    //     return -1;
-    // }
-
-    
-    
-
-
-            // // Allocate memory for arrays d_A, d_B, and d_C on device
-            // int *d_A, *d_B, *d_C;
-            // cudaError_t state;
-            // state = cudaMallocManaged(&d_A, bytes);
-            // if(cudaSuccess != state){
-            // 	printf("error on cudaMallocManaged(&d_A, bytes): %d\n", state);
-            // }
-            // state = cudaMallocManaged(&d_B, bytes);
-            // if(cudaSuccess != state){
-            // 	printf("error on cudaMallocManaged(&d_B, bytes): %d\n", state);
-            // }
-            // state = cudaMallocManaged(&d_C, bytes);
-            // if(cudaSuccess != state){
-            // 	printf("error on cudaMallocManaged(&d_C, bytes): %d\n", state);
-            // }
-            // printf("line number %d\n", __LINE__);
-            // // Fill host arrays A and B
-            // for(int i=0; i<N; i++)
-            // {
-            // 	d_A[i] = 1.0;
-            // 	d_B[i] = 2.0;
-            // }
-   
-        
-
-    
-
-    int *dev_a, *dev_b, *dev_c, *host_a;                      // 107374182
-    // ret1 = cudaMalloc((void **)&dev_a, thr_per_blk*blk_in_grid*sizeof(int));
-    // ret2 = cudaMalloc((void **)&dev_b, thr_per_blk*blk_in_grid*sizeof(int));
-    // ret3 = cudaMalloc((void **)&dev_c, thr_per_blk*blk_in_grid*sizeof(int));
-    // host_a = (int *) malloc(thr_per_blk*blk_in_grid*sizeof(int));
-    // if(ret1 != cudaSuccess || ret2 != cudaSuccess || ret3 != cudaSuccess){
-    //     printf("cuda error: %s, %d\n", __func__, __LINE__);
-    // }
-
-    // for(int i = 0; i < thr_per_blk*blk_in_grid; i++) host_a[i] = 2;
-    // ret2 = cudaMemcpy(dev_b, host_a, thr_per_blk*blk_in_grid*sizeof(int), cudaMemcpyHostToDevice);
-    // ret3 = cudaMemcpy(dev_b, host_a, thr_per_blk*blk_in_grid*sizeof(int), cudaMemcpyHostToDevice);
-    // if(ret2 != cudaSuccess || ret3 != cudaSuccess){
-    //     printf("cuda error: %s, %d\n", __func__, __LINE__);
-    // }
-
-    
-    // printf("thr_per_blk: %d, blk_in_grid: %d tlb_size: %d a: %p\n", thr_per_blk, blk_in_grid, tlb_size, A);
-
     int timer_size = 4;
     clock_t *dtimer = NULL;
-	clock_t timer[thr_per_blk*timer_size];
-
-    if (cudaSuccess != cudaMalloc((void **)&dtimer, sizeof(clock_t) * timer_size * thr_per_blk)) 
-	{
-        printf("Error on timer allocation!\n");
-        return -1;
-    }
 
     // Launch kernel
-    ret1 = cudaDeviceSynchronize();
+    cudaError_t ret1 = cudaDeviceSynchronize();
     printf("ret: %d\n", ret1);
     if(cudaSuccess != ret1){    
         return -1;
@@ -487,62 +381,30 @@ int main(int argc, char **argv)
     cudaEventCreate(&event2);
     int data_size = mesg_size;
 
-
     struct timespec start, finish, delta;
     clock_gettime(CLOCK_REALTIME, &start);
     cudaEventRecord(event1, (cudaStream_t)1); //where 0 is the default stream
     
-    // add_vectors_uvm<<< thr_per_blk,sblk_in_grid >>>(dev_a, dev_a, dev_c, thr_per_blk*blk_in_grid);
-    // add_vectors_rdma_64MB_512KB<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, data_size, num_iteration);
-    // add_vectors_rdma<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, /*d_post, d_poll,*/ data_size, num_iteration);
     test<<<2048, 512>>>(buf1, buf2, buf3, N);
-    // test2<<<2048, 256>>>(buf1, buf2, buf3);
-    // test2 <<<(1*N)/1024, 1024>>>(buf1, buf2, buf3);
-    // test2<<< 32, 1024>>>(buf1, buf2, buf3);
+    
     cudaEventRecord(event2, (cudaStream_t) 1);
     clock_gettime(CLOCK_REALTIME, &finish);
     ret1 = cudaDeviceSynchronize();
     
-    
     //synchronize
     cudaEventSynchronize(event1); //optional
     cudaEventSynchronize(event2); //wait for the event to be executed!
+
+    float dt_ms;
+    cudaEventElapsedTime(&dt_ms, event1, event2);
 
     printf("ret1: %d\n", ret1);
     if(cudaSuccess != ret1){
         return -1;
     }
 
-    //calculate time
-    float dt_ms;
-    cudaEventElapsedTime(&dt_ms, event1, event2);
-    sub_timespec(start, finish, &delta);
-
-    /*verify results*/
-    ret1 = cudaDeviceSynchronize();
-    printf("ret2: %d\n", ret1);
-    if(cudaSuccess != ret1){    
-        return -1;
-    }
-    check<<<2048, 512>>>(buf1, buf2, buf3, buf1->size);
-    ret1 = cudaDeviceSynchronize();
-    printf("ret3: %d\n", ret1);
-    if(cudaSuccess != ret1){    
-        return -1;
-    }
-        // read<<<1,1>>>(dev_array, 0);
-        // write<<<1,1>>>(dev_array, 71808, 3);
-        // read<<<1,1>>>(dev_array2, 71808-256);
-        // read_nonstop<<<1,1>>>(dev_array, 256);
-
-        // add_vectors_uvm<<< blk_in_grid, thr_per_blk >>>(d_A, d_B, d_C, bytes);
-	
     
-    rtr3 = cudaMemcpy(timer, dtimer, sizeof(clock_t)*timer_size*thr_per_blk, cudaMemcpyDeviceToHost);
-    if(rtr3 != cudaSuccess){
-        printf("Error on array copy!\n");
-        return -1;
-    }
+    
 
     clock_t cycles;
     float g_usec_post;
@@ -550,169 +412,11 @@ int main(int argc, char **argv)
     cudaGetDeviceProperties(&devProp, 0);
     printf("Cuda device clock rate = %d\n", devProp.clockRate);
     float freq_post = (float)1/((float)devProp.clockRate*1000), max = 0;
-    printf("timer: \n");
-    float div, sum_div = 0, sum_time = 0;
-    // for(int i = 0; i < thr_per_blk; i++){
-    //     cycles = timer[timer_size*i+1] - timer[i*timer_size];
-	//     g_usec_post = (float)((float)1/(devProp.clockRate*1000))*((cycles)) * 1000000;
-    //     // if (max < g_usec_post) max = g_usec_post;
-    //     printf("Posting - blockIdx.x: %d: %f \n", i, g_usec_post);
-    //     // div = dt_ms/(g_usec_post/1000);
-    //     // sum_div += div;
-    //     // sum_time += g_usec_post;
-    //     cycles = timer[timer_size*i+3] - timer[i*timer_size+2];
-	//     g_usec_post = (float)((float)1/(devProp.clockRate*1000))*((cycles)) * 1000000;
-    //     // if (max < g_usec_post) max = g_usec_post;
-    //     printf("polling - blockIdx.x: %d: %f div: %f\n", i, g_usec_post, div);
-    //     // cycles = timer[timer_size*i+3] - timer[i*timer_size+2];
-	//     // g_usec_post = (float)((float)1/(devProp.clockRate*1000))*((cycles)) * 1000000;
-    //     if (max < g_usec_post) max = g_usec_post;
-    //     // printf("Array B - blockIdx.x: %d: %f \n", i, g_usec_post);
-    // }
 
-    sum_div = sum_div/thr_per_blk;
-    sum_time = sum_time/thr_per_blk/1000;
-    printf("\nmax: %f\n", max);
-    printf("\nsum_div: %f sum_time: %f total time: %f\n", sum_div, sum_time, sum_time*sum_div);
-    printf("BW: %f GBps for data size: %d\n", (float)(thr_per_blk)*data_size*4*num_iteration/(dt_ms*0.001*1024*1024*1024), data_size*4);
-    clock_t max1 = timer[1];
-    clock_t min = timer[0];
-    for(int i = 0; i < thr_per_blk; i++){
-        if(max1 < timer[timer_size*i+1]) max1 = timer[timer_size*i + 1];
-        if(min > timer[timer_size*i]) min = timer[timer_size*i];
-        // cycles = timer[2*i+1] - timer[i*2];
-	    // g_usec_post = (float)((float)1/(devProp.clockRate*1000))*((cycles)) * 1000000;
-        // if (max < g_usec_post) max = g_usec_post;
-        // printf("blockIdx.x: %d: %f \n", i, g_usec_post);
-    }
-    cycles = max1 - min;
+    
     g_usec_post = (float)((float)1/(devProp.clockRate*1000))*((cycles)) * 1000000;
     printf("total timer: %f\n", g_usec_post);
     printf("kernel time: %d.%.9ld dt_ms: %f\n", (int)delta.tv_sec, delta.tv_nsec, dt_ms);
-
-
-
-    // for(int i = 0; i < 512*100; i++)
-    //     printf(" %d ", h_array[i]);
-    // printf("\n");
-    // sleep(5);
-
-
-    // rtr3 = cudaMemcpy(h_array, A, bytes, cudaMemcpyDeviceToHost);
-    // if(rtr3 != cudaSuccess){
-    //     printf("Error on array copy of A to host!\n");
-    //     return -1;
-    // }
-    // printf("H_array: \n");
-    // for(int i = 0; i < bytes/4; i++){
-    //     if(h_array[i] != 2){ 
-    //         if(i>0 && h_array[i-1] == 2){
-    //             printf("start: A[%d]: %d qp: %d\n", i, h_array[i], (i/(REQUEST_SIZE/4))%15);
-    //         }
-    //         else if(i == 0){
-    //             printf("start: A[%d]: %d qp: %d\n", i, h_array[i], (i/(REQUEST_SIZE/4))%15);
-    //         }
-    //         else if(h_array[i+1] == 2){
-    //             printf("end: A[%d]: %d qp: %d\n", i, h_array[i], (i/(REQUEST_SIZE/4))%15);
-    //         }
-           
-    //     }
-    // }
-    // printf("----------------------\n");
-    // rtr3 = cudaMemcpy(h_array, B, bytes, cudaMemcpyDeviceToHost);
-    // if(rtr3 != cudaSuccess){
-    //     printf("Error on array copy of B to host!\n");
-    //     return -1;
-    // }
-    // for(int i = 0; i < bytes/4; i++){
-    //     if(h_array[i] != 2){ 
-    //         if((i>0 && h_array[i-1] == 2) || (i == 0)){
-    //                 printf("start: B[%d]: %d qp: %d\n", i, h_array[i], (i/16384)%15);
-    //             }
-    //             else if(h_array[i+1] == 2){
-    //                 printf("end: B[%d]: %d qp: %d\n", i, h_array[i], (i/16384)%15);
-    //             }
-    //     }
-    // }
-    // rtr3 = cudaMemcpy((void *) h_array, C, bytes, cudaMemcpyDeviceToHost);
-    // if(rtr3 != cudaSuccess){
-    //     printf("Error on array copy of C to host!\n");
-    //     return -1;
-    // }
-    // for(int i = 0; i < bytes/4; i++){
-    //     if(h_array[i] != 4){ 
-    //         printf("error in C: C[%d]: %d\n", i, h_array[i]);
-    //         break;
-    //     }
-    // }
-
-
-    // printf("C[0]: %d\n", h_array[0]);
-    // printf("C[1]: %d\n", h_array[1]);
-    // printf("C[49151]: %d\n", h_array[49151]);
-    // printf("C[524287]: %d\n", h_array[524287]);
-    // printf("C[524288]: %d\n", h_array[524288]);
-    // printf("C[524289]: %d\n", h_array[524289]);
-    // printf("C[600000]: %d\n", h_array[600000]);
-    // printf("C: %p\n", C);
-    printf("\n");
-
-    // delay(40);
-	// // Number of bytes to allocate for N doubles
-	// size_t bytes = N*sizeof(int);
-	// printf("size: %d GB\n", sizeof(int)/4);
-	// // Allocate memory for arrays A, B, and C on host
-	// // int *A = (int*)malloc(bytes);
-	// // int *B = (int*)malloc(bytes);
-	// // int *C = (int*)malloc(bytes);
-
-	// // Allocate memory for arrays d_A, d_B, and d_C on device
-	// int *d_A, *d_B, *d_C;
-	// cudaError_t state;
-	// state = cudaMallocManaged(&d_A, bytes);
-	// if(cudaSuccess != state){
-	// 	printf("error on cudaMallocManaged(&d_A, bytes): %d\n", state);
-	// }
-	// state = cudaMallocManaged(&d_B, bytes);
-	// if(cudaSuccess != state){
-	// 	printf("error on cudaMallocManaged(&d_B, bytes): %d\n", state);
-	// }
-	// state = cudaMallocManaged(&d_C, bytes);
-	// if(cudaSuccess != state){
-	// 	printf("error on cudaMallocManaged(&d_C, bytes): %d\n", state);
-	// }
-	// printf("line number %d\n", __LINE__);
-	// // Fill host arrays A and B
-	// for(int i=0; i<N; i++)
-	// {
-	// 	d_A[i] = 1.0;
-	// 	d_B[i] = 2.0;
-	// }
-
-	// // Copy data from host arrays A and B to device arrays d_A and d_B
-	// // cudaMemcpy(d_A, A, bytes, cudaMemcpyHostToDevice);
-	// // cudaMemcpy(d_B, B, bytes, cudaMemcpyHostToDevice);
-
-	// // Set execution configuration parameters
-	// //		thr_per_blk: number of CUDA threads per grid block
-	// //		blk_in_grid: number of blocks in grid
-	// int thr_per_blk = 256;
-	// int blk_in_grid = ceil( float(N) / thr_per_blk );
-
-	
-	// // Copy data from device array d_C to host array C
-	// // cudaMemcpy(C, d_C, bytes, cudaMemcpyDeviceToHost);
-
-	// // Verify results
-    // double tolerance = 1.0e-14;
-	// for(int i=0; i<N; i++)
-	// {
-	// 	if( fabs(d_C[i] - 3.0) > tolerance)
-	// 	{ 
-	// 		printf("\nError: value of d_C[%d] = %d instead of 3.0\n\n", i, d_C[i]);
-	// 		exit(1);
-	// 	}
-	// }	
 
 	// // Free CPU memory
 	// // free(A);
@@ -736,3 +440,24 @@ int main(int argc, char **argv)
 
 	return 0;
 }
+
+
+// TODO:
+/*
+1. Correct the allocation mechanism.
+2. Create page cache; each request or tlb entry is not just an array entry. 
+    It is a different data structure where we keep the info about the location of the data,
+    host address and possible device location if data has been fetched. We do this to make sure 
+    that we are not dependent on continuous assignment and each request can be allocated to device
+    memory during post time. - somehow done
+3. Add device allocation - when the data is brought to device memory for the first time, 
+    the device address should be given to that data request, which will be stored in the corresponding 
+    tlb entry. - somehow done
+4. Add eviction mechanism - when the memory of the GPU is completely filled, polling threads are 
+    allowed to evict pages based on LRU policy. - not done
+5. Think about possible prefetching but not too important - not done
+6. Think about thread-level request handling; each thread will put the data request corresponding to one entry;
+    then the coalescer unit will coalesce these smal requests and ring/update the db register - 
+    this way no unnecessary data will be brought to the memory. similar to BaM. 
+    For this, I think we also need to extend the QPs in depth and number as well. This step is an important point.
+*/

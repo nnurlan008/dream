@@ -106,7 +106,7 @@ int main()
     cudaDeviceGetAttribute(&numberOfSMs, cudaDevAttrMultiProcessorCount, deviceId);
 
     printf("sizeof(float): %d\n", sizeof(float));
-    const int N = 256*1024*1024/sizeof(float); // (2<<24)/8;
+    const size_t N = 1.5*1024*1024*1024llu;// 256*1024*1024/sizeof(float); // (2<<24)/8;
     size_t size = N * sizeof(float);
     printf("size: %d MB\n", size/1024/1024);
     float *a;
@@ -124,7 +124,7 @@ int main()
     size_t threadsPerBlock;
     size_t numberOfBlocks;
 
-    threadsPerBlock = 256;
+    threadsPerBlock = 512;
     numberOfBlocks = 2048; // 32 * numberOfSMs;
 
     cudaError_t addVectorsErr;

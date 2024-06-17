@@ -32,6 +32,7 @@ extern "C"{
 #include "rdma_utils.cuh"
 
 struct MemPool MemoryPool;
+uint64_t remote_address;
 
 __device__ struct post_content *gpost_cont1;
 __device__ struct poll_content *gpoll_cont1;
@@ -2399,6 +2400,7 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
     struct mlx5_qp *qp_0 = to_mqp(s_ctx->gpu_qp[0]);
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     post_cont->wr_rdma_remote_addr = (uintptr_t)s_ctx->server_memory.addresses[0];
+    remote_address = s_ctx->server_memory.addresses[0];
     post_cont->wr_sg_length = 4096; // fixed for now by default
     post_cont->wr_sg_lkey = s_ctx->gpu_mr->lkey;
     post_cont->wr_sg_addr = (uintptr_t) s_ctx->gpu_buffer;

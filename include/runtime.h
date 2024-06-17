@@ -9,12 +9,15 @@
 #include <iostream>
 // #include <simt/atomic>
 
-#include "rdma_utils.cuh"
+#include "../src/rdma_utils.cuh"
 
 #define htonl(x)  ((((uint32_t)(x) & 0xff000000) >> 24) |\
                    (((uint32_t)(x) & 0x00ff0000) >> 8) |\
                    (((uint32_t)(x) & 0x0000ff00) << 8) |\
                    (((uint32_t)(x) & 0x000000ff) << 24))
+
+// remote address:
+extern uint64_t remote_address;
 
 // offset for buffers; in bytes
 static size_t Address_Offset = 0; 
@@ -222,10 +225,10 @@ struct rdma_buf {
         }
 
         // constructor for pointer declaration:
-        void start(uint64_t h_address, size_t user_size){
+        void start(size_t user_size){
             uint64_t offset = (uint64_t) Address_Offset;
             // gpu_address = user_address + Address_Offset;
-            host_address = h_address + Address_Offset;
+            host_address = remote_address + Address_Offset;
             size = user_size;
             request_size = REQUEST_SIZE/sizeof(T);
              
