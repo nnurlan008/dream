@@ -25,6 +25,9 @@
 #include <sys/mman.h>
 // #include "runtime.h"
 
+#include <iostream>
+using namespace std;
+
 extern "C"{
   #include "rdma_utils.h"
 }
@@ -264,6 +267,29 @@ void post_receives(struct connection *conn, struct context *s_ctx)
     // printf("Function: %s line number: %d\n",__func__, __LINE__);
 }
 
+// create new file for the following functions:
+
+struct ibv_context* createContext(const std::string& device_name) {
+    /* There is no way to directly open the device with its name; we should get the list of devices first. */
+    struct ibv_context* context = nullptr;
+    int num_devices;
+    struct ibv_device** device_list = ibv_get_device_list(&num_devices);
+    for (int i = 0; i < num_devices; i++){
+        /* match device name. open the device and return it */
+        if (device_name.compare(ibv_get_device_name(device_list[i])) == 0) {
+        context = ibv_open_device(device_list[i]);
+        break;
+        }
+    }
+
+    /* it is important to free the device list; otherwise memory will be leaked. */
+    ibv_free_device_list(device_list);
+    if (context == nullptr) {
+        std::cerr << "Unable to find the device " << device_name << std::endl;
+    }
+    return context;
+}
+
 void build_connection(struct rdma_cm_id *id, struct context *s_ctx)
 {
     struct connection *conn;
@@ -435,11 +461,16 @@ __global__ void invalidate_cq(void *buf){
   int nent = 64;
   int cqe_sz = 64;
   struct mlx5_cqe64 *cqe;
+  
   for (i = 0; i < nent; ++i) {
     cqe = (struct mlx5_cqe64 *) (buf + i * cqe_sz);
     cqe += cqe_sz == 128 ? 1 : 0;
-    cqe->op_own = MLX5_CQE_INVALID << 4;
+    volatile uint8_t *op_flag = &cqe->op_own;
+    //cqe->op_own = MLX5_CQE_INVALID << 4;
+    *op_flag = MLX5_CQE_INVALID << 4;
+    // printf("cqe->op_own: %d\n", cqe->op_own);
   }
+  printf("invalidate_cq - buf: 0x%llx cqe->op_own: %d\n", buf, cqe->op_own);
 }
 
 int connect(const char *ip, struct context *s_ctx){
@@ -494,7 +525,7 @@ int connect(const char *ip, struct context *s_ctx){
         }
         s_ctx->cqbuf[i] = temp;
         invalidate_cq<<<1,1>>>(s_ctx->cqbuf[i]);
-        printf("s_ctx->cqbuf[i]: 0x%llx\n", s_ctx->cqbuf[i]);
+        // printf("s_ctx->cqbuf[i]: 0x%llx\n", s_ctx->cqbuf[i]);
     }
 
     if (process_cm_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, &event, &event_copy))
@@ -918,6 +949,399 @@ int connect(const char *ip, struct context *s_ctx){
     return 0;
 }
 
+int init_qp(struct ibv_qp *qp){
+    struct ibv_qp_attr qp_attr1;
+    memset(&qp_attr1, 0, sizeof(qp_attr1));
+
+    qp_attr1.qp_state        = IBV_QPS_INIT;
+    qp_attr1.pkey_index      = 0;
+    qp_attr1.port_num = 1; // IB_PORT;
+    qp_attr1.qp_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC | IBV_ACCESS_REMOTE_WRITE;
+
+    int ret = ibv_modify_qp (qp, &qp_attr1, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT  | IBV_QP_ACCESS_FLAGS); 
+
+    return ret;
+}
+
+int rtr_qp(struct ibv_qp *qp, uint32_t qp_num, uint16_t lid, union ibv_gid gid, uint8_t gid_entry){
+    struct ibv_qp_attr qp_attr1;
+    memset(&qp_attr1, 0, sizeof(qp_attr1));
+    qp_attr1.qp_state = IBV_QPS_RTR;
+    qp_attr1.path_mtu = IBV_MTU_4096;
+    qp_attr1.dest_qp_num = qp_num;// buffer.target_qp_num[i];
+    qp_attr1.rq_psn = 0;
+
+    qp_attr1.min_rnr_timer = 12;
+    qp_attr1.ah_attr.is_global = 1;
+    // qp_attr1.ah_attr.dlid = buffer.target_lid;
+    qp_attr1.ah_attr.sl = 0;
+    qp_attr1.max_dest_rd_atomic = 1;
+    qp_attr1.ah_attr.port_num = 1;
+    qp_attr1.ah_attr.src_path_bits = 0;
+    qp_attr1.ah_attr.port_num = 1;
+    // qp_attr1.dest_qp_num = s_ctx->gpu_qp[i]->qp_num;
+    qp_attr1.ah_attr.dlid = lid;
+    qp_attr1.ah_attr.grh.dgid = gid;
+    qp_attr1.ah_attr.grh.sgid_index = gid_entry;
+    qp_attr1.ah_attr.grh.hop_limit = 0xFF;
+    qp_attr1.ah_attr.grh.traffic_class = 0;
+
+    int ret = ibv_modify_qp(qp, &qp_attr1, IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+    return ret;
+}
+
+int rts_qp(struct ibv_qp *qp){
+    struct ibv_qp_attr qp_attr;
+    memset(&qp_attr, 0, sizeof(qp_attr));
+    
+    qp_attr.qp_state = IBV_QPS_RTS,
+    qp_attr.timeout = 14,
+    qp_attr.retry_cnt = 7,
+    qp_attr.rnr_retry = 7,
+    qp_attr.sq_psn = 0,
+    qp_attr.max_rd_atomic = 1;
+
+    int ret = ibv_modify_qp(qp, &qp_attr,
+                        IBV_QP_STATE | IBV_QP_TIMEOUT |
+                            IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY |
+                            IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
+
+    return ret;
+}
+
+int local_connect(const char *mlx_name, struct context *s_ctx){
+    int ret;
+
+    s_ctx->ctx = createContext(mlx_name);
+    TEST_Z(s_ctx->pd = ibv_alloc_pd(s_ctx->ctx));
+    TEST_Z(s_ctx->comp_channel = ibv_create_comp_channel(s_ctx->ctx));
+
+    TEST_Z(s_ctx->main_cq = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */
+    TEST_NZ(ibv_req_notify_cq(s_ctx->main_cq, 0));
+
+    cudaError_t state = cudaMalloc((void **) &s_ctx->gpu_buffer, s_ctx->gpu_buf_size);
+    if(state != cudaSuccess)
+        printf("Error on cudamalloc\n");
+    printf("s_ctx->gpu_buf_size: %llu\n", s_ctx->gpu_buf_size);
+    printf("s_ctx->gpu_buffer: 0x%llx\n", s_ctx->gpu_buffer);
+    TEST_Z(s_ctx->gpu_mr = ibv_reg_mr(
+        s_ctx->pd, s_ctx->gpu_buffer, s_ctx->gpu_buf_size,
+        IBV_ACCESS_LOCAL_WRITE
+    ));
+    printf("s_ctx->gpu_mr->addr: 0x%llx\n", s_ctx->gpu_mr->addr);
+    printf("s_ctx->gpu_mr->lkey: %d\n", s_ctx->gpu_mr->lkey);
+
+    void *memoryPool = (void *) malloc(RDMA_BUFFER_SIZE);
+    if(memoryPool == NULL) {
+        printf("Memory pool could not be created!\n");
+        exit(-1);
+    }
+    remote_address = (uint64_t) memoryPool;
+    struct ibv_mr *temp_mr;
+    
+    for(int index = 0; index < N_8GB_Region; index++){
+        TEST_Z(temp_mr = ibv_reg_mr(
+                s_ctx->pd, 
+                memoryPool + index*Region_Size, 
+                Region_Size, 
+                IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ));
+                
+        printf("Registered server address: %p, server rkey: %d length: %llu\n\n\n", \
+        temp_mr->addr, temp_mr->rkey, temp_mr->length);
+
+        // s_ctx->server_memory.addresses[0]
+        // s_ctx->server_memory.lkeys[0]
+        // s_ctx->server_memory.rkeys[0]
+
+        s_ctx->server_memory.addresses[index] = (uint64_t) (memoryPool + index*Region_Size);
+        s_ctx->server_memory.rkeys[index] = temp_mr->rkey;
+        s_ctx->server_memory.lkeys[index] = temp_mr->lkey;
+    }  
+
+    if(cudaSuccess != cudaDeviceSynchronize()) return -1;
+    // s_ctx->n_bufs = 256;
+    s_ctx->cqbuf_size = 4096*2;
+    s_ctx->wqbuf_size = 8192;
+    // s_ctx->gpu_buf_size = 3*1024*1024;
+
+    s_ctx->wqbuf = (void ** volatile) calloc(s_ctx->n_bufs, sizeof(void *));
+    s_ctx->cqbuf = (void **) calloc(s_ctx->n_bufs, sizeof(void *));
+    for(int i = 0; i < s_ctx->n_bufs; i++){
+        void* volatile temp;
+        ret = cudaMalloc((void **)&temp, s_ctx->wqbuf_size);
+        if (cudaSuccess != ret) {
+            printf("error on cudaMalloc for wqbuf: %d\n", ret);
+            exit(0);
+        }
+        ret = cudaMemset(temp, 0, s_ctx->wqbuf_size);
+        if (cudaSuccess != ret) {
+            printf("error on cudaMemset for wqbuf: %d\n", ret);
+            exit(0);
+        }
+        s_ctx->wqbuf[i] = temp;
+    }
+    for(int i = 0; i < s_ctx->n_bufs; i++){
+        // printf("s_ctx->wqbuf[i]: 0x%llx\n", s_ctx->wqbuf[i]);
+        void* volatile temp;
+        ret = cudaMalloc((void **) &temp, s_ctx->cqbuf_size);
+        if (cudaSuccess != ret) {
+            printf("error on cudaMalloc for cqbuf: %d\n", ret);
+            exit(0);
+        }
+        ret = cudaMemset(temp, 0, s_ctx->cqbuf_size);
+        if (cudaSuccess != ret) {
+            printf("error on cudaMemset for cqbuf: %d\n", ret);
+            exit(0);
+        }
+        s_ctx->cqbuf[i] = temp;
+        if(cudaSuccess != cudaDeviceSynchronize()) return -1;
+        invalidate_cq<<<1,1>>>(s_ctx->cqbuf[i]);
+        if(cudaSuccess != cudaDeviceSynchronize()) return -1;
+        printf("s_ctx->cqbuf[%d]: 0x%llx\n", i, s_ctx->cqbuf[i]);
+    }
+    // exit(0);
+    s_ctx->gpu_cq = (struct ibv_cq **) calloc(s_ctx->n_bufs, sizeof(struct ibv_cq *));
+    for (int i = 0; i < s_ctx->n_bufs; i++){
+        TEST_Z(s_ctx->gpu_cq[i] = ibvx_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0, s_ctx->cqbuf[i], s_ctx->cqbuf_size)); /* cqe=10 is arbitrary */
+        TEST_NZ(ibv_req_notify_cq(s_ctx->gpu_cq[i], 0));
+    }
+
+    printf("Function name: %s, line number: %d s_ctx->n_bufs: %d\n", __func__, __LINE__, s_ctx->n_bufs);
+    s_ctx->gpu_qp = (struct ibv_qp **) calloc(s_ctx->n_bufs, sizeof(struct ibv_qp *));
+    for(int i = 0; i < s_ctx->n_bufs; i++){
+        struct ibv_qp_init_attr qp_attr;
+        memset(&qp_attr, 0, sizeof(qp_attr));
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.send_cq = s_ctx->gpu_cq[i];
+        qp_attr.recv_cq = s_ctx->gpu_cq[i];
+        qp_attr.qp_type = IBV_QPT_RC;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.cap.max_send_wr = 10;
+        qp_attr.cap.max_recv_wr = 10;
+        qp_attr.cap.max_send_sge = 1;
+        qp_attr.cap.max_recv_sge = 1;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        TEST_Z(s_ctx->gpu_qp[i] = ibvx_create_qp(s_ctx->pd, &qp_attr, s_ctx->wqbuf[i], s_ctx->wqbuf_size));
+        if (!s_ctx->gpu_qp[i]){
+            printf("g_qp failed\n");
+            exit(-1);
+        }
+        // printf("gpu_qp[%d]->qp_num: %d\n", i, s_ctx->gpu_qp[i]->qp_num);
+    }
+
+    struct ibv_qp_init_attr main_qp_attr;
+    memset(&main_qp_attr, 0, sizeof(main_qp_attr));
+        
+        main_qp_attr.send_cq = s_ctx->main_cq;
+        main_qp_attr.recv_cq = s_ctx->main_cq;
+        main_qp_attr.qp_type = IBV_QPT_RC;
+
+        main_qp_attr.cap.max_send_wr = 10;
+        main_qp_attr.cap.max_recv_wr = 10;
+        main_qp_attr.cap.max_send_sge = 1;
+        main_qp_attr.cap.max_recv_sge = 1;
+
+    ibv_qp *temp_qp;
+    TEST_Z(s_ctx->main_qp = ibv_create_qp(s_ctx->pd, &main_qp_attr));
+    TEST_Z(temp_qp = ibv_create_qp(s_ctx->pd, &main_qp_attr));
+
+    struct ibv_qp_attr qp_attr1;
+    
+
+    if(init_qp(s_ctx->main_qp) != 0)
+    {
+        printf("Failed to modify main qp to INIT. ret: %d\n", ret);
+        exit(-1);
+    }
+    if(init_qp(temp_qp) != 0)
+    {
+        printf("Failed to modify main qp to INIT. ret: %d\n", ret);
+        exit(-1);
+    }
+
+    ibv_port_attr main_port_attr, temp_port_attr;
+    ibv_query_port(s_ctx->ctx, 1, &main_port_attr);
+    ibv_query_port(s_ctx->ctx, 1, &temp_port_attr);
+
+    union ibv_gid gid;; 
+    int gid_entry;
+    int mylid;
+    get_myglid(s_ctx->ctx, 1, &gid, &gid_entry);
+    get_mylid(s_ctx->ctx, 1, &mylid);
+
+    ret = rtr_qp(s_ctx->main_qp, temp_qp->qp_num, temp_port_attr.lid, gid, gid_entry);
+    if(ret != 0) {
+        printf("Failed to modify main qp to RTR. ret: %d\n", ret);
+        exit(-1);
+    }
+
+    ret = rtr_qp(temp_qp, s_ctx->main_qp->qp_num, main_port_attr.lid, gid, gid_entry);
+    if(ret != 0) {
+        printf("Failed to modify temp qp to RTR. ret: %d\n", ret);
+        exit(-1);
+    }
+
+    ret = rts_qp(s_ctx->main_qp);
+    if(ret != 0) {
+        printf("Failed to modify qp to RTS. ret: %d\n", ret);
+        exit(-1);
+    }
+
+    struct ibv_send_wr wr, *bad_wr = NULL;
+    struct ibv_sge sge;
+    struct ibv_wc wc;
+    size_t srv_size = 1024;
+    int *srv_buffer = (int *) malloc(srv_size*sizeof(int));
+    struct ibv_mr *srv_mr;
+    
+    TEST_Z(srv_mr = ibv_reg_mr(
+        s_ctx->pd, srv_buffer, srv_size*sizeof(int),
+        IBV_ACCESS_LOCAL_WRITE
+    ));
+
+    // server QPs:
+    struct ibv_qp **host_QPs = (struct ibv_qp **) calloc(s_ctx->n_bufs, sizeof(struct ibv_qp *));
+    for(int i = 0; i < s_ctx->n_bufs; i++){
+        struct ibv_qp_init_attr qp_attr;
+        memset(&qp_attr, 0, sizeof(qp_attr));
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.send_cq = s_ctx->main_cq;
+        qp_attr.recv_cq = s_ctx->main_cq;
+        qp_attr.qp_type = IBV_QPT_RC;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.cap.max_send_wr = 10;
+        qp_attr.cap.max_recv_wr = 10;
+        qp_attr.cap.max_send_sge = 1;
+        qp_attr.cap.max_recv_sge = 1;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        TEST_Z(host_QPs[i] = ibv_create_qp(s_ctx->pd, &qp_attr));
+        if (!host_QPs[i]){
+            printf("host_QPs[%d] failed\n", i);
+            exit(-1);
+        }
+        // printf("gpu_qp[i]->qp_num: %d\n", s_ctx->gpu_qp[i]->qp_num);
+    }
+    struct remote_qp_info host_qp_info; 
+    for (int i = 0; i < s_ctx->n_bufs; i++){
+        host_qp_info.target_qp_num[i] = host_QPs[i]->qp_num;
+        // printf("client qp num: %d\n", s_ctx->gpu_qp[i]->qp_num);
+    }
+    host_qp_info.target_gid = gid;
+    host_qp_info.target_lid = mylid;
+
+    // gpu QPs:
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    struct remote_qp_info device_qp_info; // = (struct remote_qp_info **) calloc(2, sizeof(struct remote_qp_info *));
+    for (int i = 0; i < s_ctx->n_bufs; i++){
+        device_qp_info.target_qp_num[i] = s_ctx->gpu_qp[i]->qp_num;
+        // printf("client qp num: %d\n", s_ctx->gpu_qp[i]->qp_num);
+        
+    }
+    device_qp_info.target_gid = gid;
+    device_qp_info.target_lid = mylid;
+
+    for(int i = 0; i < s_ctx->n_bufs; i++){
+        
+        ret = init_qp(s_ctx->gpu_qp[i]); 
+        if(ret != 0)
+        {
+            printf("Failed to modify gpu_qp[%d] to INIT. ret: %d\n", i, ret);
+            exit(-1);
+        }
+        ret = init_qp(host_QPs[i]); 
+        if(ret != 0)
+        {
+            printf("Failed to modify gpu_qp[%d] to INIT. ret: %d\n", i, ret);
+            exit(-1);
+        }
+        
+
+        ret = rtr_qp(s_ctx->gpu_qp[i], host_qp_info.target_qp_num[i], main_port_attr.lid, gid, gid_entry);
+        if(ret != 0) {
+            printf("Failed to modify gpu_qp[%d] to RTR. ret: %d\n", i, ret);
+            exit(-1);
+        }
+        ret = rtr_qp(host_QPs[i], device_qp_info.target_qp_num[i], main_port_attr.lid, gid, gid_entry);
+        if(ret != 0) {
+            printf("Failed to modify host_QPs[%d] to RTR. ret: %d\n", i, ret);
+            exit(-1);
+        }
+
+        rts_qp(s_ctx->gpu_qp[i]);
+        if(ret != 0) {
+            printf("Failed to modify gpu_qp[%d] to RTS. ret: %d\n", i, ret);
+            exit(-1);
+        }
+
+        rts_qp(host_QPs[i]);
+        if(ret != 0) {
+            printf("Failed to modify host_QPs[%d] to RTS. ret: %d\n", i, ret);
+            exit(-1);
+        }
+    } 
+
+
+
+
+    for (size_t i = 0; i < 1024; i++)
+    {
+        srv_buffer[i] = 5;
+    }
+
+    int *server_temp = (int *) s_ctx->server_memory.addresses[0]; // + 8*1024*1024*1024llu;
+    for (size_t i = 0; i < 1024; i++)
+    {
+        server_temp[i] = 4;
+    }
+    
+
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    struct ibv_wc wc1;
+    // conn = (struct connection *)(uintptr_t)wc.wr_id;
+    bad_wr = NULL;
+    memset(&wr, 0, sizeof(wr));
+    // wr.wr_id = (uintptr_t)conn;
+    wr.opcode = IBV_WR_RDMA_READ;
+    wr.sg_list = &sge;
+    wr.num_sge = 1;
+    wr.send_flags = IBV_SEND_SIGNALED;
+    wr.wr.rdma.remote_addr = s_ctx->server_memory.addresses[0]; // + 8*1024*1024*1024llu; 
+    // (uintptr_t)s_ctx->server_mr.addr + 8*1024*1024*1024llu-1020;//10*1024*1024*1024llu;
+    wr.wr.rdma.rkey = s_ctx->server_memory.rkeys[0];// s_ctx->server_mr.rkey;
+    sge.addr = (uintptr_t) s_ctx->gpu_mr->addr; // (uintptr_t)srv_buffer;
+    sge.length = 1024*4;
+    sge.lkey = s_ctx->gpu_mr->rkey; // srv_mr->lkey;
+    printf("Function name: %s, line number: %d conn->peer_mr.addr: %p\n", __func__, __LINE__, s_ctx->server_memory.addresses[0]);
+    printf("Function name: %s, line number: %d conn->peer_mr.rkey: %p\n", __func__, __LINE__, s_ctx->server_memory.rkeys[1]);
+    // ret = ibv_post_send(s_ctx->main_qp, &wr, &bad_wr);
+    // printf("post ret: %d\n", ret);
+    // do{
+    //     ret = ibv_poll_cq(s_ctx->main_cq, 1, &wc1);
+    //     printf("poll ret: %d\n", ret);
+    // }while(ret == 0);
+
+    // process_gpu_mr((int *) s_ctx->gpu_mr->addr, 1024);
+    // exit(0);
+
+    // printf("sizeof(srv_buffer): %llu\n", srv_size);
+    // bool flag = false;
+    // for(int i = 0; i < sge.length/4; i++){
+    //     printf(" srv_buffer[%d]: %d ", i, srv_buffer[i]);
+    //     if(srv_buffer[i] != 2) {
+    //         printf("srv_buffer[%d]: %d\n", i, srv_buffer[i]);
+    //         flag = true;
+    //         break;
+    //     }
+    // }
+    // if(flag) printf("problem\n");
+    // else printf("no problem!\n");
+
+    // exit(0);
+
+
+    return 0;
+}
+
 void *benchmark(void *param1){
     struct benchmark_content *param = (struct benchmark_content *) param1;
     cpu_benchmark_whole(param->cq_ptr, 1, param->wc, param->ibqp, param->wr, \
@@ -968,7 +1392,7 @@ void host_poll_fake(struct ibv_cq *cq1, struct ibv_wc *wc){
 
 __device__ void device_process_gpu_mr(int *addr, int size){
     printf("gpu code running dev\n");
-    printf("\n\nGpu memory read: %d, %d\n\n", addr[2], addr[5-1]);
+    printf("\n\nGpu memory read: %d, %d\n\n", addr[2], addr[size-1]);
 }
 
 __global__ void global_process_gpu_mr(int *addr, int size){
@@ -2280,7 +2704,7 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // qp_sq->cur_post += 1;
     // qp_sq->head += 1;
     // if(cur_post == 0)
-    // qp_db[0] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
+    // qp_db[1] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
     __threadfence_system();
     // __threadfence_system();
     // uint32_t val[2];
@@ -2302,6 +2726,46 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // printf("id: %d, htonl(htonl64(val) >> 32: %d, htonl(htonl64(val)): %d\n", id, htonl(htonl64(val) >> 32), htonl(htonl64(val)));
     // __threadfence_system()
     
+	return 0;
+}
+
+__device__ int post_write(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+                      uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr,
+                      int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db, void *dev_qp_sq, int id)
+{
+    
+    struct mlx5_wq *qp_sq = (struct mlx5_wq *) dev_qp_sq; // &qp->sq;
+	void *seg;
+	unsigned int idx = cur_post & 63;
+	uint32_t mlx5_opcode;
+
+    seg = (qp_buf + 256 + (idx * 64)); // mlx5_get_send_wqe(qp, idx);
+    struct mlx5_wqe_ctrl_seg *ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+    // mlx5_opcode = 16;// wr_opcode*2 + 8 - 2*(wr_opcode == 2); // mlx5_ib_opcode[wr->opcode];
+    // *(uint64_t *) seg = (uint64_t) (htonl((uint16_t) cur_post * 256 | 16)) |  ((uint64_t) htonl(3 | (qp_num *256)) << 32);
+    ctrl->opmod_idx_opcode = htonl(((uint16_t) cur_post * 256) | 8);
+    ctrl->qpn_ds = htonl(3 | (qp_num *256));
+    ctrl->signature = 0;
+    ctrl->fm_ce_se = 8; // MLX5_WQE_CTRL_CQ_UPDATE;
+    ctrl->imm = 0; // 
+    struct mlx5_wqe_raddr_seg *rdma = (struct mlx5_wqe_raddr_seg *)(seg + 16); // seg + 16; // sizeof(*ctrl);
+    rdma->raddr    = htonl64(wr_rdma_remote_addr);
+    rdma->rkey     = htonl(wr_rdma_rkey);
+    rdma->reserved = 0;
+
+    struct mlx5_wqe_data_seg *data = (struct mlx5_wqe_data_seg *) (seg + 32);
+    data->byte_count = htonl(wr_sg_length); // htonl(wr_sg_list->length);
+    data->lkey       = htonl(wr_sg_lkey); // htonl(wr_sg_list->lkey);
+    data->addr       = htonl64(wr_sg_addr); // htonl64(wr_sg_list->addr);
+    
+    // cur_post++;
+    // qp_sq->cur_post += 1;
+    // qp_sq->head += 1;
+    // if(cur_post == 0)
+    // qp_db[0] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
+    __threadfence_system();
+    
+    *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl ;// 
 	return 0;
 }
 
@@ -2392,35 +2856,68 @@ __device__ int poll(void *cq_buf, struct ibv_wc *wc, uint32_t *cons_index,
 }
 
 /*initialize data structures for */
-int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_cont, struct poll_content *poll_cont, struct post_content2 *post_cont2){
+int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_cont, struct poll_content *poll_cont, struct post_content2 *post_cont2, \
+                              struct post_content *host_post, struct poll_content *host_poll, struct host_keys *host_post2){
 
-    
     cudaError_t success;
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     struct mlx5_qp *qp_0 = to_mqp(s_ctx->gpu_qp[0]);
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     post_cont->wr_rdma_remote_addr = (uintptr_t)s_ctx->server_memory.addresses[0];
-    remote_address = s_ctx->server_memory.addresses[0];
+    // remote_address = s_ctx->server_memory.addresses[0];
+    post_cont->wr_rdma_rkey = s_ctx->gpu_mr->rkey;
     post_cont->wr_sg_length = 4096; // fixed for now by default
     post_cont->wr_sg_lkey = s_ctx->gpu_mr->lkey;
+
     post_cont->wr_sg_addr = (uintptr_t) s_ctx->gpu_buffer;
     post_cont->wr_opcode = IBV_WR_RDMA_READ; // for read request by default
     post_cont->qp_num = s_ctx->gpu_qp[0]->qp_num;
     post_cont->qp_buf = qp_0->buf.buf;
+
     post_cont->qpbf_bufsize = qp_0->bf->buf_size;
     post_cont->wr_rdma_rkey = 1;
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
 
+    struct mlx5_qp *main_qp = to_mqp(s_ctx->main_qp);
+    host_post->wr_rdma_remote_addr = (uintptr_t)s_ctx->server_memory.addresses[0];
+    host_post->wr_rdma_rkey = s_ctx->gpu_mr->rkey;
+    host_post->wr_sg_length = 1024; // fixed for now by default
+    host_post->wr_sg_lkey = s_ctx->gpu_mr->lkey;
+    // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    host_post->wr_sg_addr = (uintptr_t) s_ctx->gpu_buffer;
+    host_post->wr_opcode = IBV_WR_RDMA_READ; // for read request by default
+    host_post->qp_num = s_ctx->main_qp->qp_num;
+    host_post->qp_buf = main_qp->buf.buf;
+    host_post->qpbf_bufsize = main_qp->bf->buf_size;
+    // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    host_post->wr_rdma_rkey = 1;
+    host_post->bf_reg[0] = /*(long long int)*/ main_qp->bf->reg; // device_db;
+    host_post->qp_db[0] = (unsigned int *) main_qp->db; // dev_qp_db;
+    host_post->dev_qp_sq[0] = &main_qp->sq; // dev_qp_sq;
+    host_post->n_post[0] = main_qp->sq.cur_post;
+    host_post->cq_lock[0] = 0;
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     for(int i = 0; i < N_8GB_Region; i++){
         post_cont2->wr_rdma_rkey[i] = s_ctx->server_memory.rkeys[i];
+        post_cont2->wr_rdma_lkey[i] = s_ctx->server_memory.lkeys[i];
+        host_post2->rkeys[i] = s_ctx->server_memory.rkeys[i];
+        host_post2->lkeys[i] = s_ctx->server_memory.lkeys[i];
+        printf("server rkey: %d server memory address: %p\n", \
+        s_ctx->server_memory.rkeys[i], s_ctx->server_memory.addresses[i]);
     }
+
+    printf("gpu mr lkey: %d\n", \
+        s_ctx->gpu_mr->lkey);
+    printf("gpu mr rkey: %d\n", \
+        s_ctx->gpu_mr->rkey);
 
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     printf("qp->sq.wqe_cnt: %d\n", qp_0->sq.wqe_cnt);
     for(int i = 0; i < s_ctx->n_bufs; i++){
-        printf("qp_num[%d]: %d\n", i, s_ctx->gpu_qp[i]->qp_num);
+        // printf("qp_num[%d]: %d\n", i, s_ctx->gpu_qp[i]->qp_num);
         struct mlx5_qp *qp = to_mqp(s_ctx->gpu_qp[i]);
-        printf("qp->bf->reg[%d]: %p\n", i, qp->bf->reg);
-        printf("qp->buf.buf[%d]: %p \n", i, qp->buf.buf);
+        // printf("qp->bf->reg[%d]: %p\n", i, qp->bf->reg);
+        // printf("qp->buf.buf[%d]: %p \n", i, qp->buf.buf);
 
         void *device_db;
         // printf("qp->bf->reg[%d]: 0x%llx\n", i, qp->bf->reg);
@@ -2428,7 +2925,7 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
         if (success != cudaSuccess && success != cudaErrorHostMemoryAlreadyRegistered) return -1;
         success = cudaHostGetDevicePointer(&device_db, qp->bf->reg, 0);
         if (success != cudaSuccess) return -1;
-        printf("device_db[%d]: 0x%llx\n", i, device_db);
+        // printf("device_db[%d]: 0x%llx\n", i, device_db);
         // printf("device_db[%d]: 0x%llx\n", i, qp->cqe);
         post_cont->bf_reg[i] = /*(long long int)*/ device_db;
 
@@ -2438,7 +2935,7 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
             return -1;
         if(cudaHostGetDevicePointer(&dev_qp_db, qp->db, 0) != cudaSuccess)
             return -1;
-        printf("dev_qp_db[%d]: %p \n", i, dev_qp_db);
+        // printf("dev_qp_db[%d]: %p \n", i, dev_qp_db);
         post_cont->qp_db[i] = (unsigned int *) dev_qp_db;
 
         void *dev_qp_sq;
@@ -2451,6 +2948,13 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
         post_cont->dev_qp_sq[i] = dev_qp_sq;
         post_cont->n_post[i] = 0;
         post_cont->cq_lock[i] = 0;
+
+        if(i == 0){
+            printf("qp_buf[%d]: %p \n", i, post_cont->qp_buf);
+            printf("dev_qp_db[%d]: %p \n", i, dev_qp_db);
+            printf("bf_reg[%d]: 0x%llx\n", i, device_db);
+        }
+
     }
 
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
@@ -2462,6 +2966,14 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
     printf("poll_cont->ibv_cqe: %d\n",poll_cont->ibv_cqe);
     printf("poll_cont->cqe_sz: %d\n",poll_cont->cqe_sz);
     poll_cont->n = 1; // subject to change
+
+    struct mlx5_cq *main_cq = to_mcq(s_ctx->main_cq);
+    host_poll->cq_buf = main_cq->active_buf->buf;
+    host_poll->ibv_cqe = main_cq->verbs_cq.cq.cqe;
+    host_poll->cqe_sz = main_cq->cqe_sz;
+    host_poll->n = 1; // subject to change
+    host_poll->cons_index[0] = (long long int) &main_cq->cons_index;
+    host_poll->cq_dbrec[0] = (long long int) main_cq->dbrec;
     
     for(int i = 0; i < s_ctx->n_bufs; i++){
         struct mlx5_cq *cq = to_mcq(s_ctx->gpu_cq[i]);
@@ -2476,7 +2988,6 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
         poll_cont->cons_index[i] = (long long int) dev_cons_index;
 
         
-
         void *dev_cq_dbrec;
         success = cudaHostRegister(cq->dbrec, sizeof(cq->dbrec), cudaHostRegisterMapped);
         if(success != cudaErrorHostMemoryAlreadyRegistered && success !=  cudaSuccess) return -1;
@@ -2484,6 +2995,11 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
             return -1;
         poll_cont->cq_dbrec[i] = (long long int) dev_cq_dbrec;
 
+        if(i == 0){
+            printf("dev_cq_dbrec[%d]: %p \n", i, dev_cq_dbrec);
+            printf("dev_cons_index[%d]: %p \n", i, dev_cons_index);
+            printf("poll_cont->cq_buf[%d]: 0x%llx\n", i, poll_cont->cq_buf);
+        }
 
        
     }

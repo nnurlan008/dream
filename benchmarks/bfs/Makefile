@@ -1,9 +1,6 @@
-# NVCCCFLAGS =  -std=c++11 -lcuda -O0
-# NVCC = /usr/local/cuda-11.4/bin/nvcc
-
 .PHONY: clean
 
-CFLAGS  := -Wall  -g
+CFLAGS  := -Wall -g
 LD      := gcc
 LDLIBS  := ${LDLIBS} -lrdmacm -libverbs -lpthread
 
@@ -14,35 +11,43 @@ mlx5_path := /users/Nurlan/rdma-core-installed_use_this_one
 cuda_memalloc = /usr/lib/x86_64-linux-gnu
 add_flags := -I $(mlx5_path)/providers/mlx5 -I $(mlx5_path)/build/include/ -I $(mlx5_path)/buildlib/sparse-include/ -I$(cuda_memalloc) 
 
-CUDA_ROOT:=/usr/local/cuda-12.2
-CUDA_LIBS= -I $(CUDA_ROOT)/lib64 #-I $(nvidia_driver)/kernel/nvidia
-CUDA_INCLUDE=-I $(CUDA_ROOT)/include -I$(CUDA_SDK_ROOT)/C/common/inc 
-NVCC2=$(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_35,arch=compute_35 $(CUDA_INCLUDE)
-NVCC=$(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_70,arch=compute_70 $(CUDA_INCLUDE)
+CXX := /usr/bin/g++
+CC := /usr/bin/gcc
 
-CXXARGS = -w -std=c++14 -g -arch=sm_35
+CUDA_ROOT := /usr/local/cuda-12.2
+CUDA_LIBS := -I $(CUDA_ROOT)/lib64 -libverbs -lrdmacm -lcuda -lcudart #-I $(nvidia_driver)/kernel/nvidia
+CUDA_INCLUDE := -I$(CUDA_ROOT)/include -I$(CUDA_SDK_ROOT)/C/common/inc 
+NVCC2 := $(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_35,arch=compute_35 $(CUDA_INCLUDE)
+NVCC := $(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_70,arch=compute_70 $(CUDA_INCLUDE)
+
+INCLUDE_DIR := /users/Nurlan/gpu_rdma_read_write/include
+SRC_DIR := /users/Nurlan/gpu_rdma_read_write/src
+
+CXXFLAGS = -w -std=c++11 -O3 -Wno-deprecated-gpu-targets
+# -arch=sm_70
 
 PWD := $(shell pwd)
 
-APPS    := bfs
+APPS := main
 
 all: ${APPS}
 
-INCLUDE_DIR := $(PWD)/../../include
-CLIENT_DIR := $(PWD)/../../src
+bfsCPU.o: bfsCPU.cpp bfsCPU.h
+	$(CXX) -c bfsCPU.cpp -o bfsCPU.o $(add_flags) $(CXXFLAGS)  
 
-bfs: bfs.o $(CLIENT_DIR)/rdma_utils.o
-	$(NVCC) $^ -libverbs -lrdmacm -lcuda -o $@ $(add_flags) 
+readGraph.o: readGraph.cpp graph.h
+	$(CXX) -c readGraph.cpp -o readGraph.o $(add_flags) $(CXXFLAGS)
 
-# server-utils.o: server-utils.c
-# 	${LD}  server-utils.c -o server-utils.o ${LDLIBS}
+main: main.o bfsCPU.o bfs.o  $(SRC_DIR)/rdma_utils.o readGraph.o
+	$(NVCC) $^ -libverbs -lrdmacm -lcuda -lcudart -o $@ $(add_flags)  $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR)
 
-# bfs.o: 
+main.o: main.cu bfsCPU.h  graph.h 
+	$(NVCC) -dc main.cu -o main.o $(CUDA_LIBS) $(add_flags) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR)
 
-bfs.o: $(CLIENT_DIR)/rdma_utils.cuh $(INCLUDE_DIR)/runtime.h
+bfs.o: bfs.cu bfs.cuh
+	$(NVCC) -dc bfs.cu -o bfs.o -libverbs -lrdmacm -lcuda -lcudart $(add_flags) $(CUDA_LIBS) 
 
-bfs.o: bfs.cu $(INCLUDE_DIR)/runtime.h $(CLIENT_DIR)/rdma_utils.cuh
-	$(NVCC) -dc bfs.cu -o bfs.o -libverbs -lrdmacm -lcuda -lcudart $(CUDA_LIBS) $(add_flags) -I $(INCLUDE_DIR) -I $(CLIENT_DIR)
+  
 
 clean:
 	rm -f *.o ${APPS}

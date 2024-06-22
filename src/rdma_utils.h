@@ -22,7 +22,7 @@
 #include <stddef.h>
 
 
-static const int RDMA_BUFFER_SIZE = 1024*1024*50+1;
+static unsigned long long int RDMA_BUFFER_SIZE = 80*1024*1024*1024llu;
 
 struct message {
   enum {
@@ -822,6 +822,10 @@ int mlx5_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 
 int mlx5_post_recv(struct ibv_qp *ibqp, struct ibv_recv_wr *wr,
 		   struct ibv_recv_wr **bad_wr);
+
+int post(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+		uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr,
+		int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db, void *dev_qp_sq);
 		
 
 

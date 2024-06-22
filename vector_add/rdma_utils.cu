@@ -2279,7 +2279,7 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // qp_sq->cur_post += 1;
     // qp_sq->head += 1;
     // if(cur_post == 0)
-    // qp_db[0] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
+    // qp_db[1] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
     __threadfence_system();
     // __threadfence_system();
     // uint32_t val[2];
@@ -2399,7 +2399,7 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
     struct mlx5_qp *qp_0 = to_mqp(s_ctx->gpu_qp[0]);
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
     post_cont->wr_rdma_remote_addr = (uintptr_t)s_ctx->server_memory.addresses[0];
-    post_cont->wr_sg_length = 4096; // fixed for now by default
+    post_cont->wr_sg_length = 1024; // fixed for now by default
     post_cont->wr_sg_lkey = s_ctx->gpu_mr->lkey;
     post_cont->wr_sg_addr = (uintptr_t) s_ctx->gpu_buffer;
     post_cont->wr_opcode = IBV_WR_RDMA_READ; // for read request by default
@@ -2409,7 +2409,7 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
     post_cont->wr_rdma_rkey = 1;
 
     for(int i = 0; i < N_8GB_Region; i++){
-        post_cont2->wr_rdma_rkey[i] = s_ctx->server_memory.rkeys[i];
+        post_cont2->wr_rdma_rkey[i] = s_ctx->server_memory.rkeys[i];  
     }
 
     printf("Function name: %s, line number: %d\n", __func__, __LINE__);
