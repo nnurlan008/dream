@@ -14,6 +14,7 @@ enum {
 struct MemPool{
   uint64_t addresses[N_8GB_Region];
   uint32_t rkeys[N_8GB_Region];
+  uint32_t lkeys[N_8GB_Region];
 };
 
 extern struct MemPool MemoryPool;
@@ -65,16 +66,33 @@ struct __attribute__((__packed__)) post_wr{
   uint32_t qp_num; 
 };
 
+struct __attribute__((__packed__)) host_keys{
+  uint32_t rkeys[N_8GB_Region];
+  uint32_t lkeys[N_8GB_Region];
+
+  host_keys& operator=(const host_keys& obj) {
+  
+    for(int i = 0; i < N_8GB_Region; i++){
+      this->rkeys[i] = obj.rkeys[i];
+      this->lkeys[i] = obj.lkeys[i];
+    }
+   
+    return *this;
+  }
+};
+
 struct __attribute__((__packed__)) post_content2{
   uint32_t wr_rdma_rkey[N_8GB_Region];
+  uint32_t wr_rdma_lkey[N_8GB_Region];
 
   __forceinline__
   __host__ __device__ 
   post_content2& operator=(const post_content2& obj) {
   
-    for(int i = 0; i < N_8GB_Region; i++)
+    for(int i = 0; i < N_8GB_Region; i++){
       this->wr_rdma_rkey[i] = obj.wr_rdma_rkey[i];
-   
+      this->wr_rdma_lkey[i] = obj.wr_rdma_lkey[i];
+    }
     return *this;
   }
 };
@@ -178,7 +196,9 @@ struct benchmark_content{
 
 int init_gpu(int gpu);
 int connect(const char *ip, struct context *s_ctx);
-int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_cont, struct poll_content *poll_cont, struct post_content2 *post_cont2);
+int local_connect(const char *mlx_name, struct context *s_ctx);
+int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_cont, struct poll_content *poll_cont, struct post_content2 *post_cont2, \
+                              struct post_content *host_post, struct poll_content *host_poll, struct host_keys *host_post2);
 void host_poll_fake(struct ibv_cq *cq1, struct ibv_wc *wc);
 
 __device__ int poll(void *cq_buf, struct ibv_wc *wc, uint32_t *cons_index,
@@ -193,6 +213,10 @@ __device__ int post(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
 __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
                     uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, 
                     int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db, void *dev_qp_sq, int id);
+
+__device__ int post_write(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+                      uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr,
+                      int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db, void *dev_qp_sq, int id);
 
 int benchmark(struct context *s_ctx, int num_msg, int mesg_size, float *bandwidth);
 

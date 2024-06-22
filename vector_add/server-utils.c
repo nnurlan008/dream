@@ -640,15 +640,13 @@ void register_memory(struct connection *conn)
 
     pool.addresses[index] = conn->rdma_remote_region + index*Region_Size;
     pool.rkeys[index] = conn->rdma_remote_mr[index]->rkey;
+    pool.lkeys[index] = conn->rdma_remote_mr[index]->lkey;
     
   }  
-
-  
 }
 
 void send_message(struct connection *conn)
 {
-
   struct ibv_mr *pool_mr;
   TEST_Z(pool_mr = ibv_reg_mr(
          s_ctx->pd, 
