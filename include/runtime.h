@@ -166,7 +166,7 @@ struct tlb_entry {
     // }
 };
 
-__global__ void memcpyDtoH_global(tlb_entry *d_TLB, size_t size){
+__global__ void memcpyDtoH_global(tlb_entry *d_TLB, size_t size, size_t tlb_size){
     size_t index = blockIdx.x * blockDim.x + threadIdx.x;
     size_t id = blockIdx.x * blockDim.x + threadIdx.x;
     size_t stride = blockDim.x * gridDim.x;
@@ -193,7 +193,10 @@ __global__ void memcpyDtoH_global(tlb_entry *d_TLB, size_t size){
                     if(d_TLB[che].state == 2 || d_TLB[che].state == 4){ // page completely on cpu or dirty on cpu
                         if(d_TLB[che].lock_entry()){
                             int qp_index = che & 255;
-                            unsigned long long int data_size = 256*sizeof(int);
+                            // unsigned long long int data_size = 256*sizeof(int);
+                            unsigned long long int data_size;
+                            if(che == tlb_size -1) data_size = size - che*1024;
+                            else data_size = 1024;
                             void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
                             
                             bool isSet = false;
@@ -512,7 +515,7 @@ struct rdma_buf {
             size_t threads = 1024;
             size_t n_blks = size/threads + 1; ; // tlb_size/threads + 1;
             if(cudaSuccess != cudaDeviceSynchronize()) return -1;
-            memcpyDtoH_global<<< n_blks, threads>>>(d_TLB, size);
+            memcpyDtoH_global<<< n_blks, threads>>>(d_TLB, size, tlb_size);
             if(cudaSuccess != cudaDeviceSynchronize()) return -1;
             return 0;
         }
@@ -808,7 +811,7 @@ struct rdma_buf {
         // a lot left to do here in rvalue function
         __forceinline__
         __device__
-        T rvalue(size_t index, T new_value){
+        void rvalue(size_t index, T new_value){
             
             // #ifdef  __CUDA_ARCH__
                 // device_buffer[index] = i;
@@ -835,7 +838,7 @@ struct rdma_buf {
                     // atomicCAS((unsigned int *)&tmp_array[ind], (unsigned int) tmp_array[ind], (unsigned int) i);
                 }
 
-                return new_value;
+                // return new_value;
                 // while(!d_TLB[che].lock_entry());
                 // if(d_TLB[che].device_address == NULL){
                 //     unsigned long long int data_size = request_size*sizeof(T);

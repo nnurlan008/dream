@@ -25,7 +25,7 @@ using namespace std;
 
 
 __global__
-void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
+void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
                rdma_buf<unsigned int> *d_edgesSize, rdma_buf<unsigned int> *d_distance, rdma_buf<unsigned int> *d_parent, unsigned int *changed);
 
 // Kernel
@@ -197,10 +197,14 @@ void finalizeCuda() {
 void checkOutput_rdma(std::vector<int> &distance, std::vector<int> &expectedDistance, Graph &G) {
     size_t num_errors = 0;
     for (int i = 0; i < G.numVertices; i++) {
+        if(i < 10){
+                printf("%d ", i);
+                printf("%llu ", u_distance->host_buffer[i]);
+                printf("%d\n", expectedDistance[i]);
+            }
         if (expectedDistance[i] != u_distance->host_buffer[i] ) {
-            // printf("%d ", i);
-            // printf("%d ", u_distance->host_buffer[i]);
-            // printf("%d\n", expectedDistance[i]);
+            // 
+            
             // printf("Wrong output!\n");
             num_errors++;
             // exit(1);
@@ -253,7 +257,8 @@ void runCudaSimpleBfs(int startVertex, Graph &G, std::vector<int> &distance,
     initializeCudaBfs(startVertex, distance, parent, G);
 
     uint *changed;
-    checkError(cudaMallocHost((void **) &changed, sizeof(uint)));
+    checkError(cudaMallocHost((void **) &changed, sizeof(unsigned int)));
+
 
     //launch kernel
     printf("Starting simple parallel bfs.\n");
@@ -271,7 +276,8 @@ void runCudaSimpleBfs(int startVertex, Graph &G, std::vector<int> &distance,
 
     cudaEventRecord(event1, (cudaStream_t)0);
     *changed = 1;
-    unsigned int level = 0;
+    unsigned int *level = 0;
+    checkError(cudaMallocHost((void **) &level, sizeof(unsigned int)));
     while (*changed) {
         *changed = 0;
         // void *args[] = {&G.numVertices, &level, &d_adjacencyList, &d_edgesOffset, &d_edgesSize, &d_distance, &d_parent,
@@ -294,7 +300,7 @@ void runCudaSimpleBfs(int startVertex, Graph &G, std::vector<int> &distance,
             exit(-1);
         }
 
-        level++;
+        *level++;
     }
     cudaEventRecord(event2, (cudaStream_t) 1);
     cudaEventSynchronize(event1); //optional
@@ -512,7 +518,7 @@ int main(int argc, char **argv)
 
     int num_iteration = num_msg;
     s_ctx->n_bufs = num_bufs;
-    s_ctx->gpu_buf_size = 28*1024*1024*1024llu; // N*sizeof(int)*3llu;
+    s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
 
     // remote connection:
     // int ret = connect(argv[2], s_ctx);
@@ -800,62 +806,26 @@ int main(int argc, char **argv)
 }
 
 __global__
-void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
-               rdma_buf<unsigned int> *d_edgesSize, rdma_buf<unsigned int> *d_distance, rdma_buf<unsigned int> *d_parent, uint *changed) {
+void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
+               rdma_buf<unsigned int> *d_edgesSize, rdma_buf<unsigned int> *d_distance, rdma_buf<unsigned int> *d_parent, unsigned int *changed) {
     size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
     int valueChange = 0;
     if(thid < n /*d_distance->size/sizeof(uint)*/){
         unsigned int k = (*d_distance)[thid];
-        // (*d_distance).rvalue(thid, 2);
-        // if(thid == 0 || thid == 1 || thid == 2 || thid == 3){
-        //     printf("d_distance->size: %llu (*d_distance)[0]: %d\n", d_distance->size, k);
-        //     printf("d_edgesOffset->size: %d (*d_edgesOffset)[%d]: %llu (*d_distance)[%d]: %llu\n",\
-        //             d_edgesOffset->size, thid, (*d_edgesOffset)[thid], thid, (*d_distance)[thid]);
-        //     printf("d_edgesSize->size: %d (*d_edgesSize)[%d]: %llu\n", d_edgesSize->size, thid, (*d_edgesSize)[thid]);   
-        // }
         
-        // printf("(*d_distance)[thid]: %llu\n", (*d_distance)[thid]);
-        if (/*thid < n && */k == level) {
+        if (/*thid < n && */k == *level) {
             unsigned int u = thid;
             for (unsigned int i = (*d_edgesOffset)[u]; i < (*d_edgesOffset)[u] + (*d_edgesSize)[u]; i++) {
-                // printf("%d. (*d_edgesOffset)[u]: %d\n", i, (*d_edgesOffset)[u]);
-                // printf("%d. (*d_edgesSize)[u]: %d\n", i, (*d_edgesSize)[u]);
-                if(i == 371200){
-                    printf("index-d_adjacencyList: %d \n", i);
-                }
-                printf("i: %d. GPU_address_offset: %llu\n", i, GPU_address_offset);
-                int v = (*d_adjacencyList)[i];
                 
-                if(v == 371200){
-                    printf("index-v 1: %d \n", v);
-                }
-                printf("i: %d. (*d_adjacencyList)[i]: %d GPU_address_offset: %llu\n", i, (*d_adjacencyList)[i], GPU_address_offset);
+                
+                int v = (*d_adjacencyList)[i];
                 unsigned int dist = (*d_distance)[v];
-                printf("i: %d v: %d. (*d_distance)[v]: %d GPU_address_offset: %llu\n",i, v, (*d_distance)[v], GPU_address_offset);
-                if (level + 1 < dist) {
-                    // (*d_distance)[v] = level + 1;
-                    // (*d_parent)[v] = i;
-                    if(v == 371200){
-                        printf("index-v 2: %d \n", v);
-                    }
-                    // uint q = (*d_distance)[v];
-                    unsigned int new_dist = level + 1;
-                    // if(new_dist == 1)
-                        // (*d_distance).rvalue(v, 1);
-                    // if(new_dist == 2)
-                    // unsigned int *tmp = (unsigned int *) d_distance->d_TLB[v/256].device_address
-                        (*d_distance).rvalue(v, new_dist /*(int) level + 1*/);
-                    // else if(new_dist == 3)
-                    //     (*d_distance).rvalue(v, 3);
-                    // else if(new_dist == 4)
-                    //     (*d_distance).rvalue(v, 4);
-                    // else if(new_dist == 5)
-                    //     (*d_distance).rvalue(v, 5);
-                    // printf("dist: %d (*d_distance)[%d]: %d\n", dist, v, (*d_distance)[v]);
-                    // if(level + 1 == 2)
-                        // printf("%d. d_distance[v]: %d\n", i, (*d_distance)[v]);
-                    // d_parent->rvalue(v, i);
-                    // printf("%d. d_distance[v]: %d\n", i, (*d_distance)[v]);
+                if (*level + 1 < dist) {
+                    
+                    unsigned int new_dist = *level + 1;
+                   
+                    (*d_distance).rvalue(v, new_dist /*(int) level + 1*/);
+                   
                     valueChange = 1;
                 }
             }
@@ -868,4 +838,75 @@ void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adja
     }
     // __syncthreads();
 }
+
+
+// __global__
+// void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
+//                rdma_buf<unsigned int> *d_edgesSize, rdma_buf<unsigned int> *d_distance, rdma_buf<unsigned int> *d_parent, unsigned int *changed) {
+//     size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
+//     int valueChange = 0;
+//     if(thid < n /*d_distance->size/sizeof(uint)*/){
+//         unsigned int k = (*d_distance)[thid];
+//         // (*d_distance).rvalue(thid, 2);
+//         // if(thid == 0 || thid == 1 || thid == 2 || thid == 3){
+//         //     printf("d_distance->size: %llu (*d_distance)[0]: %d\n", d_distance->size, k);
+//         //     printf("d_edgesOffset->size: %d (*d_edgesOffset)[%d]: %llu (*d_distance)[%d]: %llu\n",\
+//         //             d_edgesOffset->size, thid, (*d_edgesOffset)[thid], thid, (*d_distance)[thid]);
+//         //     printf("d_edgesSize->size: %d (*d_edgesSize)[%d]: %llu\n", d_edgesSize->size, thid, (*d_edgesSize)[thid]);   
+//         // }
+        
+//         // printf("(*d_distance)[thid]: %llu\n", (*d_distance)[thid]);
+//         if (/*thid < n && */k == *level) {
+//             unsigned int u = thid;
+//             for (unsigned int i = (*d_edgesOffset)[u]; i < (*d_edgesOffset)[u] + (*d_edgesSize)[u]; i++) {
+//                 // printf("%d. (*d_edgesOffset)[u]: %d\n", i, (*d_edgesOffset)[u]);
+//                 // printf("%d. (*d_edgesSize)[u]: %d\n", i, (*d_edgesSize)[u]);
+//                 if(i == 371200){
+//                     printf("index-d_adjacencyList: %d \n", i);
+//                 }
+//                 // printf("thid: %d i: %d. GPU_address_offset: %llu\n", thid, i, GPU_address_offset);
+//                 int v = (*d_adjacencyList)[i];
+                
+                
+//                 // printf("thid: %d i: %d. (*d_adjacencyList)[i]: %d GPU_address_offset: %llu\n", thid, i, (*d_adjacencyList)[i], GPU_address_offset);
+//                 unsigned int dist = (*d_distance)[v];
+//                 // printf("thid: %d i: %d v: %d. (*d_distance)[v]: %d GPU_address_offset: %llu\n", thid, i, v, (*d_distance)[v], GPU_address_offset);
+//                 if (*level + 1 < dist) {
+//                     // (*d_distance)[v] = level + 1;
+//                     // (*d_parent)[v] = i;
+//                     // if(v == 371200){
+//                     //     printf("index-v 2: %d \n", v);
+//                     // }
+//                     // uint q = (*d_distance)[v];
+//                     unsigned int new_dist = *level + 1;
+//                     // if(new_dist == 1)
+//                         // (*d_distance).rvalue(v, 1);
+//                     // if(new_dist == 2)
+//                     // unsigned int *tmp = (unsigned int *) d_distance->d_TLB[v/256].device_address
+//                     // printf("thid: %d i: %d v: %d. dist: %d new_dist: %d\n", thid, i, v, dist, new_dist);
+//                         (*d_distance).rvalue(v, new_dist /*(int) level + 1*/);
+//                     // printf("thid: %d i: %d v: %d. (*d_distance)[v]: %d new_dist: %d\n", thid, i, v, (*d_distance)[v], new_dist);
+//                     // else if(new_dist == 3)
+//                     //     (*d_distance).rvalue(v, 3);
+//                     // else if(new_dist == 4)
+//                     //     (*d_distance).rvalue(v, 4);
+//                     // else if(new_dist == 5)
+//                     //     (*d_distance).rvalue(v, 5);
+//                     // printf("dist: %d (*d_distance)[%d]: %d\n", dist, v, (*d_distance)[v]);
+//                     // if(level + 1 == 2)
+//                         // printf("%d. d_distance[v]: %d\n", i, (*d_distance)[v]);
+//                     // d_parent->rvalue(v, i);
+//                     // printf("%d. d_distance[v]: %d\n", i, (*d_distance)[v]);
+//                     valueChange = 1;
+//                 }
+//             }
+//             // printf(" for finished\n");
+//         }
+//         // __syncthreads();
+//         if (valueChange) {
+//             *changed = valueChange;
+//         }
+//     }
+//     // __syncthreads();
+// }
 
