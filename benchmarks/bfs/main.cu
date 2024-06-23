@@ -276,8 +276,9 @@ void runCudaSimpleBfs(int startVertex, Graph &G, std::vector<int> &distance,
 
     cudaEventRecord(event1, (cudaStream_t)0);
     *changed = 1;
-    unsigned int *level = 0;
-    checkError(cudaMallocHost((void **) &level, sizeof(unsigned int)));
+    unsigned int *level;
+    checkError(cudaMallocManaged((void **) &level, sizeof(unsigned int)));
+    *level = 0;
     while (*changed) {
         *changed = 0;
         // void *args[] = {&G.numVertices, &level, &d_adjacencyList, &d_edgesOffset, &d_edgesSize, &d_distance, &d_parent,
@@ -294,7 +295,7 @@ void runCudaSimpleBfs(int startVertex, Graph &G, std::vector<int> &distance,
         simpleBfs_rdma<<<G.numVertices / 256 + 1, 256>>>(G.numVertices, level, u_adjacencyList, u_edgesOffset, u_edgesSize, u_distance, u_parent, changed);                 
         printf("cudaGetLastError(): %d\n", cudaGetLastError());
         ret1 = cudaDeviceSynchronize();
-        printf("cudaDeviceSynchronize: %d\n", ret1);  
+        printf("cudaDeviceSynchronize: %d *changed: %d\n", ret1, *changed);  
         if(cudaSuccess != ret1){  
             printf("cudaDeviceSynchronize error: %d\n", ret1);  
             exit(-1);
@@ -498,6 +499,11 @@ __global__ void test2(rdma_buf<int> *a, rdma_buf<int> *b, rdma_buf<int> *c){
     // if(id == 0) printf("(*b)[%d]: %d\n", id, (*b)[id]);
 }
 
+__global__
+void print_utilization() {
+    printf("GPU_address_offset: %llu \n", GPU_address_offset);
+}
+
 // Main program
 int main(int argc, char **argv)
 {   
@@ -683,6 +689,8 @@ int main(int argc, char **argv)
     }
     checkOutput_rdma(distance, expectedDistance, G);
 
+    print_utilization<<<1,1>>>();
+
     // // //run CUDA queue parallel bfs
     // runCudaQueueBfs(startVertex, G, distance, parent);
     // checkOutput(distance, expectedDistance, G);
@@ -817,7 +825,6 @@ void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adj
             unsigned int u = thid;
             for (unsigned int i = (*d_edgesOffset)[u]; i < (*d_edgesOffset)[u] + (*d_edgesSize)[u]; i++) {
                 
-                
                 int v = (*d_adjacencyList)[i];
                 unsigned int dist = (*d_distance)[v];
                 if (*level + 1 < dist) {
@@ -909,4 +916,3 @@ void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adj
 //     }
 //     // __syncthreads();
 // }
-
