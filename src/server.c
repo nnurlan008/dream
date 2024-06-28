@@ -104,14 +104,14 @@ int on_connect_request(struct rdma_cm_id *id)
   // printf("sizeof(get_local_message_region(id->context)): %d\n", sizeof(context->rdma_remote_region));
   // context->rdma_remote_region[RDMA_BUFFER_SIZE-1] = '\n';
   // printf("Function: %s line number: %d\n",__func__, __LINE__);
-  int *rem_pool = (int *)  context->rdma_remote_region;
+  float *rem_pool = (float *)  context->rdma_remote_region;
   printf("Function: %s line number: %d rem_pool: 0x%p context->rdma_remote_region: 0x%p\n",__func__, __LINE__, rem_pool, context->rdma_remote_region);
-  // for (size_t i = 0; i < RDMA_BUFFER_SIZE/sizeof(int); i++){
-  //   // printf("RDMA_BUFFER_SIZE: %llu\n", RDMA_BUFFER_SIZE);
-  //   rem_pool[i] = 2;
-  //   // printf("rem_pool[%d]: %d\n", i, rem_pool[i]);
-  //   // printf("Function: %s line number: %d i: %d\n",__func__, __LINE__, i);
-  // }
+  for (size_t i = 0; i < 4*1024*1024*1024llu /*RDMA_BUFFER_SIZE/sizeof(int)*/; i++){
+    // printf("RDMA_BUFFER_SIZE: %llu\n", RDMA_BUFFER_SIZE);
+    rem_pool[i] = 0;
+    // printf("rem_pool[%d]: %d\n", i, rem_pool[i]);
+    // printf("Function: %s line number: %d i: %d\n",__func__, __LINE__, i);
+  }
   printf("Function: %s line number: %d\n",__func__, __LINE__);
   // for (int i = 0; i < RDMA_BUFFER_SIZE; i++)
   //   printf("%d ", context->rdma_remote_region[i]);

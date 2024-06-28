@@ -640,6 +640,7 @@ void register_memory(struct connection *conn)
 
     pool.addresses[index] = conn->rdma_remote_region + index*Region_Size;
     pool.rkeys[index] = conn->rdma_remote_mr[index]->rkey;
+    pool.lkeys[index] = conn->rdma_remote_mr[index]->lkey;
     
   }  
 

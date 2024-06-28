@@ -7,7 +7,7 @@
 // static int N_BUFs = 256;
 
 enum { 
-  N_8GB_Region = 10,
+  N_8GB_Region = 5,
   Region_Size = 8*1024*1024*1024llu
  };
   
@@ -56,6 +56,12 @@ struct remote_qp_info{
     union ibv_gid target_gid;
 };
 
+struct rdma_content{
+    struct ibv_cq *cq;
+    struct ibv_qp *qp;
+    struct ibv_pd *pd;
+};
+
 struct __attribute__((__packed__)) post_wr{
   uint64_t wr_rdma_remote_addr; 
   uint32_t wr_rdma_rkey;
@@ -69,12 +75,15 @@ struct __attribute__((__packed__)) post_wr{
 struct __attribute__((__packed__)) host_keys{
   uint32_t rkeys[N_8GB_Region];
   uint32_t lkeys[N_8GB_Region];
+  uint64_t addrs[N_8GB_Region];
+  
 
   host_keys& operator=(const host_keys& obj) {
   
     for(int i = 0; i < N_8GB_Region; i++){
       this->rkeys[i] = obj.rkeys[i];
       this->lkeys[i] = obj.lkeys[i];
+      this->addrs[i] = obj.addrs[i];
     }
    
     return *this;
@@ -84,6 +93,7 @@ struct __attribute__((__packed__)) host_keys{
 struct __attribute__((__packed__)) post_content2{
   uint32_t wr_rdma_rkey[N_8GB_Region];
   uint32_t wr_rdma_lkey[N_8GB_Region];
+  uint64_t addrs[N_8GB_Region];
 
   __forceinline__
   __host__ __device__ 
@@ -92,6 +102,7 @@ struct __attribute__((__packed__)) post_content2{
     for(int i = 0; i < N_8GB_Region; i++){
       this->wr_rdma_rkey[i] = obj.wr_rdma_rkey[i];
       this->wr_rdma_lkey[i] = obj.wr_rdma_lkey[i];
+      this->addrs[i] = obj.addrs[i];
     }
     return *this;
   }
@@ -210,9 +221,12 @@ __device__ int post(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
                     uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, 
                     int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db);
 
+__device__ int update_db(uint64_t *ctrl, void *bf_reg);
+
 __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
                     uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, 
-                    int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db, void *dev_qp_sq, int id);
+                    int wr_opcode, uint32_t qp_num, int cur_post, uint64_t *value_ctrl, 
+                    void *qp_buf, void *bf_reg, unsigned int *qp_db, void *dev_qp_sq, int id);
 
 __device__ int post_write(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
                       uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr,

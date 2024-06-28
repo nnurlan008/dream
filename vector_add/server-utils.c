@@ -111,7 +111,8 @@ void build_context(struct ibv_context *verbs)
   s_ctx = (struct context *)malloc(sizeof(struct context));
 
   s_ctx->ctx = verbs;
-
+  printf("Device name: %s\n", s_ctx->ctx->device->name);
+  // exit(0);
   TEST_Z(s_ctx->pd = ibv_alloc_pd(s_ctx->ctx));
   TEST_Z(s_ctx->comp_channel = ibv_create_comp_channel(s_ctx->ctx));
   TEST_Z(s_ctx->cq = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */

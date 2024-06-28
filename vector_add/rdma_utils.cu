@@ -145,6 +145,8 @@ void build_context(struct ibv_context *verbs, struct context *s_ctx)
     //     return;
     // }
     s_ctx->ctx = verbs;
+    printf("Device name: %s\n", s_ctx->ctx->device->name);
+    // exit(0);
     TEST_Z(s_ctx->pd = ibv_alloc_pd(s_ctx->ctx));
     TEST_Z(s_ctx->comp_channel = ibv_create_comp_channel(s_ctx->ctx));
     //   if (cq_buffer_gpu == 1 || cq_buffer_gpu == 2){
@@ -2279,6 +2281,7 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // qp_sq->cur_post += 1;
     // qp_sq->head += 1;
     // if(cur_post == 0)
+    // __threadfence_system();
     // qp_db[1] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
     __threadfence_system();
     // __threadfence_system();

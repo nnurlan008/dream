@@ -14,6 +14,7 @@ enum {
 struct MemPool{
   uint64_t addresses[N_8GB_Region];
   uint32_t rkeys[N_8GB_Region];
+  uint32_t lkeys[N_8GB_Region];
 };
 
 extern struct MemPool MemoryPool;

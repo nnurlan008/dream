@@ -508,9 +508,9 @@ int main(int argc, char **argv)
     cudaEventSynchronize(event1); //optional
     cudaEventSynchronize(event2); //wait for the event to be executed!
 
-    //calculate time
-    float dt_ms;
-    cudaEventElapsedTime(&dt_ms, event1, event2);
+    // //calculate time
+    // float dt_ms;
+    // cudaEventElapsedTime(&dt_ms, event1, event2);
 
     printf("ret1: %d\n", ret1);
     if(cudaSuccess != ret1){
