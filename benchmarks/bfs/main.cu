@@ -25,8 +25,8 @@ using namespace std;
 
 
 __global__
-void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
-               rdma_buf<unsigned int> *d_edgesSize, rdma_buf<unsigned int> *d_distance, rdma_buf<unsigned int> *d_parent, unsigned int *changed);
+void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
+               rdma_buf<unsigned int> *d_edgesSize, rdma_buf<unsigned int> *d_distance, unsigned int *changed);
 
 // Kernel
 __global__ void add_vectors_uvm(int *a, int *b, int *c, int size)
@@ -199,10 +199,10 @@ void checkOutput_rdma(std::vector<int> &distance, std::vector<int> &expectedDist
     for (int i = 0; i < G.numVertices; i++) {
         if(i < 10){
                 printf("%d ", i);
-                printf("%llu ", u_distance->host_buffer[i]);
+                printf("%llu ", u_distance->local_buffer[i]);
                 printf("%d\n", expectedDistance[i]);
             }
-        if (expectedDistance[i] != u_distance->host_buffer[i] ) {
+        if (expectedDistance[i] != u_distance->local_buffer[i] ) {
             // 
             
             // printf("Wrong output!\n");
@@ -217,33 +217,34 @@ void checkOutput_rdma(std::vector<int> &distance, std::vector<int> &expectedDist
 
 void initializeCudaBfs(int startVertex, std::vector<int> &distance, std::vector<int> &parent, Graph &G) {
     //initialize values
-    std::fill(distance.begin(), distance.end(), std::numeric_limits<int>::max());
+    // std::fill(distance.begin(), distance.end(), 10000000 /*std::numeric_limits<int>::max()*/);
     std::fill(parent.begin(), parent.end(), std::numeric_limits<int>::max());
     distance[startVertex] = 0;
     parent[startVertex] = 0;
 
     // checkError(cudaMemcpy(d_distance, distance.data(), G.numVertices * sizeof(int), cudaMemcpyHostToDevice));
     // checkError(cudaMemcpy(d_parent, parent.data(), G.numVertices * sizeof(int), cudaMemcpyHostToDevice));
-    // memcpy(u_distance->host_buffer, distance.data(), G.numVertices * sizeof(int));
-    // memcpy(u_parent->host_buffer, parent.data(), G.numVertices * sizeof(int));
+    // memcpy(u_distance->local_buffer, distance.data(), G.numVertices * sizeof(int));
+    // memcpy(u_parent->local_buffer, parent.data(), G.numVertices * sizeof(int));
     printf("printing samples from parent and distance vectors initializations...\n");
     for (size_t i = 0; i < G.numVertices; i++)
     {
-        u_distance->host_buffer[i] = distance.data()[i];
-        u_parent->host_buffer[i] = parent.data()[i];
+        u_distance->host_buffer[i] = 2147483647; // distance.data()[i];
+        u_parent->local_buffer[i] = parent.data()[i];
     }
+    u_distance->local_buffer[startVertex] = 0;
 
     for (size_t i = 0; i < 5; i++)
     {
-        printf("u_distance->host_buffer[%llu]: %llu; distance.data()[%llu]: %llu\n", i, u_distance->host_buffer[i], i, distance.data()[i]);
-        printf("u_parent->host_buffer[%llu]: %llu; parent.data()[%llu]: %llu\n", i, u_parent->host_buffer[i], i, parent.data()[i]);
+        printf("u_distance->local_buffer[%llu]: %llu; distance.data()[%llu]: %llu\n", i, u_distance->local_buffer[i], i, distance.data()[i]);
+        printf("u_parent->local_buffer[%llu]: %llu; parent.data()[%llu]: %llu\n", i, u_parent->local_buffer[i], i, parent.data()[i]);
         
     }
     
 
     int firstElementQueue = startVertex;
     // cudaMemcpy(d_currentQueue, &firstElementQueue, sizeof(int), cudaMemcpyHostToDevice);
-    *u_currentQueue->host_buffer = firstElementQueue;
+    *u_currentQueue->local_buffer = firstElementQueue;
 }
 
 void finalizeCudaBfs(std::vector<int> &distance, std::vector<int> &parent, Graph &G) {
@@ -255,6 +256,13 @@ void finalizeCudaBfs(std::vector<int> &distance, std::vector<int> &parent, Graph
 void runCudaSimpleBfs(int startVertex, Graph &G, std::vector<int> &distance,
                       std::vector<int> &parent) {
     initializeCudaBfs(startVertex, distance, parent, G);
+
+    for (size_t i = 0; i < G.numVertices; i++)
+    {
+        if(u_distance->host_buffer[i] == 0){
+            printf("u_distance->host_buffer[%llu]: %u\n", i, u_distance->host_buffer[i]);
+        }
+    }
 
     uint *changed;
     checkError(cudaMallocHost((void **) &changed, sizeof(unsigned int)));
@@ -276,9 +284,9 @@ void runCudaSimpleBfs(int startVertex, Graph &G, std::vector<int> &distance,
 
     cudaEventRecord(event1, (cudaStream_t)0);
     *changed = 1;
-    unsigned int *level;
-    checkError(cudaMallocManaged((void **) &level, sizeof(unsigned int)));
-    *level = 0;
+    unsigned int level;
+    // checkError(cudaMallocManaged((void **) &level, sizeof(unsigned int)));
+    level = 0;
     while (*changed) {
         *changed = 0;
         // void *args[] = {&G.numVertices, &level, &d_adjacencyList, &d_edgesOffset, &d_edgesSize, &d_distance, &d_parent,
@@ -292,7 +300,7 @@ void runCudaSimpleBfs(int startVertex, Graph &G, std::vector<int> &distance,
             exit(-1);
         }
         printf("G.numVertices: %llu\n", G.numVertices); 
-        simpleBfs_rdma<<<G.numVertices / 256 + 1, 256>>>(G.numVertices, level, u_adjacencyList, u_edgesOffset, u_edgesSize, u_distance, u_parent, changed);                 
+        simpleBfs_rdma<<<G.numVertices / 256 + 1, 256>>>(G.numVertices, level, u_adjacencyList, u_edgesOffset, u_edgesSize, u_distance, changed);                 
         printf("cudaGetLastError(): %d\n", cudaGetLastError());
         ret1 = cudaDeviceSynchronize();
         printf("cudaDeviceSynchronize: %d *changed: %d\n", ret1, *changed);  
@@ -301,7 +309,7 @@ void runCudaSimpleBfs(int startVertex, Graph &G, std::vector<int> &distance,
             exit(-1);
         }
 
-        *level++;
+        level++;
     }
     cudaEventRecord(event2, (cudaStream_t) 1);
     cudaEventSynchronize(event1); //optional
@@ -524,7 +532,7 @@ int main(int argc, char **argv)
 
     int num_iteration = num_msg;
     s_ctx->n_bufs = num_bufs;
-    s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
+    s_ctx->gpu_buf_size = 10*1024*1024*1024llu; // N*sizeof(int)*3llu;
 
     // remote connection:
     // int ret = connect(argv[2], s_ctx);
@@ -586,7 +594,7 @@ int main(int argc, char **argv)
     unsigned int *tmp_edgesOffset, *tmp_edgesSize, *tmp_adjacencyList;
     
     int startVertex = atoi(argv[7]);
-    // printf("function: %s line: %d u_edgesOffset->host_buffer: %p\n", __FILE__, __LINE__, u_edgesOffset->host_buffer);
+    // printf("function: %s line: %d u_edgesOffset->local_buffer: %p\n", __FILE__, __LINE__, u_edgesOffset->local_buffer);
 
     // readGraph(G, argc, argv);
     readfile(G, G_m, argc, argv, tmp_edgesOffset, tmp_edgesSize, tmp_adjacencyList);
@@ -617,8 +625,8 @@ int main(int argc, char **argv)
     // b->start(N*sizeof(int));
     // for (size_t i = 0; i < N; i++)
     // {
-    //     a->host_buffer[i] = 10;
-    //     b->host_buffer[i] = 10;
+    //     a->local_buffer[i] = 10;
+    //     b->local_buffer[i] = 10;
     // }
 
     // ret1 = cudaDeviceSynchronize();
@@ -653,7 +661,7 @@ int main(int argc, char **argv)
     // a->memcpyDtoH();
     // for (size_t i = 0; i < 10; i++)
     // {
-    //     printf("a->host_buffer[%d]: %d\n", i, a->host_buffer[i]);
+    //     printf("a->local_buffer[%d]: %d\n", i, a->local_buffer[i]);
     // }
 
     //  u_adjacencyList->start(G.numEdges *sizeof(uint));
@@ -661,18 +669,19 @@ int main(int argc, char **argv)
     // u_edgesSize->start(G.numVertices *sizeof(uint));
     printf("function: %s line: %d\n", __FILE__, __LINE__);
     for(size_t i = 0; i < G.numEdges; i++){
-        u_adjacencyList->host_buffer[i] = G.adjacencyList_r[i];
+        u_adjacencyList->local_buffer[i] = G.adjacencyList_r[i];
     }
     printf("function: %s line: %d\n", __FILE__, __LINE__);
     for(size_t i = 0; i < G.numVertices; i++){
-        u_edgesOffset->host_buffer[i] = G.edgesOffset_r[i];
-        u_edgesSize->host_buffer[i] = G.edgesSize_r[i];
+        u_edgesOffset->local_buffer[i] = G.edgesOffset_r[i];
+        u_edgesSize->local_buffer[i] = G.edgesSize_r[i];
     }
     for(size_t i = 0; i < 5; i++){
-        printf("u_adjacencyList->size: %llu (*u_adjacencyList)[%d]: %llu\n", u_adjacencyList->size, i, u_adjacencyList->host_buffer[i]);
-        printf("u_edgesOffset->size: %llu (*u_edgesOffset)[%d]: %llu\n", u_edgesOffset->size, i, u_edgesOffset->host_buffer[i]);
-        printf("u_edgesSize->size: %llu (*u_edgesSize)[%d]: %llu G.edgesSize_r[%d]: %llu\n", u_edgesSize->size, i, u_edgesSize->host_buffer[i], i, G.edgesSize_r[i]);
+        printf("u_adjacencyList->size: %llu (*u_adjacencyList)[%d]: %llu\n", u_adjacencyList->size, i, u_adjacencyList->local_buffer[i]);
+        printf("u_edgesOffset->size: %llu (*u_edgesOffset)[%d]: %llu\n", u_edgesOffset->size, i, u_edgesOffset->local_buffer[i]);
+        printf("u_edgesSize->size: %llu (*u_edgesSize)[%d]: %llu G.edgesSize_r[%d]: %llu\n", u_edgesSize->size, i, u_edgesSize->local_buffer[i], i, G.edgesSize_r[i]);
     }
+    
     printf("function: %s line: %d\n", __FILE__, __LINE__);
     //save results from sequential bfs
     std::vector<int> expectedDistance(distance);
@@ -683,9 +692,9 @@ int main(int argc, char **argv)
     runCudaSimpleBfs(startVertex, G, distance, parent);
     u_distance->memcpyDtoH();
     for(size_t i = 0; i < 5; i++){
-        printf("u_distance->size: %llu (*u_distance)[%d]: %d\n", u_distance->size, i, u_distance->host_buffer[i]);
-        // printf("u_edgesOffset->size: %llu (*u_edgesOffset)[%d]: %llu\n", u_edgesOffset->size, i, u_edgesOffset->host_buffer[i]);
-        // printf("u_edgesSize->size: %llu (*u_edgesSize)[%d]: %llu G.edgesSize_r[%d]: %llu\n", u_edgesSize->size, i, u_edgesSize->host_buffer[i], i, G.edgesSize_r[i]);
+        printf("u_distance->size: %llu (*u_distance)[%d]: %d\n", u_distance->size, i, u_distance->local_buffer[i]);
+        // printf("u_edgesOffset->size: %llu (*u_edgesOffset)[%d]: %llu\n", u_edgesOffset->size, i, u_edgesOffset->local_buffer[i]);
+        // printf("u_edgesSize->size: %llu (*u_edgesSize)[%d]: %llu G.edgesSize_r[%d]: %llu\n", u_edgesSize->size, i, u_edgesSize->local_buffer[i], i, G.edgesSize_r[i]);
     }
     checkOutput_rdma(distance, expectedDistance, G);
 
@@ -813,40 +822,6 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-__global__
-void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
-               rdma_buf<unsigned int> *d_edgesSize, rdma_buf<unsigned int> *d_distance, rdma_buf<unsigned int> *d_parent, unsigned int *changed) {
-    size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
-    int valueChange = 0;
-    if(thid < n /*d_distance->size/sizeof(uint)*/){
-        unsigned int k = (*d_distance)[thid];
-        
-        if (/*thid < n && */k == *level) {
-            unsigned int u = thid;
-            for (unsigned int i = (*d_edgesOffset)[u]; i < (*d_edgesOffset)[u] + (*d_edgesSize)[u]; i++) {
-                
-                int v = (*d_adjacencyList)[i];
-                unsigned int dist = (*d_distance)[v];
-                if (*level + 1 < dist) {
-                    
-                    unsigned int new_dist = *level + 1;
-                   
-                    (*d_distance).rvalue(v, new_dist /*(int) level + 1*/);
-                   
-                    valueChange = 1;
-                }
-            }
-            // printf(" for finished\n");
-        }
-        // __syncthreads();
-        if (valueChange) {
-            *changed = valueChange;
-        }
-    }
-    // __syncthreads();
-}
-
-
 // __global__
 // void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
 //                rdma_buf<unsigned int> *d_edgesSize, rdma_buf<unsigned int> *d_distance, rdma_buf<unsigned int> *d_parent, unsigned int *changed) {
@@ -854,56 +829,19 @@ void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adj
 //     int valueChange = 0;
 //     if(thid < n /*d_distance->size/sizeof(uint)*/){
 //         unsigned int k = (*d_distance)[thid];
-//         // (*d_distance).rvalue(thid, 2);
-//         // if(thid == 0 || thid == 1 || thid == 2 || thid == 3){
-//         //     printf("d_distance->size: %llu (*d_distance)[0]: %d\n", d_distance->size, k);
-//         //     printf("d_edgesOffset->size: %d (*d_edgesOffset)[%d]: %llu (*d_distance)[%d]: %llu\n",\
-//         //             d_edgesOffset->size, thid, (*d_edgesOffset)[thid], thid, (*d_distance)[thid]);
-//         //     printf("d_edgesSize->size: %d (*d_edgesSize)[%d]: %llu\n", d_edgesSize->size, thid, (*d_edgesSize)[thid]);   
-//         // }
         
-//         // printf("(*d_distance)[thid]: %llu\n", (*d_distance)[thid]);
 //         if (/*thid < n && */k == *level) {
 //             unsigned int u = thid;
 //             for (unsigned int i = (*d_edgesOffset)[u]; i < (*d_edgesOffset)[u] + (*d_edgesSize)[u]; i++) {
-//                 // printf("%d. (*d_edgesOffset)[u]: %d\n", i, (*d_edgesOffset)[u]);
-//                 // printf("%d. (*d_edgesSize)[u]: %d\n", i, (*d_edgesSize)[u]);
-//                 if(i == 371200){
-//                     printf("index-d_adjacencyList: %d \n", i);
-//                 }
-//                 // printf("thid: %d i: %d. GPU_address_offset: %llu\n", thid, i, GPU_address_offset);
+                
 //                 int v = (*d_adjacencyList)[i];
-                
-                
-//                 // printf("thid: %d i: %d. (*d_adjacencyList)[i]: %d GPU_address_offset: %llu\n", thid, i, (*d_adjacencyList)[i], GPU_address_offset);
 //                 unsigned int dist = (*d_distance)[v];
-//                 // printf("thid: %d i: %d v: %d. (*d_distance)[v]: %d GPU_address_offset: %llu\n", thid, i, v, (*d_distance)[v], GPU_address_offset);
 //                 if (*level + 1 < dist) {
-//                     // (*d_distance)[v] = level + 1;
-//                     // (*d_parent)[v] = i;
-//                     // if(v == 371200){
-//                     //     printf("index-v 2: %d \n", v);
-//                     // }
-//                     // uint q = (*d_distance)[v];
+                    
 //                     unsigned int new_dist = *level + 1;
-//                     // if(new_dist == 1)
-//                         // (*d_distance).rvalue(v, 1);
-//                     // if(new_dist == 2)
-//                     // unsigned int *tmp = (unsigned int *) d_distance->d_TLB[v/256].device_address
-//                     // printf("thid: %d i: %d v: %d. dist: %d new_dist: %d\n", thid, i, v, dist, new_dist);
-//                         (*d_distance).rvalue(v, new_dist /*(int) level + 1*/);
-//                     // printf("thid: %d i: %d v: %d. (*d_distance)[v]: %d new_dist: %d\n", thid, i, v, (*d_distance)[v], new_dist);
-//                     // else if(new_dist == 3)
-//                     //     (*d_distance).rvalue(v, 3);
-//                     // else if(new_dist == 4)
-//                     //     (*d_distance).rvalue(v, 4);
-//                     // else if(new_dist == 5)
-//                     //     (*d_distance).rvalue(v, 5);
-//                     // printf("dist: %d (*d_distance)[%d]: %d\n", dist, v, (*d_distance)[v]);
-//                     // if(level + 1 == 2)
-//                         // printf("%d. d_distance[v]: %d\n", i, (*d_distance)[v]);
-//                     // d_parent->rvalue(v, i);
-//                     // printf("%d. d_distance[v]: %d\n", i, (*d_distance)[v]);
+                   
+//                     (*d_distance).rvalue(v, new_dist /*(int) level + 1*/);
+                   
 //                     valueChange = 1;
 //                 }
 //             }
@@ -916,3 +854,80 @@ void simpleBfs_rdma(size_t n, unsigned int *level, rdma_buf<unsigned int> *d_adj
 //     }
 //     // __syncthreads();
 // }
+
+
+__global__
+void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
+               rdma_buf<unsigned int> *d_edgesSize, rdma_buf<unsigned int> *d_distance, unsigned int *changed) {
+    size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
+    int valueChange = 0;
+    if(thid < n /*d_distance->size/sizeof(uint)*/){
+        unsigned int k = (*d_distance)[thid];
+        // (*d_distance).rvalue(thid, 2);
+        // if(thid == 0 || thid == 1 || thid == 2 || thid == 3){
+        //     printf("d_distance->size: %llu (*d_distance)[0]: %d\n", d_distance->size, k);
+        //     printf("d_edgesOffset->size: %d (*d_edgesOffset)[%d]: %llu (*d_distance)[%d]: %llu\n",\
+        //             d_edgesOffset->size, thid, (*d_edgesOffset)[thid], thid, (*d_distance)[thid]);
+        //     printf("d_edgesSize->size: %d (*d_edgesSize)[%d]: %llu\n", d_edgesSize->size, thid, (*d_edgesSize)[thid]);   
+        // }
+        
+        // printf("(*d_distance)[thid]: %llu\n", (*d_distance)[thid]);
+        if (k == level) {
+            // size_t u = thid;
+            uint edgesOffset = (*d_edgesOffset)[thid];
+            uint edgesSize = (*d_edgesSize)[thid];
+            // printf("%zu. (*d_distance)[thid]: %d k: %d level: %d\n", thid, (*d_distance)[thid], k, level);
+            // printf("%d. (*d_edgesOffset)[u]: %d\n", thid, (*d_edgesOffset)[thid]);
+            // printf("%d. (*d_edgesSize)[u]: %d\n", thid, (*d_edgesSize)[thid]);
+            for (unsigned int i = edgesOffset; i < edgesOffset + edgesSize; i++) {
+                
+                // printf("*level: %d\n", *level);
+                // printf("u: %d\n", u);
+                if(i == 371200){
+                    printf("index-d_adjacencyList: %d \n", i);
+                }
+                // printf("thid: %d i: %d. GPU_address_offset: %llu\n", thid, i, GPU_address_offset);
+                int v = (*d_adjacencyList)[i];
+                
+                
+                // printf("thid: %zu i: %u. (*d_adjacencyList)[i]: %d GPU_address_offset: %llu\n", thid, i, (*d_adjacencyList)[i], GPU_address_offset);
+                unsigned int dist = (*d_distance)[v];
+                // printf("thid: %d i: %d v: %d. (*d_distance)[v]: %d GPU_address_offset: %llu\n", thid, i, v, (*d_distance)[v], GPU_address_offset);
+                if (level + 1 < dist) {
+                    // (*d_distance)[v] = level + 1;
+                    // (*d_parent)[v] = i;
+                    // if(v == 371200){
+                    //     printf("index-v 2: %d \n", v);
+                    // }
+                    // uint q = (*d_distance)[v];
+                    unsigned int new_dist = level + 1;
+                    // if(new_dist == 1)
+                        // (*d_distance).rvalue(v, 1);
+                    // if(new_dist == 2)
+                    // unsigned int *tmp = (unsigned int *) d_distance->d_TLB[v/256].device_address
+                    // printf("thid: %d i: %d v: %d. dist: %d new_dist: %d\n", thid, i, v, dist, new_dist);
+                        (*d_distance).rvalue(v, new_dist /*(int) level + 1*/);
+                    // printf("thid: %d i: %d v: %d. (*d_distance)[v]: %d new_dist: %d\n", thid, i, v, (*d_distance)[v], new_dist);
+                    // else if(new_dist == 3)
+                    //     (*d_distance).rvalue(v, 3);
+                    // else if(new_dist == 4)
+                    //     (*d_distance).rvalue(v, 4);
+                    // else if(new_dist == 5)
+                    //     (*d_distance).rvalue(v, 5);
+                    // printf("dist: %d (*d_distance)[%d]: %d\n", dist, v, (*d_distance)[v]);
+                    // if(level + 1 == 2)
+                        // printf("%d. d_distance[v]: %d\n", i, (*d_distance)[v]);
+                    // d_parent->rvalue(v, i);
+                    // printf("%d. d_distance[v]: %d\n", i, (*d_distance)[v]);
+                    valueChange = 1;
+                }
+            }
+            // printf(" for finished\n");
+        }
+        // __syncthreads();
+        if (valueChange) {
+            *changed = valueChange;
+        }
+    }
+    // __syncthreads();
+}

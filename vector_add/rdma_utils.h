@@ -774,36 +774,36 @@ struct mlx5_rwqe_sig {
 	uint8_t		rsvd1[11];
 };
 
-struct __attribute__((__packed__)) mlx5_cqe64 {
-	union {
-		struct {
-			uint8_t		rsvd0[2];
-			__be16		wqe_id;
-			uint8_t		rsvd4[13];
-			uint8_t		ml_path;
-			uint8_t		rsvd20[4];
-			__be16		slid;
-			__be32		flags_rqpn;
-			uint8_t		hds_ip_ext;
-			uint8_t		l4_hdr_type_etc;
-			__be16		vlan_info;
-		};
-		struct mlx5_tm_cqe tm_cqe;
-		/* TMH is scattered to CQE upon match */
-		struct ibv_tmh tmh;
-	};
-	__be32		srqn_uidx;
-	__be32		imm_inval_pkey;
-	uint8_t		app;
-	uint8_t		app_op;
-	__be16		app_info;
-	__be32		byte_cnt;
-	__be64		timestamp;
-	__be32		sop_drop_qpn;
-	__be16		wqe_counter;
-	uint8_t		signature;
-	uint8_t		op_own;
-};
+// struct __attribute__((__packed__)) mlx5_cqe64 {
+// 	union {
+// 		struct {
+// 			uint8_t		rsvd0[2];
+// 			__be16		wqe_id;
+// 			uint8_t		rsvd4[13];
+// 			uint8_t		ml_path;
+// 			uint8_t		rsvd20[4];
+// 			__be16		slid;
+// 			__be32		flags_rqpn;
+// 			uint8_t		hds_ip_ext;
+// 			uint8_t		l4_hdr_type_etc;
+// 			__be16		vlan_info;
+// 		};
+// 		struct mlx5_tm_cqe tm_cqe;
+// 		/* TMH is scattered to CQE upon match */
+// 		struct ibv_tmh tmh;
+// 	};
+// 	__be32		srqn_uidx;
+// 	__be32		imm_inval_pkey;
+// 	uint8_t		app;
+// 	uint8_t		app_op;
+// 	__be16		app_info;
+// 	__be32		byte_cnt;
+// 	__be64		timestamp;
+// 	__be32		sop_drop_qpn;
+// 	__be16		wqe_counter;
+// 	uint8_t		signature;
+// 	uint8_t		op_own;
+// };
 
 static inline struct mlx5_context *to_mctx(struct ibv_context *ibctx)
 {

@@ -17,13 +17,14 @@ static unsigned long long int RDMA_BUFFER_SIZE = 80*1024*1024*1024llu;
 static int N_QPs = 256;
 // const static int N_8GB_Region = 10;
 enum { 
-  N_8GB_Region = 10,
+  N_8GB_Region = 5,
   Region_Size = 8*1024*1024*1024llu
  };
   
 struct MemPool{
   uint64_t addresses[N_8GB_Region];
   uint32_t rkeys[N_8GB_Region];
+  uint32_t lkeys[N_8GB_Region];
 };
 
 enum mode {
