@@ -23,7 +23,7 @@ NVCC := $(CUDA_ROOT)/bin/nvcc -g -G --generate-code code=sm_70,arch=compute_70 $
 INCLUDE_DIR := /users/Nurlan/gpu_rdma_read_write/include
 SRC_DIR := /users/Nurlan/gpu_rdma_read_write/src
 
-CXXFLAGS = -w -std=c++11 -O3 -Wno-deprecated-gpu-targets
+CXXFLAGS = -w -std=c++14 -O3 -Wno-deprecated-gpu-targets
 # -arch=sm_70
 
 PWD := $(shell pwd)

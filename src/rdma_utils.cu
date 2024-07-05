@@ -2631,9 +2631,9 @@ __device__ int post_s(struct post_wr wr, int cur_post, void *qp_buf, void *bf_re
 
 __device__ int update_db(uint64_t *ctrl, void *bf_reg)
 {
-    *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl ;// 
     __threadfence_system();
-	// return 0;
+    *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl ;// 
+	return 0;
 }
 
 __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
@@ -2726,7 +2726,7 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     //     *(volatile uint32_t *)bf_reg = (uint32_t) htonl(htonl64(val) >> 32);
     // *(volatile uint32_t *)(bf_reg+4) = (uint32_t) htonl(htonl64(val));
         // *(volatile uint32_t *)(bf_reg+4) = (uint32_t) htonl(htonl64(val));
-        // value_ctrl = (uint64_t *) ctrl;
+        // *value_ctrl = *(uint64_t *) ctrl;
         __threadfence_system();
         *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl; // 
         
@@ -2963,7 +2963,10 @@ int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_c
             return -1;
         post_cont->dev_qp_sq[i] = dev_qp_sq;
         post_cont->n_post[i] = 0;
-        post_cont->cq_lock[i] = 0;
+        post_cont->queue_count[i] = 0;
+        post_cont->queue_lock[i] = 0;
+        for(size_t k = 0; k < 64; k++)
+            post_cont->cq_lock[i*64+k] = 0;
 
         if(i == 0){
             printf("qp_buf[%d]: %p \n", i, post_cont->qp_buf);

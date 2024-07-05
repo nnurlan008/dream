@@ -117,7 +117,9 @@ struct __attribute__((__packed__)) post_content{
   uint64_t wr_sg_addr; 
   int wr_opcode; 
   uint32_t qp_num; 
-  unsigned int cq_lock[256];
+  unsigned int cq_lock[256*64];
+  unsigned int queue_count[256];
+  unsigned int queue_lock[256];
   size_t n_post[256];
   void *qp_buf;  
   void *bf_reg[256];
@@ -147,7 +149,12 @@ struct __attribute__((__packed__)) post_content{
       this->bf_reg[i] = obj.bf_reg[i];
       this->qp_db[i] = obj.qp_db[i];
       this->dev_qp_sq[i] = obj.dev_qp_sq[i];
-      this->cq_lock[i] = obj.cq_lock[i];
+      // this->cq_lock[i] = obj.cq_lock[i];
+      this->queue_count[i] = obj.queue_count[i];
+      this->queue_lock[i] = obj.queue_lock[i];
+      for(size_t k = 0; k < 64; k++)
+        this->cq_lock[i*64+k] = obj.cq_lock[i*64+k];
+            // post_cont->cq_lock[i*64+k] = 0;
     }
             
     return *this;
