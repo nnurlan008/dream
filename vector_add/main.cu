@@ -191,7 +191,7 @@ __global__ void test(rdma_buf<int> *a, rdma_buf<int> *b, rdma_buf<int> *c, size_
     // if(id == 15728640)
     //     printf("b[15728640]: %d a[15728640]: %d\n", (*a)[id], (*b)[id]);
 
-    for(size_t i = id; i < size; i += stride){
+    for(size_t i = id; i < a->size/sizeof(int); i += stride){
         int k = (*a)[i];// + (*b)[i];
         // int j = (*b)[i];
         // c->rvalue(i, (*a)[i] + (*b)[i]);
@@ -245,7 +245,7 @@ __global__ void check(rdma_buf<int> *a, rdma_buf<int> *b, rdma_buf<int> *c, size
         int *tmp_p2 = (int *)a->d_TLB[o].device_address;
         for(uint64_t p = 0; p < 256; p++ )
             {
-                if(tmp_p2[p] != 2){
+                if(tmp_p2[p] != 1000){
                     flag1++;
                     // printf(" case for unmatched data a.tlb index: %d tmp_p2[p]: %d\n", id, tmp_p2[p]);
                 }
@@ -346,10 +346,10 @@ int main(int argc, char **argv)
     cudaMallocManaged(&buf3, sizeof(rdma_buf<int>));
     // cudaMallocManaged(&b, sizeof(int)*100);
     // printf("s_ctx->gpu_buffer: %p, buf1->size: %d, Address_Offset: %d\n", s_ctx->gpu_buffer, buf1->size, Address_Offset);
-    
-    buf1->start((uint64_t) s_ctx->server_memory.addresses[0], N*sizeof(int));
+    int num_nodes = 52579682, num_edges = 1963263822;
+    buf1->start((uint64_t) s_ctx->server_memory.addresses[0], num_edges*sizeof(int));
     printf("s_ctx->gpu_buffer: %p, buf1->size: %d, Address_Offset: %d\n", s_ctx->gpu_buffer, buf1->size, Address_Offset);
-    buf2->start((uint64_t) s_ctx->server_memory.addresses[0], N*sizeof(int));
+    // buf2->start((uint64_t) s_ctx->server_memory.addresses[0], N*sizeof(int));
     
     printf("s_ctx->gpu_buffer: %p, buf1->size: %d, Address_Offset: %d\n", s_ctx->gpu_buffer, buf1->size, Address_Offset);
     // buf3->start((uint64_t) s_ctx->gpu_buffer, (uint64_t) s_ctx->server_mr.addr, N*sizeof(int));
@@ -495,14 +495,15 @@ int main(int argc, char **argv)
     // add_vectors_uvm<<< thr_per_blk,sblk_in_grid >>>(dev_a, dev_a, dev_c, thr_per_blk*blk_in_grid);
     // add_vectors_rdma_64MB_512KB<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, data_size, num_iteration);
     // add_vectors_rdma<<< thr_per_blk, blk_in_grid>>>((int *) A, (int *) B, (int *) C, bytes/sizeof(int), tlb_A, tlb_B, tlb_C, dtimer, /*d_post, d_poll,*/ data_size, num_iteration);
-    test<<<2048, 512>>>(buf1, buf2, buf3, N);
+    test<<< num_nodes/256+1, 256>>>(buf1, buf2, buf3, N);
+    // 2048, 512
     // test2<<<2048, 256>>>(buf1, buf2, buf3);
     // test2 <<<(1*N)/1024, 1024>>>(buf1, buf2, buf3);
     // test2<<< 32, 1024>>>(buf1, buf2, buf3);
-    cudaEventRecord(event2, (cudaStream_t) 1);
+    
     clock_gettime(CLOCK_REALTIME, &finish);
     ret1 = cudaDeviceSynchronize();
-    
+    cudaEventRecord(event2, (cudaStream_t) 1);
     
     //synchronize
     cudaEventSynchronize(event1); //optional
@@ -528,7 +529,7 @@ int main(int argc, char **argv)
     if(cudaSuccess != ret1){    
         return -1;
     }
-    check<<<2048, 512>>>(buf1, buf2, buf3, buf1->size);
+    // check<<<2048, 512>>>(buf1, buf2, buf3, buf1->size);
     ret1 = cudaDeviceSynchronize();
     printf("ret3: %d\n", ret1);
     if(cudaSuccess != ret1){    

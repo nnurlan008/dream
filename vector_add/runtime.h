@@ -199,7 +199,11 @@ struct rdma_buf {
 
         // constructor
         
-        rdma_buf(uint64_t user_address, uint64_t h_address, size_t user_size){
+        __device__ __host__
+        rdma_buf(uint64_t h_address, size_t user_size){
+            #ifdef  __CUDA_ARCH__
+                printf("Devcie declaration needs assignment!\n");
+            #else
             printf(" sREQUEST_SIZE: %d offset: %d\n", REQUEST_SIZE, Address_Offset);
             uint64_t offset = (uint64_t) Address_Offset;
             // gpu_address = user_address + Address_Offset;
@@ -216,6 +220,7 @@ struct rdma_buf {
                 printf("Error on TLB Buffer allocation!\n");
                 exit(-1);
             }
+            #endif
 
             // dev_buf
 
