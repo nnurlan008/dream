@@ -43,8 +43,12 @@ static size_t Address_Offset = 0;
 __device__ volatile uint64_t GPU_address_offset; 
 __device__ uint64_t Global_GPU_address;
 __device__ uint64_t d_remote_address;
+__device__ unsigned long long int transfer_time;
+
 uint64_t GPU_address;
 uint64_t GPU_addr_offset;
+
+
 
 // __device__ uint64_t Global_Dev_address;
 // device - info about QPs
@@ -132,6 +136,7 @@ __global__ void alloc_global_content(struct post_content *post_cont, struct poll
     printf("alloc_global_content - Global_GPU_address: %p\n", Global_GPU_address);
     // Global_Dev_address = post_cont->wr_sg_addr;
     GPU_address_offset = 0;
+    transfer_time = 0;
     printf("qp_num: %d\n", gpost_cont.qp_num);
 }
 
@@ -450,7 +455,7 @@ struct rdma_buf {
         T *local_buffer; // in server mode this will be host buffer
         size_t tlb_size;
         tlb_entry *host_TLB, *d_TLB;
-        uint8_t *h_tlb, *d_tlb;
+        unsigned int *h_tlb, *d_tlb;
 
         // server mode only:
         struct ibv_mr *buffer_mr;
@@ -560,7 +565,7 @@ struct rdma_buf {
             if(cudaSuccess != cudaMalloc(&d_TLB, tlb_size*sizeof(tlb_entry)))
                 return -1;
 
-            if(cudaSuccess != cudaMalloc(&d_tlb, tlb_size*sizeof(uint8_t)))
+            if(cudaSuccess != cudaMalloc(&d_tlb, tlb_size*sizeof(unsigned int)))
                 return -1;
 
             // if(cudaSuccess != cudaMallocManaged(&tlb_sync_host, 1*sizeof(tlb_entry)))
@@ -569,7 +574,7 @@ struct rdma_buf {
             printf("tlb_size: %llu sizeof(tlb_entry): %d\n", tlb_size, sizeof(uint8_t));
             
             host_TLB = (tlb_entry *) malloc(tlb_size*sizeof(tlb_entry));
-            h_tlb = (uint8_t *) malloc(tlb_size*sizeof(uint8_t));
+            h_tlb = (unsigned int *) malloc(tlb_size*sizeof(unsigned int));
 
             for(size_t i = 0; i < tlb_size; i++){
                 // printf("host_address: %p\n", host_address);
@@ -596,7 +601,7 @@ struct rdma_buf {
             if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(tlb_entry), cudaMemcpyHostToDevice))
                 return -1;
 
-            if(cudaSuccess != cudaMemcpy(d_tlb, h_tlb, tlb_size*sizeof(uint8_t), cudaMemcpyHostToDevice))
+            if(cudaSuccess != cudaMemcpy(d_tlb, h_tlb, tlb_size*sizeof(unsigned int), cudaMemcpyHostToDevice))
                 return -1;
             if(cudaSuccess != cudaDeviceSynchronize()) return -1;
             return 0;
@@ -1060,11 +1065,12 @@ struct rdma_buf {
             // T *add = (T *) address;
             // #ifdef  __CUDA_ARCH__
                 uint64_t che;
-               
+                uint64_t id = blockDim.x * blockIdx.x + threadIdx.x; 
+
                 che = index/request_size; // floor((double)index/request_size); //getTLBindex(index, request_size);
                 // select which qp and cq to use:
                 // TODO: for oversubscription, first check if gpu has enough free memory
-            
+                // volatile uint8_t *page_entry = &d_tlb[che];
                     if(/*d_TLB[che].state == 2*/d_tlb[che] == 2){ // page completely on gpu or dirty on gpu
                         // T *tmp_array =  (T *) d_TLB[che].device_address;
                         // // LRU is incremented
@@ -1125,8 +1131,6 @@ struct rdma_buf {
                             volatile uint8_t *op_flag = &cqe64->op_own;
                             retries = 0;
                             
-                            // while(*op_flag == 240){
-                            // printf("id: %d isSet: %d cqe64->op_own: %d qp_index: %d d_TLB[che].device_address: %p\n", id, isSet, cqe64->op_own, qp_index, d_TLB[che].device_address);
                             while(*op_flag == 240){
                                     if(retries > 15){
                                     //     unsigned int mask2 = __match_any_sync(__activemask(), (unsigned long long)qp_index);
@@ -1135,7 +1139,7 @@ struct rdma_buf {
                                     //     cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
                                     //     op_flag = &cqe64->op_own;
                                     //     // unsigned int leader2 = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
-                                        post_m(d_TLB[che].host_address, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address, 4, gpost_cont.qp_num + qp_index, 
+                                        post_m(rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T), 4, gpost_cont.qp_num + qp_index, 
                                         cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
                                     //     __syncwarp(mask2);
                                     //     if(cur_post == (*p_index-1)){
@@ -1144,34 +1148,49 @@ struct rdma_buf {
                                     //     __syncwarp(mask2);
                                         retries = -1;
                                     }
+                                    atomicAdd((unsigned long long int *) &transfer_time, 1);
                                     retries++;
                                  
                             }
                             // __syncwarp(mask);
+                            // __threadfence_system();
                             *op_flag = 240;
+                            
                             // if(lane_id() == leader){  
-                                *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post + 1) & 0xffffff);
-                                *cq_lock = 0;  
+                            // __threadfence_system();
+                            *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post + 1) & 0xffffff);
+                            *cq_lock = 0;  
+                            // __threadfence_system();
                             // }
                             // __syncwarp(mask);
                             // d_TLB[che].state = 2;
-                            d_tlb[che] = 2;
+                            // atomicExch();
+                            // volatile unsigned int *page = &d_tlb[che];
+                            // d_tlb[che] = 2;
+                            atomicCAS(&d_tlb[che], 0, 2);
+                            // *page = 2;
                             // if(lane_id() == leader)
                                 
                             d_TLB[che].release_lock();
                         }
                         // __syncwarp(mask1);
                         
-                        volatile uint8_t *tlb_value = &d_tlb[che];
-                        while(*tlb_value != 2);
+                        volatile unsigned int *tlb_value = (volatile unsigned int *) &d_tlb[che];
+                        while(true){
+                            if(*tlb_value == 2) break;
+                            // __nanosleep(100);
+                        };
+                        
                         // index = index%request_size;
                         // T *tmp_array = (T *) d_TLB[che].device_address;
                         // // T a = 2;
                         // return tmp_array[index];
-                        return dev_buffer[index];
+                        // __nanosleep(100);
+                        
                     }
-
-                    return T();
+                    // __syncthreads();
+                    return dev_buffer[index];
+                    // return T();
         }
 
 

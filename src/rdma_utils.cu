@@ -111,6 +111,12 @@ int init_gpu(int gpu){
         return -1;
     }
     printf("free memory: %zu, total_memory: %zu\n", free_memory/(1024 * 1024), total_memory/(1024 * 1024));
+
+    cudaDeviceProp devProp;
+    cudaGetDeviceProperties(&devProp, 0);
+    printf("Cuda device clock rate = %d\n", devProp.clockRate);
+
+
     return 0;
 }
 
