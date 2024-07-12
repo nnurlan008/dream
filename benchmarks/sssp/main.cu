@@ -1102,7 +1102,7 @@ int main(int argc, char **argv)
     }
 
     uint *dist_gpu = sssp_GPU(&graph, sourceNode);
-    args.runOnCPU = false;
+    args.runOnCPU = true;
     if (args.runOnCPU) {
         uint *dist_cpu = sssp_CPU(&graph, sourceNode);
         compareResult(dist_cpu, dist_gpu, graph.numNodes);
