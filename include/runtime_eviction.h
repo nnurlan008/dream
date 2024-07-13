@@ -671,7 +671,7 @@ struct rdma_buf {
 
         int alloc_page_map(){
             
-            const size_t restricted_gpu_mem = 1*1024*1024*1024llu;
+            const size_t restricted_gpu_mem = 10*1024*1024*1024llu;
             const size_t page_size = REQUEST_SIZE;
 
             size_t page_map_size = restricted_gpu_mem/page_size;

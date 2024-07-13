@@ -75,6 +75,14 @@ __global__
 void simpleBfs_normal_rdma_optimized2(size_t n, size_t vertexCount, unsigned int level, rdma_buf<unsigned int> *d_edgeList, unsigned int *d_vertex_list,
                                      unsigned int *d_distance, unsigned int *changed);
 
+__global__
+void simpleBfs_rdma_optimized_warp(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+                    unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed);
+
+__global__
+void simpleBfs_rdma_dynamic_page(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+                                 unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed);
+
 // Kernel
 __global__ void add_vectors_uvm(int *a, int *b, int *c, int size)
 {
@@ -587,6 +595,8 @@ void runCudaSimpleBfs_optimized(int startVertex, Graph &G, std::vector<int> &dis
             // simpleBfs_normal_rdma<<< /*G.numVertices / 512 + 1, 512*/ 2048, 512 >>>(G.numEdges, G.numVertices, level, rdma_adjacencyList, d_startVertices, d_distance, changed);
             // simpleBfs_rdma<<< G.numVertices / 256 + 1, 256 >>>(G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed); 
             simpleBfs_normal_rdma_optimized2<<<1024, 512>>>(G.numEdges, G.numVertices, level, rdma_adjacencyList, d_startVertices, d_distance, changed);
+            // simpleBfs_rdma_optimized_warp<<</*G.numVertices / 256 + 1, 256*/1024, 512>>>(G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed);
+            // simpleBfs_rdma_dynamic_page<<<G.numVertices / 512 + 1, 512>>>(G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed);
         }
         ret1 = cudaDeviceSynchronize();
         
@@ -1385,5 +1395,114 @@ void simpleBfs_normal_rdma_optimized2(size_t n, size_t vertexCount, unsigned int
     __syncthreads();
     if (threadIdx.x == 0 && shared_changed) {
         *changed = 1;
+    }
+}
+
+__global__
+void simpleBfs_rdma_optimized_warp(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+                    unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed) {
+    // Page size in elements (64KB / 4 bytes per unsigned int)
+    const size_t pageSize = 4*1024 / sizeof(unsigned int);
+    // Elements per warp
+    const size_t elementsPerWarp = pageSize / warpSize;
+
+    // Global thread ID
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Warp ID within the block
+    size_t warpId = tid / warpSize;
+
+    // Thread lane within the warp
+    size_t lane = threadIdx.x % warpSize;
+
+    // Determine which page this warp will process
+    size_t pageStart = warpId * pageSize;
+
+    // Ensure we don't process out-of-bounds pages
+    if (pageStart < n * pageSize) {
+        bool localChanged = false;
+        
+        // Process elements within the page
+        for (size_t i = 0; i < elementsPerWarp; ++i) {
+            size_t elementIdx = pageStart + lane + i * warpSize;
+            if (elementIdx < n) {
+                unsigned int k = d_distance[elementIdx];
+                if (k == level) {
+                    for (size_t j = d_edgesOffset[elementIdx]; j < d_edgesOffset[elementIdx] + d_edgesSize[elementIdx]; ++j) {
+                        unsigned int v = (*d_adjacencyList)[j];
+                        unsigned int dist = d_distance[v];
+                        if (level + 1 < dist) {
+                            d_distance[v] = level + 1;
+                            localChanged = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Use atomic operation to set the changed flag if needed
+        if (localChanged) {
+            // atomicOr(changed, 1);
+            *changed = 1;
+        }
+    }
+}
+
+
+__global__
+void simpleBfs_rdma_dynamic_page(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+                                 unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed) {
+    // Page size in elements (64KB / 4 bytes per unsigned int)
+    const size_t pageSize = 64 * 1024 / sizeof(unsigned int);
+    // Number of pages
+    const size_t numPages = (n * sizeof(unsigned int) + 64 * 1024 - 1) / (64 * 1024);
+    // Elements per warp
+    const size_t elementsPerWarp = pageSize / warpSize;
+
+    // Warp ID within the grid
+    size_t warpId = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+
+    // Thread lane within the warp
+    size_t lane = threadIdx.x % warpSize;
+
+    __shared__ unsigned int currentPage;
+
+    if (lane == 0) {
+        currentPage = atomicAdd(&currentPage, 1);
+    }
+    __syncthreads();
+
+    // Ensure we don't process out-of-bounds pages
+    while (currentPage < numPages) {
+        size_t pageStart = currentPage * pageSize;
+        bool localChanged = false;
+
+        // Process elements within the page
+        for (size_t i = 0; i < elementsPerWarp; ++i) {
+            size_t elementIdx = pageStart + lane + i * warpSize;
+            if (elementIdx < n) {
+                unsigned int k = d_distance[elementIdx];
+                if (k == level) {
+                    for (size_t j = d_edgesOffset[elementIdx]; j < d_edgesOffset[elementIdx] + d_edgesSize[elementIdx]; ++j) {
+                        unsigned int v = (*d_adjacencyList)[j];
+                        unsigned int dist = d_distance[v];
+                        if (level + 1 < dist) {
+                            d_distance[v] = level + 1;
+                            localChanged = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Use atomic operation to set the changed flag if needed
+        if (localChanged) {
+            atomicOr(changed, 1);
+        }
+
+        if (lane == 0) {
+            currentPage = atomicAdd(&currentPage, 1);
+        }
+        __syncthreads();
     }
 }
