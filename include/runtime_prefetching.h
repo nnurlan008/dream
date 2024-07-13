@@ -76,7 +76,7 @@ extern struct rdma_content main_content;
 #define MAX_POST 3 
 // request size
 
-#define REQUEST_SIZE 64*1024 // bytes
+#define REQUEST_SIZE 4*1024 // bytes
 
 // define globale vaiable to save the number of post requests
 // and compare them to max_post
@@ -1167,32 +1167,32 @@ struct rdma_buf {
                                 
                             d_TLB[che].release_lock();
                         }
-                        else{
-                            // volatile unsigned int *tlb_value = (volatile unsigned int *) &d_tlb[che];
-                            int prefetched = 0;
-                            int prefetch_index = che+1;
-                            int tries = 0;
-                            while (prefetch_index < tlb_size){
-                                if(d_tlb[prefetch_index] == 0) {
-                                    if(d_TLB[prefetch_index].lock_entry()){
-                                        prefetched = 1;
-                                        break;
-                                    }
-                                }
-                                if(tries>5) break;
-                                tries++;
-                                prefetch_index++;   
-                            }
+                        // else{
+                        //     // volatile unsigned int *tlb_value = (volatile unsigned int *) &d_tlb[che];
+                        //     int prefetched = 0;
+                        //     int prefetch_index = che+1;
+                        //     int tries = 0;
+                        //     while (prefetch_index < tlb_size){
+                        //         if(d_tlb[prefetch_index] == 0) {
+                        //             if(d_TLB[prefetch_index].lock_entry()){
+                        //                 prefetched = 1;
+                        //                 break;
+                        //             }
+                        //         }
+                        //         if(tries>5) break;
+                        //         tries++;
+                        //         prefetch_index++;   
+                        //     }
                             
-                            if(prefetched){
-                                read(prefetch_index);
-                                // printf("prefetching page: %llu\n", prefetch_index);
+                        //     if(prefetched){
+                        //         read(prefetch_index);
+                        //         // printf("prefetching page: %llu\n", prefetch_index);
                                 
-                                atomicCAS(&d_tlb[prefetch_index], 0, 2);
-                                d_TLB[prefetch_index].release_lock();
-                            }
+                        //         atomicCAS(&d_tlb[prefetch_index], 0, 2);
+                        //         d_TLB[prefetch_index].release_lock();
+                        //     }
 
-                        }
+                        // }
 
                         volatile unsigned int *tlb_value = (volatile unsigned int *) &d_tlb[che];
                         while(true){
