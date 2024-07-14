@@ -83,6 +83,14 @@ __global__
 void simpleBfs_rdma_dynamic_page(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
                                  unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed);
 
+__global__
+void simpleBfs_rdma_optimized_dynamic(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+                    unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed);
+
+__global__
+void simpleBfs_rdma_optimized_warp2(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+                                   unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed);
+
 // Kernel
 __global__ void add_vectors_uvm(int *a, int *b, int *c, int size)
 {
@@ -541,7 +549,7 @@ void runCudaSimpleBfs_optimized(int startVertex, Graph &G, std::vector<int> &dis
     checkError(cudaMemcpy(d_startVertices, u_startVertices, G.numEdges*sizeof(unsigned int), cudaMemcpyHostToDevice));
 
     checkError(cudaMalloc((void **) &d_adjacencyList, G.numEdges*sizeof(unsigned int)));
-    checkError(cudaMemcpy(d_adjacencyList, u_adjacencyList, G.numEdges*sizeof(unsigned int), cudaMemcpyHostToDevice));
+    
     // checkError(cudaMemcpy(d_adjacencyList, u_adjacencyList, sizeof(rdma_buf<unsigned int>), cudaMemcpyHostToDevice));
 
     checkError(cudaMalloc((void **) &d_distance, G.numVertices*sizeof(unsigned int)));
@@ -571,23 +579,40 @@ void runCudaSimpleBfs_optimized(int startVertex, Graph &G, std::vector<int> &dis
     cudaEventCreate(&event1);
     cudaEventCreate(&event2);
 
-    uint64_t numthreads = 128;
-    uint64_t numblocks = ((G.numVertices * WARP_SIZE + numthreads) / numthreads);
+    uint64_t threadsPerBlock = 256;
+    uint64_t numblocks = ((G.numVertices + threadsPerBlock - 1) / threadsPerBlock);
+    size_t sharedMemorySize = threadsPerBlock * sizeof(unsigned int);
 
-    dim3 blockDim1(BLOCK_NUM, (numblocks+BLOCK_NUM)/BLOCK_NUM);
+    // dim3 blockDim1(BLOCK_NUM, (numblocks+BLOCK_NUM)/BLOCK_NUM);
 
     ret1 = cudaDeviceSynchronize();
+
+    cudaEventRecord(event1, (cudaStream_t)1);
+
+    checkError(cudaMemcpy(d_adjacencyList, u_adjacencyList, G.numEdges*sizeof(unsigned int), cudaMemcpyHostToDevice));
+
+    cudaEventRecord(event2, (cudaStream_t) 1);
+
+    cudaEventSynchronize(event1); //optional
+    cudaEventSynchronize(event2); //wait for the event to be executed!
+
+    float dt_ms;
+    cudaEventElapsedTime(&dt_ms, event1, event2);
+    printf("Elapsed time for transfer: %f\n", dt_ms);
 
     unsigned int level;
     level = 0;
     printf("fuction: %s, line: %d\n", __func__, __LINE__);
+    ret1 = cudaDeviceSynchronize();
     cudaEventRecord(event1, (cudaStream_t)1);
     *changed = 1;
     while (*changed) {
         *changed = 0;
         if(!rdma){
-            kernel_coalesce_ptr_pc<<< blockDim1, numthreads>>>(d_adjacencyList, d_distance, level, (const uint64_t) G.numVertices, d_edgesOffset,
-                                d_edgesSize, d_adjacencyList, changed);
+            // kernel_coalesce_ptr_pc<<< blockDim1, numthreads>>>(d_adjacencyList, d_distance, level, (const uint64_t) G.numVertices, d_edgesOffset,
+            //                     d_edgesSize, d_adjacencyList, changed);
+            // simpleBfs_normal<<< G.numVertices / 1024 + 1, 1024 >>>(G.numEdges, G.numVertices, level, d_adjacencyList /* uvm_adjacencyList u_adjacencyList */, d_startVertices, d_distance, changed);
+            simpleBfs_uvm<<<G.numVertices / 1024 + 1, 1024>>>(G.numVertices, level, d_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed); 
         }
         else{
             // kernel_coalesce_ptr_pc_rdma<<< blockDim1, numthreads>>>(rdma_adjacencyList, d_distance, level, (const uint64_t) G.numVertices, d_edgesOffset,
@@ -595,7 +620,15 @@ void runCudaSimpleBfs_optimized(int startVertex, Graph &G, std::vector<int> &dis
             // simpleBfs_normal_rdma<<< /*G.numVertices / 512 + 1, 512*/ 2048, 512 >>>(G.numEdges, G.numVertices, level, rdma_adjacencyList, d_startVertices, d_distance, changed);
             // simpleBfs_rdma<<< G.numVertices / 256 + 1, 256 >>>(G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed); 
             simpleBfs_normal_rdma_optimized2<<<1024, 512>>>(G.numEdges, G.numVertices, level, rdma_adjacencyList, d_startVertices, d_distance, changed);
+            
+
+            // simpleBfs_rdma_optimized_dynamic<<< numblocks, threadsPerBlock, sharedMemorySize >>>(G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed);
+
+            // the next one for friendster:
             // simpleBfs_rdma_optimized_warp<<</*G.numVertices / 256 + 1, 256*/1024, 512>>>(G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed);
+            
+            // simpleBfs_rdma_optimized_warp2<<</*G.numVertices / 256 + 1, 256*/1024, 512>>>(G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed);
+
             // simpleBfs_rdma_dynamic_page<<<G.numVertices / 512 + 1, 512>>>(G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed);
         }
         ret1 = cudaDeviceSynchronize();
@@ -617,7 +650,7 @@ void runCudaSimpleBfs_optimized(int startVertex, Graph &G, std::vector<int> &dis
     cudaEventSynchronize(event2); //wait for the event to be executed!
 
     // calculate time
-    float dt_ms;
+    // float dt_ms;
     cudaEventElapsedTime(&dt_ms, event1, event2);
     printf("Elapsed time with cudaEvent: %f\n", dt_ms);
 
@@ -748,7 +781,8 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    const size_t restricted_gpu_mem = 1*1024*1024*1024llu;
+    size_t restricted_gpu_mem = sizeof(unsigned int)*1963263822llu;
+    restricted_gpu_mem = restricted_gpu_mem / 3;
     const size_t page_size = REQUEST_SIZE;
     const size_t numPages = restricted_gpu_mem/page_size;
 
@@ -775,7 +809,6 @@ int main(int argc, char **argv)
     // if(cudaSuccess != ret1){    
     //     return -1;
     // }
-    
     
 
     // read graph from standard input
@@ -907,7 +940,7 @@ int main(int argc, char **argv)
 
     // //run CUDA simple parallel bfs
     // runCudaSimpleBfs(startVertex, G, distance, parent);
-    runCudaSimpleBfs_optimized(startVertex, G, distance, parent, true);
+    runCudaSimpleBfs_optimized(startVertex, G, distance, parent, false);
     
     auto end = std::chrono::steady_clock::now();
     // u_distance->memcpyDtoH();
@@ -1053,12 +1086,7 @@ void simpleBfs_normal(size_t n, size_t vertexCount, unsigned int level, unsigned
                 }
                 // iterations++;
             }
-            
-        // }
         
-        
-
-        // __syncthreads();
         if (valueChange) {
             *changed = valueChange;
         }
@@ -1402,7 +1430,7 @@ __global__
 void simpleBfs_rdma_optimized_warp(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
                     unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed) {
     // Page size in elements (64KB / 4 bytes per unsigned int)
-    const size_t pageSize = 4*1024 / sizeof(unsigned int);
+    const size_t pageSize = 64*1024 / sizeof(unsigned int);
     // Elements per warp
     const size_t elementsPerWarp = pageSize / warpSize;
 
@@ -1428,6 +1456,8 @@ void simpleBfs_rdma_optimized_warp(size_t n, unsigned int level, rdma_buf<unsign
             if (elementIdx < n) {
                 unsigned int k = d_distance[elementIdx];
                 if (k == level) {
+                    // printf("d_edgesOffset[%llu]: %u, d_edgesSize[%llu]: %u\n", 
+                    //         (long long int) elementIdx, d_edgesOffset[elementIdx], (long long int) elementIdx, d_edgesSize[elementIdx]);
                     for (size_t j = d_edgesOffset[elementIdx]; j < d_edgesOffset[elementIdx] + d_edgesSize[elementIdx]; ++j) {
                         unsigned int v = (*d_adjacencyList)[j];
                         unsigned int dist = d_distance[v];
@@ -1448,6 +1478,131 @@ void simpleBfs_rdma_optimized_warp(size_t n, unsigned int level, rdma_buf<unsign
     }
 }
 
+__global__
+void simpleBfs_rdma_optimized_warp2(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+                                   unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed) {
+    // Page size in elements (64KB / 4 bytes per unsigned int)
+    const size_t pageSize = 64*1024 / sizeof(unsigned int);
+    // Elements per warp
+    const size_t elementsPerWarp = pageSize / warpSize;
+
+    // Global thread ID
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Warp ID within the block
+    size_t warpId = tid / warpSize;
+
+    // Thread lane within the warp
+    size_t lane = threadIdx.x % warpSize;
+
+    // Global warp ID
+    size_t globalWarpId = tid / warpSize;
+
+    // Number of warps in the grid
+    size_t numWarps = (blockDim.x * gridDim.x) / warpSize;
+
+    bool localChanged = false;
+
+    for (size_t pageStart = globalWarpId * pageSize; pageStart < n * pageSize; pageStart += numWarps * pageSize) {
+        // Process elements within the page
+        for (size_t i = 0; i < elementsPerWarp; ++i) {
+            size_t elementIdx = pageStart + lane + i * warpSize;
+            if (elementIdx < n) {
+                unsigned int k = d_distance[elementIdx];
+                if (k == level) {
+                    // printf("d_edgesOffset[%llu]: %u, d_edgesSize[%llu]: %u\n", 
+                    //         (long long int) elementIdx, d_edgesOffset[elementIdx], (long long int) elementIdx, d_edgesSize[elementIdx]);
+                    for (size_t j = d_edgesOffset[elementIdx]; j < d_edgesOffset[elementIdx] + d_edgesSize[elementIdx]; ++j) {
+                        unsigned int v = (*d_adjacencyList)[j];
+                        unsigned int dist = d_distance[v];
+                        if (level + 1 < dist) {
+                            d_distance[v] = level + 1;
+                            localChanged = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Use atomic operation to set the changed flag if needed
+    if (localChanged) {
+        atomicOr(changed, 1);
+    }
+}
+
+__global__
+void simpleBfs_rdma_optimized_dynamic(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+                    unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed){
+    // Shared memory queue
+    extern __shared__ unsigned int queue[];
+    __shared__ int queueStart, queueEnd;
+    
+    if (threadIdx.x == 0) {
+        queueStart = 0;
+        queueEnd = 0;
+    }
+    __syncthreads();
+
+    // Global thread ID
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Each thread initially processes its own node
+    if (tid < n) {
+        unsigned int k = d_distance[tid];
+        if (k == level) {
+            int pos = atomicAdd(&queueEnd, 1);
+            if (pos < blockDim.x) {  // Ensure we do not exceed shared memory limits
+                queue[pos] = tid;
+            }
+        }
+    }
+    __syncthreads();
+
+    // Process the queue
+    while (queueStart < queueEnd) {
+        int node;
+        if (threadIdx.x == 0 && queueStart < blockDim.x) {
+            node = queue[queueStart];
+            atomicAdd(&queueStart, 1);
+        }
+        node = __shfl_sync(0xFFFFFFFF, node, 0);
+
+        bool localChanged = false;
+
+        if (node < n) {  // Ensure the node index is within bounds
+            unsigned int k = d_distance[node];
+
+            if (k == level) {
+                size_t edgeStart = d_edgesOffset[node];
+                size_t edgeEnd = edgeStart + d_edgesSize[node];
+
+                for (size_t j = edgeStart; j < edgeEnd; ++j) {
+                    if (j >= n) continue;  // Ensure edge index is within bounds
+
+                    unsigned int v = (*d_adjacencyList)[j];
+                    unsigned int dist = d_distance[v];
+                    if (level + 1 < dist) {
+                        d_distance[v] = level + 1;
+                        localChanged = true;
+
+                        // Add the newly discovered node to the queue
+                        int pos = atomicAdd(&queueEnd, 1);
+                        if (pos < blockDim.x) {  // Ensure we do not exceed shared memory limits
+                            queue[pos] = v;
+                        }
+                    }
+                }
+            }
+        }
+        __syncthreads();
+
+        // Use atomic operation to set the changed flag if needed
+        if (localChanged) {
+            atomicOr(changed, 1);
+        }
+    }
+}
 
 __global__
 void simpleBfs_rdma_dynamic_page(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
