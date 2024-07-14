@@ -671,13 +671,14 @@ struct rdma_buf {
 
         int alloc_page_map(){
             
-            const size_t restricted_gpu_mem = 10*1024*1024*1024llu;
+            size_t restricted_gpu_mem = sizeof(unsigned int)*1963263822llu;
+            restricted_gpu_mem = restricted_gpu_mem/3;
             const size_t page_size = REQUEST_SIZE;
 
             size_t page_map_size = restricted_gpu_mem/page_size;
 
             // allocating page map with page_map_entry
-
+            printf("restricted_gpu_mem: %llu\n", (long long int) restricted_gpu_mem);
             h_page_map = (page_map_entry *) malloc(page_map_size*sizeof(page_map_entry)); 
 
             for (size_t i = 0; i < page_map_size; i++)
