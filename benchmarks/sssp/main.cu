@@ -1645,64 +1645,7 @@ int main(int argc, char **argv)
     if (argc < 9)
         usage(argv[0]);
     
-    init_gpu(0);
-
-    bool rdma_flag = false;
-    struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
-    if(rdma_flag){
-        
-        printf("Function: %s line number: %d 1024MB: %d bytes REQUEST_SIZE: %d\n",__func__, __LINE__, MB(1024), REQUEST_SIZE);
-        int num_msg = (unsigned long) atoi(argv[4]);
-        int mesg_size = (unsigned long) atoi(argv[5]);
-        int num_bufs = (unsigned long) atoi(argv[6]);
-
-        
-        struct post_content post_cont, *d_post, host_post;
-        struct poll_content poll_cont, *d_poll, host_poll;
-        struct post_content2 post_cont2, *d_post2;
-        struct host_keys keys;
-
-        int num_iteration = num_msg;
-        s_ctx->n_bufs = num_bufs;
-        s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
-
-        // // remote connection:
-        // int ret = connect(argv[2], s_ctx);
-
-        // local connect
-        char *mlx_name = "mlx5_0";
-        int ret = local_connect(mlx_name, s_ctx);
-
-        ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont, &post_cont2, \
-                                        &host_post, &host_poll, &keys);
-        if(ret == -1) {
-            printf("Post and poll contect creation failed\n");    
-            exit(-1);
-        }
-
-        printf("alloc synDev ret: %d\n", cudaDeviceSynchronize());
-        alloc_global_cont(&post_cont, &poll_cont, &post_cont2);
-        // if(cudaSuccess != ){    
-        printf("alloc synDev ret1: %d\n", cudaDeviceSynchronize());
-            // return -1;
-        // }
-
-        cudaError_t ret1 = cudaDeviceSynchronize();
-        printf("ret: %d\n", ret1);
-        if(cudaSuccess != ret1){    
-            return -1;
-        }
-
-        printf("function: %s line: %d\n", __FILE__, __LINE__);
-        alloc_global_host_content(host_post, host_poll, keys);
-        printf("function: %s line: %d\n", __FILE__, __LINE__);
-
-        ret1 = cudaDeviceSynchronize();
-        printf("ret: %d\n", ret1);
-        if(cudaSuccess != ret1){    
-            return -1;
-        }
-    }
+    // init_gpu(0);
 
     Graph_x G;
     Graph_m G_m;
@@ -1712,11 +1655,6 @@ int main(int argc, char **argv)
     // readGraph(G, argc, argv);
     readfile(G, G_m, argc, argv, tmp_edgesOffset, tmp_edgesSize, tmp_adjacencyList);
 
-    
-    
-
-    // ArgumentParser args(argc, argv);
-    // cout << "Input file : " << args.inputFilePath << endl;
     Graph graph(argv[8]);
 
     // read file here
@@ -1812,7 +1750,7 @@ int main(int argc, char **argv)
             size_t total = degree;
             for (size_t k = 0; k < count; k++)
             {
-                new_vertex_list[index_zero] = i+k;
+                new_vertex_list[index_zero] = i;
                 if(total > treshold) new_offset[index_zero+1] = new_offset[index_zero] + treshold;
                 else new_offset[index_zero+1] = u_edgeoffset[i+1];
                 index_zero++;
@@ -1825,6 +1763,187 @@ int main(int argc, char **argv)
     printf("Elapsed time for preprocessing in milliseconds : %li ms.\n\n", duration);
     
     printf("number of threads needed for my representation: %llu\n", new_size);
+
+    int mem = 0;
+    WeightT *emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+    bool rdma_flag = false;
+    struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
+    if(rdma_flag){
+        init_gpu(0);
+        printf("Function: %s line number: %d 1024MB: %d bytes REQUEST_SIZE: %d\n",__func__, __LINE__, MB(1024), REQUEST_SIZE);
+        int num_msg = (unsigned long) atoi(argv[4]);
+        int mesg_size = (unsigned long) atoi(argv[5]);
+        int num_bufs = (unsigned long) atoi(argv[6]);
+
+        
+        struct post_content post_cont, *d_post, host_post;
+        struct poll_content poll_cont, *d_poll, host_poll;
+        struct post_content2 post_cont2, *d_post2;
+        struct host_keys keys;
+
+        int num_iteration = num_msg;
+        s_ctx->n_bufs = num_bufs;
+        s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
+
+        // // remote connection:
+        // int ret = connect(argv[2], s_ctx);
+
+        // local connect
+        char *mlx_name = "mlx5_0";
+        int ret = local_connect(mlx_name, s_ctx);
+
+        ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont, &post_cont2, \
+                                        &host_post, &host_poll, &keys);
+        if(ret == -1) {
+            printf("Post and poll contect creation failed\n");    
+            exit(-1);
+        }
+
+        printf("alloc synDev ret: %d\n", cudaDeviceSynchronize());
+        alloc_global_cont(&post_cont, &poll_cont, &post_cont2);
+        // if(cudaSuccess != ){    
+        printf("alloc synDev ret1: %d\n", cudaDeviceSynchronize());
+            // return -1;
+        // }
+
+        cudaError_t ret1 = cudaDeviceSynchronize();
+        printf("ret: %d\n", ret1);
+        if(cudaSuccess != ret1){    
+            return -1;
+        }
+
+        printf("function: %s line: %d\n", __FILE__, __LINE__);
+        alloc_global_host_content(host_post, host_poll, keys);
+        printf("function: %s line: %d\n", __FILE__, __LINE__);
+
+        ret1 = cudaDeviceSynchronize();
+        printf("ret: %d\n", ret1);
+        if(cudaSuccess != ret1){    
+            return -1;
+        }
+    }
+
+    
+
+    
+    
+
+    // ArgumentParser args(argc, argv);
+    // cout << "Input file : " << args.inputFilePath << endl;
+    // Graph graph(argv[8]);
+
+    // // read file here
+
+    // //  Graph graph("datasets/simpleGraph.txt");
+    // printf("main starts...\n");
+    // // graph.readGraph();
+    
+    // unsigned int sourceNode = atoi(argv[7]);
+
+    // // if (args.hasSourceNode) {
+    // //     sourceNode = args.sourceNode;
+    // // } else {
+    // //     // Use graph default source 
+    // //     sourceNode = graph.defaultSource;
+    // // }
+
+    // // uint *dist_gpu = sssp_GPU(&graph, sourceNode);
+    // printf("line: %d\n", __LINE__);
+    // printf("num edges: %llu num vertices: %llu\n", G.numEdges, G.numVertices);
+    // uint64_t *u_edgeoffset;
+    // unsigned int *u_edgeList;
+    // unsigned int *res_distance;
+    // res_distance = new uint[G.numVertices];
+    // u_edgeList = (uint *) malloc(sizeof(uint)*G.numEdges); // new uint64_t[G.numEdges];
+    // // gpuErrorcheck(cudaMallocHost(&u_edgeList, sizeof(uint)*G.numEdges));
+    // u_edgeoffset = new uint64_t[G.numVertices + 1];
+    // printf("line: %d\n", __LINE__);
+    // for (size_t i = 0; i < G.numEdges; i++)
+    // {
+    //     u_edgeList[i] = G.adjacencyList_r[i];
+    // }
+    // printf("line: %d\n", __LINE__);
+    // for (size_t i = 0; i < G.numVertices+1; i++)
+    // {
+    //     u_edgeoffset[i] = G.edgesOffset_r[i];
+    // }
+    // printf("line: %d\n", __LINE__);
+    // u_edgeoffset[G.numVertices] = G.numEdges;
+    // free(G.edgesOffset_r);
+    // free(G.adjacencyList_r);
+
+    // uint64_t min = 0, max = u_edgeoffset[1] - u_edgeoffset[0], max_node;
+    // double avg = 0;
+    
+    // for (size_t i = 0; i < G.numVertices; i++)
+    // {
+    //     uint64_t degree = u_edgeoffset[i+1] - u_edgeoffset[i];
+        
+    //     if(max < degree) {
+    //         max = degree;
+    //         max_node = i;
+    //     }
+    //     if(degree > 128){
+    //         min++;
+    //         avg += degree;
+    //         // printf("degree: %llu\n", degree);
+    //     }
+    //     // if(min > degree && degree != 0) min = degree;
+    // }
+    // avg = avg / min;
+    // printf("avg: %f min: %llu max: %llu, node: %llu\n", avg, min, max, max_node);
+    // auto start = std::chrono::steady_clock::now();                
+    // size_t new_size = 0, treshold = 64;
+    // for (size_t i = 0; i < G.numVertices; i++)
+    // {
+    //     uint64_t degree = u_edgeoffset[i+1] - u_edgeoffset[i];
+        
+    //     if(degree <= treshold){
+    //         new_size++;
+    //     }
+    //     else{
+    //         size_t count = degree/treshold + 1;
+    //         new_size += count;
+    //     }
+    // }
+    // unsigned int *new_vertex_list, *new_offset;
+    // size_t index_zero = 0;
+    // new_vertex_list = new uint[new_size];
+    // new_offset = new uint[new_size+1];
+    // new_offset[0] = 0;
+    // for (size_t i = 0; i < G.numVertices; i++)
+    // {
+    //     uint64_t degree = u_edgeoffset[i+1] - u_edgeoffset[i];
+        
+    //     if(degree <= treshold){
+    //         new_vertex_list[index_zero] = i;
+    //         new_offset[index_zero+1] = u_edgeoffset[i+1];
+    //         index_zero++;
+    //     }
+    //     else{
+    //         size_t count = degree/treshold + 1;
+    //         size_t total = degree;
+    //         for (size_t k = 0; k < count; k++)
+    //         {
+    //             new_vertex_list[index_zero] = i+k;
+    //             if(total > treshold) new_offset[index_zero+1] = new_offset[index_zero] + treshold;
+    //             else new_offset[index_zero+1] = u_edgeoffset[i+1];
+    //             index_zero++;
+    //             total = total - treshold;
+    //         }
+    //     }
+    // }
+    // auto end = std::chrono::steady_clock::now();
+    // long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    // printf("Elapsed time for preprocessing in milliseconds : %li ms.\n\n", duration);
+    
+    // printf("number of threads needed for my representation: %llu\n", new_size);
+
+    // int mem = 0;
+    // WeightT *emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, mem, new_size,
+    //                                 new_offset, new_vertex_list);
 
     WeightT *rdma_result;
     if(rdma_flag){
@@ -1839,12 +1958,44 @@ int main(int argc, char **argv)
     // runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset,
                 // unsigned int *edgeList, int representation, size_t new_size, unsigned int *new_offset, 
                 // unsigned int *new_vertex_list
-    int mem = 0;
-    WeightT *emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, mem, new_size,
-                                    new_offset, new_vertex_list);
+    // int mem = 0;
+    // WeightT *emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, mem, new_size,
+    //                                 new_offset, new_vertex_list);
     rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
                                     new_offset, new_vertex_list);
 
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+                                    
+
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
     
     printf("Cuda Starts ended..\n");
 
