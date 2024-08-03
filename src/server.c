@@ -30,7 +30,7 @@ int main(int argc, char **argv)
   
 
   TEST_Z(ec = rdma_create_event_channel());
-  TEST_NZ(rdma_create_id(ec, &listener, NULL, RDMA_PS_IB));
+  TEST_NZ(rdma_create_id(ec, &listener, NULL, RDMA_PS_TCP));
   // printf("rdma_bind_addr(listener, (struct sockaddr *)&addr): %d\n", rdma_bind_addr(listener, (struct sockaddr *)&addr));
   
   TEST_NZ(rdma_bind_addr(listener, (struct sockaddr *)&addr));

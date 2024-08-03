@@ -10,9 +10,27 @@
 #include <fstream> 
 #include <chrono>
 
+#include "graph.h"
+
 
 using namespace std;
 // using namespace std;
+
+#define BLOCK_SIZE 1024
+#define WARP_SHIFT 5
+#define WARP_SIZE 32
+
+#define CHUNK_SHIFT 3
+#define CHUNK_SIZE (1 << CHUNK_SHIFT)
+
+#define MEM_ALIGN_64 (~(0xfULL))
+#define MEM_ALIGN_32 (~(0x1fULL))
+
+#define MEM_ALIGN MEM_ALIGN_64
+
+typedef uint64_t EdgeT;
+typedef uint32_t WeightT;
+
 
 #define gpuErrorcheck(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
@@ -30,7 +48,7 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 
 // #include "../../src/rdma_utils.cuh"
 #include <time.h>
-#include "../../include/runtime.h"
+#include "../../include/runtime_prefetching.h"
 
 
 // Size of array
@@ -44,7 +62,47 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 
 __device__ rdma_buf<unsigned int> D_adjacencyList;
 
+__global__ void update(bool *label, unsigned int *costList, unsigned int *newCostList, const uint32_t vertex_count, bool *changed);
 
+__global__ void kernel_baseline(uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset, uint64_t * edgeList,
+                                uint *dist, bool *finished);
+
+__global__ void kernel_coalesce(bool *label, const WeightT *costList, WeightT *newCostList, 
+            const uint64_t vertex_count, const uint64_t *vertexList, const /*EdgeT*/ unsigned int *edgeList, const WeightT *weightList);
+
+__global__ void
+kernel_coalesce_rdma(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count,
+                     unsigned int *vertexList, rdma_buf<unsigned int> *edgeList, const WeightT *weightList);
+                    
+__global__ void 
+kernel_baseline_rdma(size_t n, bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count,
+                     const uint64_t *vertexList, rdma_buf<uint64_t> *edgeList, const WeightT *weightList);
+
+__global__ void 
+kernel_baseline_rdma_1(size_t n, uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset, rdma_buf<uint64_t> *edgeList,
+                                uint *dist, bool *changed);
+
+__global__ void 
+kernel_coalesce_rdma_opt(bool *label, size_t numEdges, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count,
+                     const uint64_t *vertexList, rdma_buf<unsigned int> *edgeList, const WeightT *weightList);
+
+__global__
+void kernel_coalesce_rdma_opt_1(bool *label, size_t n, size_t numVertices, size_t numEdges, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, 
+                    unsigned int *d_edgesOffset, const WeightT *costList, WeightT *newCostList, unsigned int *d_distance);
+
+__global__
+void kernel_coalesce_rdma_opt_warp(bool *label, size_t n, size_t numVertices, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, 
+                    unsigned int *d_edgesOffset, const WeightT *costList, WeightT *newCostList, unsigned int *d_distance);
+
+
+__global__ void kernel_coalesce_new_repr(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, unsigned int *new_offset, 
+                                unsigned int *new_vertex_list, const /*EdgeT*/ unsigned int *edgeList, const WeightT *weightList);
+
+__global__ void kernel_coalesce_new_repr_rdma(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, unsigned int *new_offset, 
+                                unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, const WeightT *weightList);
+
+__global__
+void check_edgeList(rdma_buf<unsigned int> *a, unsigned int *b, size_t size);
 
 // Kernel
 __global__ void add_vectors_uvm(int *a, int *b, int *c, int size)
@@ -95,6 +153,23 @@ void usage(const char *argv0)
   exit(1);
 }
 
+__device__ size_t sum_page_faults = 0;
+
+__global__ void
+print_retires(void){
+    // size_t max = cq_wait[0];
+    // for (size_t i = 0; i < 128; i++)
+    // {
+    //     if(max < cq_wait[i]) max = cq_wait[i];
+    // }
+    sum_page_faults += g_qp_index;
+    printf("g_qp_index: %llu sum page fault: %llu\n", g_qp_index, sum_page_faults);
+    g_qp_index = 0;
+    // for (size_t i = 0; i < 128; i++)
+    // {
+    //     max = 0;
+    // }
+}
 
 int alloc_global_cont(struct post_content *post_cont, struct poll_content *poll_cont, struct post_content2 *post_cont2){
     struct post_content *d_post;
@@ -154,13 +229,13 @@ void print_utilization() {
 #define PINNED 0
 #define UVM 0
 
-typedef struct OutEdge{
-    uint end;
-} E;
+// typedef struct OutEdge{
+//     uint end;
+// } E;
 
-uint* sssp_CPU(Graph* graph, int source){
-    int numNodes = graph->numNodes;
-    int numEdges = graph->numEdges;
+uint* sssp_CPU(uint source, uint64_t numVertex, uint64_t numEdges, uint64_t *vertexList, uint64_t *edgeList){
+    int numNodes = numVertex;
+    // int numEdges = numEdges;
     uint *dist = new uint[numNodes];
     uint *preNode = new uint[numNodes];
     bool *processed = new bool[numNodes];
@@ -173,16 +248,30 @@ uint* sssp_CPU(Graph* graph, int source){
 
 
     for (int i = 0; i < numEdges; i++) {
-        Edge edge = graph->edges.at(i);
-        if (edge.source == source){
-            if (edge.weight < dist[edge.end]){
-                dist[edge.end] = edge.weight;
-                preNode[edge.end] = source;
+        for (size_t k = vertexList[i]; k < vertexList[i+1]; k++)
+        {
+            if (i == source){
+                uint64_t end = edgeList[i];
+                if (1 < dist[end]){
+                    dist[end] = 1;
+                    preNode[end] = source;
+                }
+            } else {
+                // Case: edge.source != source
+                continue;
             }
-        } else {
-            // Case: edge.source != source
-            continue;
         }
+
+        // Edge edge = graph->edges.at(i);
+        // if (i == source){
+        //     if (edge.weight < dist[edge.end]){
+        //         dist[edge.end] = edge.weight;
+        //         preNode[edge.end] = source;
+        //     }
+        // } else {
+        //     // Case: edge.source != source
+        //     continue;
+        // }
     }
 
     
@@ -199,19 +288,37 @@ uint* sssp_CPU(Graph* graph, int source){
         finished = true;
         numIteration++;
 
-        for (int i = 0; i < numEdges; i++){
-            Edge edge = graph->edges.at(i);
-            // Update its neighbor
-            uint source = edge.source;
-            uint end = edge.end;
-            uint weight = edge.weight;
 
-            if (dist[source] + weight < dist[end]) {
-                dist[end] = dist[source] + weight;
-                preNode[end] = source;
-                finished = false;
+        for (size_t i = 0; i < numVertex; i++)
+        {
+            for (size_t k = vertexList[i]; k < vertexList[i+1]; k++)
+            {
+                uint64_t end = edgeList[i];
+                uint weight = 1;
+
+                if (dist[source] + weight < dist[end]) {
+                    dist[end] = dist[source] + weight;
+                    preNode[end] = source;
+                    finished = false;
+                }
+                
             }
+            
         }
+        
+        // for (int i = 0; i < numEdges; i++){
+        //     Edge edge = graph->edges.at(i);
+        //     // Update its neighbor
+        //     uint source = edge.source;
+        //     uint end = edge.end;
+        //     uint weight = edge.weight;
+
+        //     if (dist[source] + weight < dist[end]) {
+        //         dist[end] = dist[source] + weight;
+        //         preNode[end] = source;
+        //         finished = false;
+        //     }
+        // }
         
     }
     auto end = std::chrono::steady_clock::now();
@@ -1012,6 +1119,526 @@ uint* sssp_GPU(Graph *graph, int source) {
     return dist;
 }
 
+__device__ size_t diff = 0;
+
+WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset,
+                unsigned int *edgeList, int representation, int mem, size_t new_size, unsigned int *new_offset, 
+                unsigned int *new_vertex_list){
+    cudaError_t ret;
+    unsigned int *h_dist, *d_dist, *d_new_offset, *d_new_vertexList;
+    uint64_t *d_vertexList;
+    unsigned int *d_edgeList;
+    bool *finished, *label_d, *changed_d, changed_h;
+    WeightT *costList_d, *newCostList_d, *weightList_h, *weightList_d, *h_distance;
+    uint64_t numblocks_update, numthreads, numblocks_kernel;
+    double avg_milliseconds;
+    float milliseconds;
+    uint32_t one, iter;
+    WeightT offset = 0;
+    WeightT zero;
+    cudaEvent_t start, end;
+    int type = 0;
+
+    h_distance = (WeightT *) malloc(sizeof(WeightT)*numVertex);
+    size_t edge_size = numEdges*sizeof(unsigned int);
+    size_t vertex_size = (numVertex + 1)*sizeof(uint64_t);
+    // int mem = 0;
+    switch (mem) {
+        case 0:
+            
+            // weightList_h = (WeightT*)malloc(weight_size);
+            
+            gpuErrorcheck(cudaMalloc((void**)&d_edgeList, edge_size));
+            // checkCudaErrors(cudaMalloc((void**)&weightList_d, weight_size));
+
+            // for (uint64_t i = 0; i < weight_count; i++)
+            //     weightList_h[i] += offset;
+
+            break;
+        case 1:
+            gpuErrorcheck(cudaMallocManaged((void**)&d_edgeList, edge_size));
+            // checkCudaErrors(cudaMallocManaged((void**)&weightList_d, weight_size));
+            memcpy(d_edgeList, edgeList, edge_size);
+            // for (uint64_t i = 0; i < weight_count; i++)
+            //     weightList_d[i] += offset;
+
+            gpuErrorcheck(cudaMemAdvise(d_edgeList, edge_size, cudaMemAdviseSetReadMostly, 0));
+            // checkCudaErrors(cudaMemAdvise(weightList_d, weight_size, cudaMemAdviseSetReadMostly, 0));
+            break;
+        case 2:
+            gpuErrorcheck(cudaMallocManaged((void**)&d_edgeList, edge_size));
+            // checkCudaErrors(cudaMallocManaged((void**)&weightList_d, weight_size));
+            memcpy(d_edgeList, edgeList, edge_size);
+
+            // for (uint64_t i = 0; i < weight_count; i++)
+            //     weightList_d[i] += offset;
+            auto start = std::chrono::steady_clock::now();                
+            // gpuErrorcheck(cudaMemAdvise(d_edgeList, edge_size, cudaMemAdviseSetAccessedBy, 0));
+            auto end = std::chrono::steady_clock::now();
+            long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+            printf("Elapsed time for setAccessedBy in milliseconds : %li ms.\n\n", duration);
+            // gpuErrorcheck(cudaMemAdvise(weightList_d, weight_size, cudaMemAdviseSetAccessedBy, device));
+            break;
+    }
+
+
+    // Allocate memory for GPU
+    gpuErrorcheck(cudaMalloc((void**)&d_vertexList, vertex_size));
+    gpuErrorcheck(cudaMalloc((void**)&label_d, numVertex * sizeof(bool)));
+    gpuErrorcheck(cudaMalloc((void**)&changed_d, sizeof(bool)));
+    gpuErrorcheck(cudaMalloc((void**)&costList_d, numVertex * sizeof(WeightT)));
+    gpuErrorcheck(cudaMalloc((void**)&newCostList_d, numVertex * sizeof(WeightT)));
+
+    if(representation){
+        gpuErrorcheck(cudaMalloc((void**)&d_new_vertexList, sizeof(unsigned int)*new_size));
+        gpuErrorcheck(cudaMalloc((void**)&d_new_offset, sizeof(unsigned int)*(new_size+1)));
+        gpuErrorcheck(cudaMemcpy(d_new_vertexList, new_vertex_list, sizeof(unsigned int)*new_size, cudaMemcpyHostToDevice));
+        gpuErrorcheck(cudaMemcpy(d_new_offset, new_offset, sizeof(unsigned int)*(new_size+1), cudaMemcpyHostToDevice));
+    }
+
+    gpuErrorcheck(cudaEventCreate(&start));
+    gpuErrorcheck(cudaEventCreate(&end));
+
+    printf("Allocation finished\n");
+    fflush(stdout);
+
+    // Initialize values
+    gpuErrorcheck(cudaMemcpy(d_vertexList, edgeOffset, vertex_size, cudaMemcpyHostToDevice));
+
+    cudaDeviceSynchronize();
+    if (mem == 0) {
+        cudaEvent_t t_start, t_end;
+        float millisecond = 0;
+        gpuErrorcheck(cudaEventCreate(&t_start));
+        gpuErrorcheck(cudaEventCreate(&t_end));
+        auto start = std::chrono::steady_clock::now(); 
+        
+        gpuErrorcheck(cudaEventRecord(t_start, (cudaStream_t) 1));
+        gpuErrorcheck(cudaMemcpy(d_edgeList, edgeList, edge_size, cudaMemcpyHostToDevice));
+        
+        gpuErrorcheck(cudaEventRecord(t_end, (cudaStream_t) 1));
+        gpuErrorcheck(cudaEventSynchronize(t_end));
+        gpuErrorcheck(cudaEventElapsedTime(&milliseconds, t_start, t_end));
+        auto end = std::chrono::steady_clock::now();
+        long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        printf("Elapsed time %*f ms\n", 12, milliseconds);
+        printf("Elapsed time for Edge list direct transfer in milliseconds : %li ms.\n", duration);
+        
+        printf("transferred amount: %f GB\n", (double) edge_size/(1024*1024*1024llu));
+        // checkCudaErrors(cudaMemcpy(weightList_d, weightList_h, weight_size, cudaMemcpyHostToDevice));
+    }
+
+    numthreads = BLOCK_SIZE;
+    uint64_t numblocks_kernel_new;
+
+    switch (type) {
+        case 0:
+            numblocks_kernel = ((numVertex * WARP_SIZE + numthreads) / numthreads);
+            numblocks_kernel_new = ((new_size * WARP_SIZE + numthreads) / numthreads);
+            break;
+        case 1:
+            numblocks_kernel = ((numVertex * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
+            numblocks_kernel_new = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
+            break;
+        default:
+            fprintf(stderr, "Invalid type\n");
+            exit(1);
+            break;
+    }
+
+    numblocks_update = ((numVertex + numthreads) / numthreads);
+
+    dim3 blockDim_kernel(BLOCK_SIZE, (numblocks_kernel+BLOCK_SIZE)/BLOCK_SIZE);
+    dim3 blockDim_kernel_new(BLOCK_SIZE, (numblocks_kernel_new+BLOCK_SIZE)/BLOCK_SIZE);
+    dim3 blockDim_update(BLOCK_SIZE, (numblocks_update+BLOCK_SIZE)/BLOCK_SIZE);
+
+
+
+    avg_milliseconds = 0.0f;
+
+    printf("Initialization done\n");
+    fflush(stdout);
+
+    // Set root
+    // for (int i = 0; i < num_run; i++) {
+        zero = 0;
+        one = 1;
+        gpuErrorcheck(cudaMemset(costList_d, 0xFF, numVertex * sizeof(WeightT)));
+        gpuErrorcheck(cudaMemset(newCostList_d, 0xFF, numVertex * sizeof(WeightT)));
+        gpuErrorcheck(cudaMemset(label_d, 0x0, numVertex * sizeof(bool)));
+        gpuErrorcheck(cudaMemcpy(&label_d[source], &one, sizeof(bool), cudaMemcpyHostToDevice));
+        gpuErrorcheck(cudaMemcpy(&costList_d[source], &zero, sizeof(WeightT), cudaMemcpyHostToDevice));
+        gpuErrorcheck(cudaMemcpy(&newCostList_d[source], &zero, sizeof(WeightT), cudaMemcpyHostToDevice));
+
+        iter = 0;
+
+        gpuErrorcheck(cudaEventRecord(start, (cudaStream_t) 1));
+
+        // Run SSSP
+        do {
+            changed_h = false;
+            gpuErrorcheck(cudaMemcpy(changed_d, &changed_h, sizeof(bool), cudaMemcpyHostToDevice));
+
+            switch (representation) {
+                case 0:
+                    kernel_coalesce<<<blockDim_kernel, numthreads>>>
+                    (label_d, costList_d, newCostList_d, numVertex, d_vertexList, d_edgeList, weightList_d);
+                    break;
+                case 1:
+                    kernel_coalesce_new_repr<<<new_size/512+1, 512>>>
+                    (label_d, costList_d, newCostList_d, new_size, d_new_offset, d_new_vertexList, d_edgeList, weightList_d);
+                    // kernel_coalesce_chunk<<<blockDim_kernel, numthreads>>>(label_d, costList_d, newCostList_d, vertex_count, vertexList_d, edgeList_d, weightList_d);
+                    break;
+                default:
+                    fprintf(stderr, "Invalid type\n");
+                    exit(1);
+                    break;
+            }
+            ret = cudaDeviceSynchronize();
+            update<<<blockDim_update, numthreads>>>(label_d, costList_d, newCostList_d, numVertex, changed_d);
+            ret = cudaDeviceSynchronize();
+            printf("ret: %d cudaGetLastError: %d\n", ret, cudaGetLastError());
+
+            iter++;
+
+            gpuErrorcheck(cudaMemcpy(&changed_h, changed_d, sizeof(bool), cudaMemcpyDeviceToHost));
+        } while(changed_h);
+
+        gpuErrorcheck(cudaEventRecord(end, (cudaStream_t) 1));
+        gpuErrorcheck(cudaEventSynchronize(end));
+        gpuErrorcheck(cudaEventElapsedTime(&milliseconds, start, end));
+
+        printf("Elapsed time %*f ms iter: %d\n", 12, milliseconds, iter);
+        
+        gpuErrorcheck(cudaMemcpy(h_distance, newCostList_d, sizeof(WeightT)*numVertex, cudaMemcpyDeviceToHost));
+        
+        gpuErrorcheck(cudaFree(d_edgeList));
+        gpuErrorcheck(cudaFree(d_vertexList));
+        gpuErrorcheck(cudaFree(label_d));
+        gpuErrorcheck(cudaFree(changed_d));
+        gpuErrorcheck(cudaFree(costList_d));
+        gpuErrorcheck(cudaFree(newCostList_d));
+    
+    return h_distance;
+}
+
+void runBaseline(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset,
+                 uint64_t *edgeList, unsigned int *&h_distance){
+    cudaError_t ret;
+    unsigned int *h_dist, *d_dist;
+    uint64_t *d_edgeOffset, *d_edgeList;
+    bool *finished, h_finished = false;
+    h_dist = new uint[numVertex];
+    cudaEvent_t start, end;
+    float milliseconds;
+    int iter = 0;
+
+    gpuErrorcheck(cudaEventCreate(&start));
+    gpuErrorcheck(cudaEventCreate(&end));
+
+    gpuErrorcheck(cudaMalloc((void **) &d_dist, numVertex*sizeof(unsigned int)));
+    gpuErrorcheck(cudaMemset(d_dist, 100000, numVertex*sizeof(unsigned int)));
+    gpuErrorcheck(cudaMemset(&d_dist[source], 0, sizeof(unsigned int)));
+    
+    
+    gpuErrorcheck(cudaMalloc((void **) &finished, sizeof(bool)));
+    
+
+    gpuErrorcheck(cudaMalloc((void **) &d_edgeOffset, (numVertex + 1)*sizeof(uint64_t)));
+    gpuErrorcheck(cudaMemcpy(d_edgeOffset, edgeOffset, (numVertex + 1)*sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+    gpuErrorcheck(cudaMalloc((void **) &d_edgeList, numEdges*sizeof(uint64_t)));
+    gpuErrorcheck(cudaMemcpy(d_edgeList, edgeList, numEdges*sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+
+    ret = cudaDeviceSynchronize();
+    printf("ret: %d cudaGetLastError: %d\n", ret, cudaGetLastError());
+    gpuErrorcheck(cudaEventRecord(start, (cudaStream_t) 1));
+
+    do{
+        h_finished = false;
+        gpuErrorcheck(cudaMemcpy(finished, &h_finished, sizeof(bool), cudaMemcpyHostToDevice));
+
+        kernel_baseline<<< numVertex/1024 + 1, 1024 >>>(numEdges, numVertex, d_edgeOffset, d_edgeList,
+                                d_dist, finished);
+
+        ret = cudaDeviceSynchronize();
+        // printf("ret: %d cudaGetLastError: %d \n", ret, cudaGetLastError());
+
+        gpuErrorcheck(cudaMemcpy(&h_finished, finished, sizeof(bool), cudaMemcpyDeviceToHost));
+        iter++;            
+    }
+    while (h_finished);
+
+    gpuErrorcheck(cudaEventRecord(end, (cudaStream_t) 1));
+    gpuErrorcheck(cudaEventSynchronize(end));
+    gpuErrorcheck(cudaEventElapsedTime(&milliseconds, start, end));
+
+    printf("Baseline kernel elapsed time %*f ms iter: %d\n", 12, milliseconds, iter);  
+    
+    gpuErrorcheck(cudaMemcpy(&h_distance, d_dist, sizeof(unsigned int), cudaMemcpyDeviceToHost));   
+}
+
+__device__ uint64_t edgeCounter = 0;
+
+WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset,
+                 unsigned int *edgeList, int representation, size_t new_size, unsigned int *new_offset, 
+                unsigned int *new_vertex_list, int u_case){
+    cudaError_t ret;
+    unsigned int *h_dist, *d_dist, *vertexList_uint, *d_vertexList, *d_new_offset, *d_new_vertexList;
+    unsigned int *d_edgeList;
+    bool *finished, *label_d, *changed_d, changed_h;
+    WeightT *costList_d, *newCostList_d, *weightList_h, *weightList_d, *h_distance;
+    uint64_t numblocks_update, numthreads, numblocks_kernel;
+    double avg_milliseconds;
+    float milliseconds;
+    uint32_t one, iter;
+    WeightT offset = 0;
+    WeightT zero;
+    cudaEvent_t start, end;
+
+    vertexList_uint = new uint[numVertex + 1];
+    h_distance = new WeightT[numVertex];
+    size_t edge_size = numEdges*sizeof(unsigned int);
+    size_t vertex_size = (numVertex + 1)*sizeof(unsigned int);
+
+    for (size_t i = 0; i < numVertex+1; i++)
+    {
+        vertexList_uint[i] = edgeOffset[i];
+    }
+    
+
+    rdma_buf<unsigned int> *rdma_edgeList;
+    gpuErrorcheck(cudaMallocManaged((void **) &rdma_edgeList, sizeof(rdma_buf<unsigned int>)));
+
+    rdma_edgeList->start(numEdges *sizeof(unsigned int));
+
+    for(size_t i = 0; i < numEdges; i++){
+        rdma_edgeList->local_buffer[i] = edgeList[i];
+    }
+
+    // rdma_edgeList->memcpyHostToServer();
+    int mem = 0;
+    switch (mem) {
+        case 0:
+            
+            // weightList_h = (WeightT*)malloc(weight_size);
+            
+            // gpuErrorcheck(cudaMalloc((void**)&d_edgeList, edge_size));
+            // checkCudaErrors(cudaMalloc((void**)&weightList_d, weight_size));
+
+            // for (uint64_t i = 0; i < weight_count; i++)
+            //     weightList_h[i] += offset;
+
+            break;
+        case 1:
+            gpuErrorcheck(cudaMallocManaged((void**)&d_edgeList, edge_size));
+            // checkCudaErrors(cudaMallocManaged((void**)&weightList_d, weight_size));
+            memcpy(d_edgeList, edgeList, edge_size);
+            // for (uint64_t i = 0; i < weight_count; i++)
+            //     weightList_d[i] += offset;
+
+            gpuErrorcheck(cudaMemAdvise(d_edgeList, edge_size, cudaMemAdviseSetReadMostly, 0));
+            // checkCudaErrors(cudaMemAdvise(weightList_d, weight_size, cudaMemAdviseSetReadMostly, 0));
+            break;
+        case 2:
+            printf("Allocating uvm memory for edgelist\n");
+            gpuErrorcheck(cudaMallocManaged((void**)&d_edgeList, edge_size));
+            printf("Copying uvm memory for edgelist\n");
+            // checkCudaErrors(cudaMallocManaged((void**)&weightList_d, weight_size));
+            memcpy(d_edgeList, edgeList, edge_size);
+            printf("Copying done uvm memory for edgelist");
+            // for (uint64_t i = 0; i < weight_count; i++)
+            //     weightList_d[i] += offset;
+
+            gpuErrorcheck(cudaMemAdvise(d_edgeList, edge_size, cudaMemAdviseSetAccessedBy, 0));
+            // gpuErrorcheck(cudaMemAdvise(weightList_d, weight_size, cudaMemAdviseSetAccessedBy, device));
+            break;
+    }
+
+    // Allocate memory for GPU
+    gpuErrorcheck(cudaMalloc((void**)&d_vertexList, vertex_size));
+    gpuErrorcheck(cudaMalloc((void**)&label_d, numVertex * sizeof(bool)));
+    gpuErrorcheck(cudaMalloc((void**)&changed_d, sizeof(bool)));
+    gpuErrorcheck(cudaMalloc((void**)&costList_d, numVertex * sizeof(WeightT)));
+    gpuErrorcheck(cudaMalloc((void**)&newCostList_d, numVertex * sizeof(WeightT)));
+
+    if(representation){
+        gpuErrorcheck(cudaMalloc((void**)&d_new_vertexList, sizeof(unsigned int)*new_size));
+        gpuErrorcheck(cudaMalloc((void**)&d_new_offset, sizeof(unsigned int)*(new_size+1)));
+        gpuErrorcheck(cudaMemcpy(d_new_vertexList, new_vertex_list, sizeof(unsigned int)*new_size, cudaMemcpyHostToDevice));
+        gpuErrorcheck(cudaMemcpy(d_new_offset, new_offset, sizeof(unsigned int)*(new_size+1), cudaMemcpyHostToDevice));
+    }
+
+    gpuErrorcheck(cudaEventCreate(&start));
+    gpuErrorcheck(cudaEventCreate(&end));
+
+    printf("Allocation finished\n");
+    fflush(stdout);
+
+    // Initialize values
+    gpuErrorcheck(cudaMemcpy(d_vertexList, vertexList_uint, vertex_size, cudaMemcpyHostToDevice));
+
+    if (mem == 0) {
+        // gpuErrorcheck(cudaMemcpy(d_edgeList, edgeList, edge_size, cudaMemcpyHostToDevice));
+        // checkCudaErrors(cudaMemcpy(weightList_d, weightList_h, weight_size, cudaMemcpyHostToDevice));
+    }
+
+    numthreads = BLOCK_SIZE/2;
+
+    int type = 0;
+    switch (type) {
+        case 0:
+            numblocks_kernel = ((numVertex * WARP_SIZE + numthreads) / numthreads);
+            break;
+        case 1:
+            numblocks_kernel = ((numVertex * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
+            break;
+        default:
+            fprintf(stderr, "Invalid type\n");
+            exit(1);
+            break;
+    }
+
+    numblocks_update = ((numVertex + numthreads) / numthreads);
+
+    dim3 blockDim_kernel(numthreads, (numblocks_kernel+numthreads)/numthreads);
+    // dim3 blockDim_kernel(BLOCK_SIZE, (numblocks_kernel+BLOCK_SIZE)/BLOCK_SIZE);
+    numthreads = BLOCK_SIZE;
+    numblocks_update = ((numVertex + numthreads) / numthreads);
+    dim3 blockDim_update(BLOCK_SIZE, (numblocks_update+BLOCK_SIZE)/BLOCK_SIZE);
+
+    avg_milliseconds = 0.0f;
+
+    printf("Initialization done\n");
+    fflush(stdout);
+
+    // Set root
+    // for (int i = 0; i < num_run; i++) {
+        zero = 0;
+        one = 1;
+        gpuErrorcheck(cudaMemset(costList_d, 0xFF, numVertex * sizeof(WeightT)));
+        gpuErrorcheck(cudaMemset(newCostList_d, 0xFF, numVertex * sizeof(WeightT)));
+        gpuErrorcheck(cudaMemset(label_d, 0x0, numVertex * sizeof(bool)));
+        gpuErrorcheck(cudaMemcpy(&label_d[source], &one, sizeof(bool), cudaMemcpyHostToDevice));
+        gpuErrorcheck(cudaMemcpy(&costList_d[source], &zero, sizeof(WeightT), cudaMemcpyHostToDevice));
+        gpuErrorcheck(cudaMemcpy(&newCostList_d[source], &zero, sizeof(WeightT), cudaMemcpyHostToDevice));
+
+        iter = 0;
+        ret = cudaDeviceSynchronize();
+        gpuErrorcheck(cudaEventRecord(start, (cudaStream_t) 1));
+
+        // Run SSSP
+        do {
+            changed_h = false;
+            gpuErrorcheck(cudaMemcpy(changed_d, &changed_h, sizeof(bool), cudaMemcpyHostToDevice));
+            auto start = std::chrono::steady_clock::now();
+    
+            switch (u_case) {
+                case 0:{
+                    kernel_coalesce_rdma<<<blockDim_kernel, numthreads/2>>>
+                    (label_d, costList_d, newCostList_d, numVertex, d_vertexList, rdma_edgeList, weightList_d);
+                    ret = cudaDeviceSynchronize();
+                    update<<<blockDim_update, numthreads>>>(label_d, costList_d, newCostList_d, numVertex, changed_d);
+                    break;
+                }
+                
+
+                case 1:{
+                    printf("new representation\n");
+                    size_t n_pages = new_size*sizeof(unsigned int)/(4*1024);
+                    if(representation)
+                        kernel_coalesce_new_repr_rdma<<<(n_pages*32)/512+1, 512>>>
+                        (label_d, n_pages, costList_d, newCostList_d, new_size, d_new_offset, d_new_vertexList, rdma_edgeList, weightList_d);
+                    else {
+                        printf("representation should 1!\n");
+                        exit(-1);
+                    }
+                    ret = cudaDeviceSynchronize();
+                    update<<<blockDim_update, numthreads>>>(label_d, costList_d, newCostList_d, numVertex, changed_d);
+                    break;
+                }
+                case 2:{
+                    check_edgeList<<< numEdges/512+1, 512 >>>
+                    (rdma_edgeList, d_edgeList, numEdges);
+                    ret = cudaDeviceSynchronize();
+                }
+                
+                case 3:{
+                    size_t n_pages = numEdges*sizeof(uint64_t)/(64*1024);
+
+                        // kernel_coalesce_rdma_opt<<< 2048*16, 512 /*blockDim_kernel, numthreads*/ >>>
+                        // (label_d, n_pages, costList_d, newCostList_d, numVertex, d_vertexList, rdma_edgeList, weightList_d);
+                    
+                    ret = cudaDeviceSynchronize();
+                    update<<<blockDim_update, numthreads>>>(label_d, costList_d, newCostList_d, numVertex, changed_d);
+                    break;
+                }
+                case 4:{
+                    size_t n_pages = numVertex*sizeof(unsigned int)/(4*1024);
+
+                        kernel_coalesce_rdma_opt_1<<< 512*32, 512 /*blockDim_kernel, numthreads*/ >>>
+                        (label_d, n_pages, numVertex, numEdges, 0, rdma_edgeList, d_vertexList, costList_d, newCostList_d, weightList_d);
+                        
+                    
+                    ret = cudaDeviceSynchronize();
+                    update<<<blockDim_update, numthreads>>>(label_d, costList_d, newCostList_d, numVertex, changed_d);
+                    ret = cudaDeviceSynchronize();
+                    break;
+                }
+                case 5:{
+                    size_t n_pages = numEdges*sizeof(uint64_t)/(64*1024);
+
+                    // kernel_coalesce_rdma_opt_1(bool *label, size_t n, size_t numVertices, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+                    // const WeightT *costList, WeightT *newCostList, unsigned int *d_distance, unsigned int *changed)
+
+                        kernel_coalesce_rdma_opt_warp<<< (numVertex*32)/512 + 1, 512 /*blockDim_kernel, numthreads*/ >>>
+                        (label_d, numVertex, numVertex, 0, rdma_edgeList, d_vertexList, costList_d, newCostList_d, weightList_d);
+                    
+                    ret = cudaDeviceSynchronize();
+                    update<<<blockDim_update, numthreads>>>(label_d, costList_d, newCostList_d, numVertex, changed_d);
+                    ret = cudaDeviceSynchronize();
+                    break;
+                }
+                default:
+                    fprintf(stderr, "Invalid type\n");
+                    exit(1);
+                    break;
+            }
+            auto end = std::chrono::steady_clock::now();
+            long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+            print_retires<<<1,1>>>();
+            printf("ret: %d cudaGetLastError: %d\n", ret, cudaGetLastError());
+            printf("Elapsed time in milliseconds : %li ms for iteration: %d\n\n", duration, iter);
+            // printf("ret: %d cudaGetLastError: %d\n", ret, cudaGetLastError());
+            
+            // ret = cudaDeviceSynchronize();
+            
+
+            iter++;
+
+            gpuErrorcheck(cudaMemcpy(&changed_h, changed_d, sizeof(bool), cudaMemcpyDeviceToHost));
+        } while(changed_h);
+
+        gpuErrorcheck(cudaEventRecord(end, (cudaStream_t) 1));
+        gpuErrorcheck(cudaEventSynchronize(start));
+        gpuErrorcheck(cudaEventSynchronize(end));
+        gpuErrorcheck(cudaEventElapsedTime(&milliseconds, start, end));
+
+        gpuErrorcheck(cudaMemcpy(h_distance, newCostList_d, sizeof(WeightT)*numVertex, cudaMemcpyDeviceToHost));
+
+        printf("RDMA Elapsed time %*f ms iter: %d\n", 12, milliseconds, iter);
+
+        free(vertexList_uint);
+        gpuErrorcheck(cudaFree(d_vertexList));
+        gpuErrorcheck(cudaFree(label_d));
+        gpuErrorcheck(cudaFree(changed_d));
+        gpuErrorcheck(cudaFree(costList_d));
+        gpuErrorcheck(cudaFree(newCostList_d));
+    return h_distance;
+}
+
+
 // Main program
 int main(int argc, char **argv)
 {   
@@ -1019,96 +1646,770 @@ int main(int argc, char **argv)
         usage(argv[0]);
     
     init_gpu(0);
-    printf("Function: %s line number: %d 1024MB: %d bytes REQUEST_SIZE: %d\n",__func__, __LINE__, MB(1024), REQUEST_SIZE);
-    int num_msg = (unsigned long) atoi(argv[4]);
-    int mesg_size = (unsigned long) atoi(argv[5]);
-    int num_bufs = (unsigned long) atoi(argv[6]);
 
+    bool rdma_flag = false;
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
-    struct post_content post_cont, *d_post, host_post;
-    struct poll_content poll_cont, *d_poll, host_poll;
-    struct post_content2 post_cont2, *d_post2;
-    struct host_keys keys;
+    if(rdma_flag){
+        
+        printf("Function: %s line number: %d 1024MB: %d bytes REQUEST_SIZE: %d\n",__func__, __LINE__, MB(1024), REQUEST_SIZE);
+        int num_msg = (unsigned long) atoi(argv[4]);
+        int mesg_size = (unsigned long) atoi(argv[5]);
+        int num_bufs = (unsigned long) atoi(argv[6]);
 
-    int num_iteration = num_msg;
-    s_ctx->n_bufs = num_bufs;
-    s_ctx->gpu_buf_size = 12*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        
+        struct post_content post_cont, *d_post, host_post;
+        struct poll_content poll_cont, *d_poll, host_poll;
+        struct post_content2 post_cont2, *d_post2;
+        struct host_keys keys;
 
-    // remote connection:
-    int ret = connect(argv[2], s_ctx);
+        int num_iteration = num_msg;
+        s_ctx->n_bufs = num_bufs;
+        s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
 
-    // // local connect
-    // char *mlx_name = "mlx5_0";
-    // int ret = local_connect(mlx_name, s_ctx);
+        // // remote connection:
+        // int ret = connect(argv[2], s_ctx);
 
-    ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont, &post_cont2, \
-                                    &host_post, &host_poll, &keys);
-    if(ret == -1) {
-        printf("Post and poll contect creation failed\n");    
-        exit(-1);
+        // local connect
+        char *mlx_name = "mlx5_0";
+        int ret = local_connect(mlx_name, s_ctx);
+
+        ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont, &post_cont2, \
+                                        &host_post, &host_poll, &keys);
+        if(ret == -1) {
+            printf("Post and poll contect creation failed\n");    
+            exit(-1);
+        }
+
+        printf("alloc synDev ret: %d\n", cudaDeviceSynchronize());
+        alloc_global_cont(&post_cont, &poll_cont, &post_cont2);
+        // if(cudaSuccess != ){    
+        printf("alloc synDev ret1: %d\n", cudaDeviceSynchronize());
+            // return -1;
+        // }
+
+        cudaError_t ret1 = cudaDeviceSynchronize();
+        printf("ret: %d\n", ret1);
+        if(cudaSuccess != ret1){    
+            return -1;
+        }
+
+        printf("function: %s line: %d\n", __FILE__, __LINE__);
+        alloc_global_host_content(host_post, host_poll, keys);
+        printf("function: %s line: %d\n", __FILE__, __LINE__);
+
+        ret1 = cudaDeviceSynchronize();
+        printf("ret: %d\n", ret1);
+        if(cudaSuccess != ret1){    
+            return -1;
+        }
     }
 
-    printf("alloc synDev ret: %d\n", cudaDeviceSynchronize());
-    alloc_global_cont(&post_cont, &poll_cont, &post_cont2);
-    // if(cudaSuccess != ){    
-    printf("alloc synDev ret1: %d\n", cudaDeviceSynchronize());
-        // return -1;
-    // }
+    Graph_x G;
+    Graph_m G_m;
 
-    cudaError_t ret1 = cudaDeviceSynchronize();
-    printf("ret: %d\n", ret1);
-    if(cudaSuccess != ret1){    
-        return -1;
-    }
-
-    printf("function: %s line: %d\n", __FILE__, __LINE__);
-    alloc_global_host_content(host_post, host_poll, keys);
-    printf("function: %s line: %d\n", __FILE__, __LINE__);
-
-    ret1 = cudaDeviceSynchronize();
-    printf("ret: %d\n", ret1);
-    if(cudaSuccess != ret1){    
-        return -1;
-    }
-
-    // // rdma_buf<int> buf((uint64_t) s_ctx->gpu_buffer, (uint64_t) s_ctx->server_mr.addr, 100);
-    // rdma_buf<int> *buf1, *buf2, *buf3;
-    // cudaMallocManaged(&buf1, sizeof(rdma_buf<int>));
-    // cudaMallocManaged(&buf2, sizeof(rdma_buf<int>));
-    // cudaMallocManaged(&buf3, sizeof(rdma_buf<int>));
-   
-    // // printf("s_ctx->gpu_buffer: %p, buf1->size: %d, Address_Offset: %d\n", s_ctx->gpu_buffer, buf1->size, Address_Offset);
+    unsigned int *tmp_edgesOffset, *tmp_edgesSize, *tmp_adjacencyList;
     
-    // // buf1->start(N*sizeof(int));
-    // // printf("s_ctx->gpu_buffer: %p, buf1->size: %d, Address_Offset: %d\n", s_ctx->gpu_buffer, buf1->size, Address_Offset);
-    // // buf2->start(N*sizeof(int));
+    // readGraph(G, argc, argv);
+    readfile(G, G_m, argc, argv, tmp_edgesOffset, tmp_edgesSize, tmp_adjacencyList);
+
     
-    // printf("s_ctx->gpu_buffer: %p, buf1->size: %d, Address_Offset: %d\n", s_ctx->gpu_buffer, buf1->size, Address_Offset);
     
-    ArgumentParser args(argc, argv);
+
+    // ArgumentParser args(argc, argv);
     // cout << "Input file : " << args.inputFilePath << endl;
-    Graph graph(args.inputFilePath);
+    Graph graph(argv[8]);
+
+    // read file here
+
     //  Graph graph("datasets/simpleGraph.txt");
     printf("main starts...\n");
-    graph.readGraph();
+    // graph.readGraph();
     
-    int sourceNode;
+    unsigned int sourceNode = atoi(argv[7]);
 
-    if (args.hasSourceNode) {
-        sourceNode = args.sourceNode;
-    } else {
-        // Use graph default source 
-        sourceNode = graph.defaultSource;
+    // if (args.hasSourceNode) {
+    //     sourceNode = args.sourceNode;
+    // } else {
+    //     // Use graph default source 
+    //     sourceNode = graph.defaultSource;
+    // }
+
+    // uint *dist_gpu = sssp_GPU(&graph, sourceNode);
+    printf("line: %d\n", __LINE__);
+    printf("num edges: %llu num vertices: %llu\n", G.numEdges, G.numVertices);
+    uint64_t *u_edgeoffset;
+    unsigned int *u_edgeList;
+    unsigned int *res_distance;
+    res_distance = new uint[G.numVertices];
+    u_edgeList = (uint *) malloc(sizeof(uint)*G.numEdges); // new uint64_t[G.numEdges];
+    // gpuErrorcheck(cudaMallocHost(&u_edgeList, sizeof(uint)*G.numEdges));
+    u_edgeoffset = new uint64_t[G.numVertices + 1];
+    printf("line: %d\n", __LINE__);
+    for (size_t i = 0; i < G.numEdges; i++)
+    {
+        u_edgeList[i] = G.adjacencyList_r[i];
+    }
+    printf("line: %d\n", __LINE__);
+    for (size_t i = 0; i < G.numVertices+1; i++)
+    {
+        u_edgeoffset[i] = G.edgesOffset_r[i];
+    }
+    printf("line: %d\n", __LINE__);
+    u_edgeoffset[G.numVertices] = G.numEdges;
+    free(G.edgesOffset_r);
+    free(G.adjacencyList_r);
+
+    uint64_t min = 0, max = u_edgeoffset[1] - u_edgeoffset[0], max_node;
+    double avg = 0;
+    
+    for (size_t i = 0; i < G.numVertices; i++)
+    {
+        uint64_t degree = u_edgeoffset[i+1] - u_edgeoffset[i];
+        
+        if(max < degree) {
+            max = degree;
+            max_node = i;
+        }
+        if(degree > 128){
+            min++;
+            avg += degree;
+            // printf("degree: %llu\n", degree);
+        }
+        // if(min > degree && degree != 0) min = degree;
+    }
+    avg = avg / min;
+    printf("avg: %f min: %llu max: %llu, node: %llu\n", avg, min, max, max_node);
+    auto start = std::chrono::steady_clock::now();                
+    size_t new_size = 0, treshold = 64;
+    for (size_t i = 0; i < G.numVertices; i++)
+    {
+        uint64_t degree = u_edgeoffset[i+1] - u_edgeoffset[i];
+        
+        if(degree <= treshold){
+            new_size++;
+        }
+        else{
+            size_t count = degree/treshold + 1;
+            new_size += count;
+        }
+    }
+    unsigned int *new_vertex_list, *new_offset;
+    size_t index_zero = 0;
+    new_vertex_list = new uint[new_size];
+    new_offset = new uint[new_size+1];
+    new_offset[0] = 0;
+    for (size_t i = 0; i < G.numVertices; i++)
+    {
+        uint64_t degree = u_edgeoffset[i+1] - u_edgeoffset[i];
+        
+        if(degree <= treshold){
+            new_vertex_list[index_zero] = i;
+            new_offset[index_zero+1] = u_edgeoffset[i+1];
+            index_zero++;
+        }
+        else{
+            size_t count = degree/treshold + 1;
+            size_t total = degree;
+            for (size_t k = 0; k < count; k++)
+            {
+                new_vertex_list[index_zero] = i+k;
+                if(total > treshold) new_offset[index_zero+1] = new_offset[index_zero] + treshold;
+                else new_offset[index_zero+1] = u_edgeoffset[i+1];
+                index_zero++;
+                total = total - treshold;
+            }
+        }
+    }
+    auto end = std::chrono::steady_clock::now();
+    long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    printf("Elapsed time for preprocessing in milliseconds : %li ms.\n\n", duration);
+    
+    printf("number of threads needed for my representation: %llu\n", new_size);
+
+    WeightT *rdma_result;
+    if(rdma_flag){
+        printf("RDMA Cuda Starts here..\n");
+        rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
+                                    new_offset, new_vertex_list, 1);
+        cudaFree(s_ctx->gpu_buffer);
     }
 
-    uint *dist_gpu = sssp_GPU(&graph, sourceNode);
-    args.runOnCPU = true;
-    if (args.runOnCPU) {
-        uint *dist_cpu = sssp_CPU(&graph, sourceNode);
-        compareResult(dist_cpu, dist_gpu, graph.numNodes);
-    }
+    printf("Emogi Cuda Starts here..\n");
+    // unsigned int *emogi_result = (unsigned int *) malloc(sizeof(unsigned int)*G.numVertices);
+    // runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset,
+                // unsigned int *edgeList, int representation, size_t new_size, unsigned int *new_offset, 
+                // unsigned int *new_vertex_list
+    int mem = 0;
+    WeightT *emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, mem, new_size,
+                                    new_offset, new_vertex_list);
+    rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list);
+
+    
+    printf("Cuda Starts ended..\n");
+
+    printf("Comparing Emogi with RDMA\n");
+
+    // if(rdma_flag)
+        compareResult(emogi_result, rdma_result, G.numVertices);
+
+    // // args.runOnCPU = true;
+    // if (true) {
+    //     uint *dist_cpu = sssp_CPU(sourceNode, G.numVertices, G.numEdges, u_edgeoffset, u_edgeList);
+    //     compareResult(dist_cpu, res_distance, graph.numNodes);
+    // }
      
     
 	return 0;
 }
+
+__global__
+void check_edgeList(rdma_buf<unsigned int> *a, unsigned int *b, size_t size){
+    size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(tid == 0) printf("checking edgelist correctness\n");
+    if(tid < size){
+        unsigned int a_here = (*a)[tid];
+        // __nanosleep(100000);
+        if(a_here != b[tid]){
+            printf("tid: %llu, a_here: %d b[tid]: %d\n", tid, a_here, b[tid]);
+        } 
+    }
+}
+
+__global__ 
+void update(bool *label, unsigned int *costList, unsigned int *newCostList, const uint32_t vertex_count, bool *changed) {
+	uint64_t tid = blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (tid < vertex_count) {
+        if (newCostList[tid] < costList[tid]) {
+            costList[tid] = newCostList[tid];
+            label[tid] = true;
+            *changed = true;
+        }
+    }
+}
+
+
+__global__ void kernel_baseline(uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset, uint64_t * edgeList,
+                                uint *dist, bool *changed) {
+    uint64_t threadId = blockDim.x * blockIdx.x + threadIdx.x;
+    // if(threadId == 0) printf("hello from thread 0\n");
+
+    if (threadId < numVertex){
+
+        for (uint64_t nodeId = edgeOffset[threadId]; nodeId < edgeOffset[threadId+1]; nodeId++) {
+            uint64_t source = threadId;
+            uint64_t end = edgeList[nodeId]; // edgelist
+            uint weight = 1; // edgesWeight[nodeId];
+            
+            if (dist[source] + weight < dist[end]) {
+                atomicMin(&dist[end], dist[source] + weight);
+                // dist[end] = dist[source] + weight;
+                // preNode[end] = source;
+                *changed = true;
+            }
+        }
+    }
+}
+
+__global__ void kernel_coalesce_new_repr(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, unsigned int *new_offset, 
+                                unsigned int *new_vertex_list, const /*EdgeT*/ unsigned int *edgeList, const WeightT *weightList) {
+    const uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;;
+    // blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    // const uint64_t warpIdx = tid >> WARP_SHIFT;
+    // const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+    uint start_vertex;
+    if(tid < new_size)
+        start_vertex = new_vertex_list[tid];
+    if (tid < new_size /*vertex_count*/ && label[start_vertex]) {
+        uint64_t start = new_offset[tid];
+        // const uint64_t shift_start = start & MEM_ALIGN;
+        uint64_t end = new_offset[tid+1];
+
+        WeightT cost = newCostList[start_vertex];
+
+        for(uint64_t i = start; i < end; i += 1) {
+            if (newCostList[start_vertex] != cost)
+                break;
+            if (newCostList[edgeList[i]] > cost + /*weightList[i]*/1 && i >= start)
+                atomicMin(&(newCostList[edgeList[i]]), cost + /*weightList[i]*/1);
+        }
+
+        label[start_vertex] = false;
+    }
+}
+
+__global__ void kernel_coalesce(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, const uint64_t *vertexList, 
+                                const /*EdgeT*/ unsigned int *edgeList, const WeightT *weightList) {
+    const uint64_t tid = blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    const uint64_t warpIdx = tid >> WARP_SHIFT;
+    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+
+    if (warpIdx < vertex_count && label[warpIdx]) {
+        uint64_t start = vertexList[warpIdx];
+        const uint64_t shift_start = start & MEM_ALIGN;
+        uint64_t end = vertexList[warpIdx+1];
+
+        WeightT cost = newCostList[warpIdx];
+
+        for(uint64_t i = shift_start + laneIdx; i < end; i += WARP_SIZE) {
+            if (newCostList[warpIdx] != cost)
+                break;
+            if (newCostList[edgeList[i]] > cost + /*weightList[i]*/1 && i >= start)
+                atomicMin(&(newCostList[edgeList[i]]), cost + /*weightList[i]*/1);
+        }
+
+        label[warpIdx] = false;
+    }
+}
+
+__global__ void kernel_coalesce_new_repr_rdma(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, unsigned int *new_offset, 
+                                unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, const WeightT *weightList) {
+
+
+    // Page size in elements (64KB / 4 bytes per unsigned int)
+    const size_t pageSize = 4*1024 / sizeof(unsigned int);
+    // Elements per warp
+    const size_t elementsPerWarp = pageSize / warpSize;
+
+    // Global thread ID
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    // if(tid == 0) printf("warpSize: %d\n", warpSize);
+    // Warp ID within the block
+    size_t warpId = tid / warpSize;
+
+    // Thread lane within the warp
+    size_t lane = threadIdx.x % warpSize;
+
+    // Determine which page this warp will process
+    size_t pageStart = warpId * pageSize;
+
+    // Ensure we don't process out-of-bounds pages
+    if (pageStart < n * pageSize) {
+        
+
+        // Process elements within the page
+        for (size_t i = 0; i < elementsPerWarp; ++i) {
+            size_t elementIdx = pageStart + lane + i * warpSize;
+            uint startVertex = new_vertex_list[elementIdx];
+            if (elementIdx < new_size && label[startVertex]) {
+                WeightT cost = newCostList[startVertex];
+
+                // Process adjacent nodes
+                // if(new_offset[elementIdx+1] - d_edgesOffset[elementIdx] >= 2*1024)
+                //     printf("elementx: %llu\n", elementIdx);
+                for(size_t j = new_offset[elementIdx]; j < new_offset[elementIdx+1]; ++j) {
+                    uint end_edge = (*edgeList)[j]; // shared_data[j - pageStart];
+                    if (newCostList[startVertex] != cost)
+                        break;
+                    if (newCostList[end_edge] > cost + 1) {
+                        atomicMin(&(newCostList[end_edge]), cost + 1);
+                    }
+                }
+
+                // Mark node as processed
+                label[startVertex] = false;
+            }
+        }
+    }
+
+
+    // const uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;;
+    // // blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    // // const uint64_t warpIdx = tid >> WARP_SHIFT;
+    // // const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+    // uint start_vertex;
+    // if(tid < new_size)
+    //     start_vertex = new_vertex_list[tid];
+    // if (tid < new_size /*vertex_count*/ && label[start_vertex]) {
+    //     uint64_t start = new_offset[tid];
+    //     const uint64_t shift_start = start & MEM_ALIGN;
+    //     uint64_t end = new_offset[tid+1];
+
+    //     WeightT cost = newCostList[start_vertex];
+
+    //     for(uint64_t i = shift_start; i < end; i += 1) {
+    //         if (newCostList[start_vertex] != cost)
+    //             break;
+    //         uint end_edge = (*edgeList)[i];
+    //         if (newCostList[end_edge] > cost + /*weightList[i]*/1 && i >= start)
+    //             atomicMin(&(newCostList[end_edge]), cost + /*weightList[i]*/1);
+    //     }
+
+    //     label[start_vertex] = false;
+    // }
+}
+
+__global__ void 
+kernel_coalesce_rdma(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count,
+                     unsigned int *vertexList, rdma_buf<unsigned int> *edgeList, const WeightT *weightList) {
+
+    const uint64_t tid = blockDim.x * 512 * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    const uint64_t warpIdx = tid >> WARP_SHIFT;
+    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+
+    if (warpIdx < vertex_count && label[warpIdx]) {
+        uint start = vertexList[warpIdx];
+        const uint64_t shift_start = start & MEM_ALIGN;
+        uint end = vertexList[warpIdx+1];
+
+        WeightT cost = newCostList[warpIdx];
+        if(end - shift_start >= 2*1024)
+            printf("elementx: %llu\n", warpIdx);
+        for(uint64_t i = shift_start + laneIdx; i < end; i += WARP_SIZE) {
+            if (newCostList[warpIdx] != cost)
+                break;
+            uint end_edge = (*edgeList)[i];
+            // __nanosleep(10000);
+            if (newCostList[end_edge] > cost + /*weightList[i]*/1 && i >= start)
+                atomicMin(&(newCostList[end_edge]), cost + /*weightList[i]*/1);
+        }
+
+        label[warpIdx] = false;
+    }
+}
+
+#define PAGE_SIZE (64 * 1024)  // 64KB page size
+#define PAGE_MASK (PAGE_SIZE - 1)
+
+// __global__ void 
+// kernel_coalesce_rdma_opt(bool *label, size_t numEdges, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count,
+//                      const uint64_t *vertexList, rdma_buf<unsigned int> *edgeList, const WeightT *weightList)
+
+__global__ void 
+kernel_coalesce_rdma_opt(bool *label, size_t numPages, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count,
+                     const uint64_t *vertexList, rdma_buf<unsigned int> *edgeList, const WeightT *weightList) {
+
+    const uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+    const uint64_t warpIdx = tid >> WARP_SHIFT;
+    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+
+    if (warpIdx < numPages && label[warpIdx]) {
+        // Calculate the page start and end for this warp
+        uint64_t start = vertexList[warpIdx];
+        uint64_t end = vertexList[warpIdx + 1];
+        uint64_t page_start = (start / PAGE_SIZE) * PAGE_SIZE;
+        uint64_t page_end = ((end + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+
+        WeightT cost = newCostList[warpIdx];
+        
+        // Process each page independently
+        for (uint64_t page = page_start; page < page_end; page += PAGE_SIZE) {
+            uint64_t page_start_index = start > page ? start : page;
+            // max(start, page);
+            uint64_t page_end_index = end < (page + PAGE_SIZE) ? end : (page + PAGE_SIZE);
+            // min(end, page + PAGE_SIZE);
+
+            for (uint64_t i = page_start_index + laneIdx; i < page_end_index; i += WARP_SIZE) {
+                if (newCostList[warpIdx] != cost)
+                    break;
+                uint end_edge = (*edgeList)[i];
+                if (newCostList[end_edge] > cost + /*weightList[i]*/1 && i >= start)
+                    atomicMin(&(newCostList[end_edge]), cost + /*weightList[i]*/1);
+            }
+        }
+
+        label[warpIdx] = false;
+    }
+}
+
+__global__
+void kernel_coalesce_rdma_opt_1(bool *label, size_t n, size_t numVertices, size_t numEdges, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, 
+                        unsigned int *d_edgesOffset, const WeightT *costList, WeightT *newCostList, unsigned int *d_distance) {
+    // extern __shared__ unsigned int shared_data[];
+     
+    // Page size in elements (64KB / 4 bytes per unsigned int)
+    const size_t pageSize = 4*1024 / sizeof(unsigned int);
+    // Elements per warp
+    const size_t elementsPerWarp = pageSize / warpSize;
+
+    // Global thread ID
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    // if(tid == 0) printf("warpSize: %d\n", warpSize);
+    // Warp ID within the block
+    size_t warpId = tid / warpSize;
+
+    // Thread lane within the warp
+    size_t lane = threadIdx.x % warpSize;
+
+    // Determine which page this warp will process
+    size_t pageStart = warpId * pageSize;
+
+    // Ensure we don't process out-of-bounds pages
+    if (pageStart < n * pageSize) {
+        // Calculate the number of elements in the current page
+        // uint64_t limit = (n*pageSize) < numEdges ? (n*pageSize) : numEdges; 
+        // size_t pageEnd = (pageStart + pageSize) < limit ? (pageStart + pageSize) : limit;
+        // min(pageStart + pageSize, n * pageSize);
+
+        // Load data into shared memory with boundary checks
+        // if (threadIdx.x < (pageEnd - pageStart)) {
+        //     /*shared_data[threadIdx.x] = */ uint k = (*d_adjacencyList)[pageStart];
+        // }
+        // __syncthreads();  // Synchronize threads to ensure shared memory is fully loaded
+
+        // Process elements within the page
+        for (size_t i = 0; i < elementsPerWarp; ++i) {
+            size_t elementIdx = pageStart + lane + i * warpSize;
+            if (elementIdx < numVertices && label[elementIdx]) {
+                WeightT cost = newCostList[elementIdx];
+
+                // Process adjacent nodes
+                // if(d_edgesOffset[elementIdx+1] - d_edgesOffset[elementIdx] >= 2*1024)
+                //     printf("elementx: %llu\n", elementIdx);
+                for(size_t j = d_edgesOffset[elementIdx]; j < d_edgesOffset[elementIdx+1]; ++j) {
+                    uint end_edge = (*d_adjacencyList)[j]; // shared_data[j - pageStart];
+                    if (newCostList[elementIdx] != cost)
+                        break;
+                    if (newCostList[end_edge] > cost + 1) {
+                        atomicMin(&(newCostList[end_edge]), cost + 1);
+                    }
+                }
+
+                // Mark node as processed
+                label[elementIdx] = false;
+            }
+        }
+    }
+}
+
+// __global__
+// void kernel_coalesce_rdma_opt_1(bool *label, size_t n, size_t numVertices, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, uint64_t *d_edgesOffset,
+//                     const WeightT *costList, WeightT *newCostList, unsigned int *d_distance) {
+//     // Page size in elements (64KB / 4 bytes per unsigned int)
+//     const size_t pageSize = 64*1024 / sizeof(unsigned int);
+//     // Elements per warp
+//     const size_t elementsPerWarp = pageSize / warpSize;
+
+//     // Global thread ID
+//     size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+//     // Warp ID within the block
+//     size_t warpId = tid / warpSize;
+
+//     // Thread lane within the warp
+//     size_t lane = threadIdx.x % warpSize;
+
+//     // Determine which page this warp will process
+//     size_t pageStart = warpId * pageSize;
+
+//     // Ensure we don't process out-of-bounds pages
+//     if (pageStart < n * pageSize) {
+//         // bool localChanged = false;
+        
+//         // Process elements within the page
+//         for (size_t i = 0; i < elementsPerWarp; ++i) {
+//             size_t elementIdx = pageStart + lane + i * warpSize;
+//             if (elementIdx < numVertices && label[elementIdx]) {
+//                 WeightT cost = newCostList[elementIdx];
+
+//                 // Process adjacent nodes
+//                 for(size_t j = d_edgesOffset[elementIdx]; j < d_edgesOffset[elementIdx+1]; ++j) {
+//                     uint end_edge = (*d_adjacencyList)[j];
+//                     if (newCostList[end_edge] > cost + 1) {
+//                         atomicMin(&(newCostList[end_edge]), cost + 1);
+//                         // localChanged = true;
+//                     }
+//                 }
+
+//                 // Mark node as processed
+//                 label[elementIdx] = false;
+//             }
+//         }
+
+//         // Optionally use shared memory for local data if appropriate
+//         // Shared memory should be declared as __shared__ type at the kernel level
+
+//     }
+// }
+
+
+// __global__
+// void kernel_coalesce_rdma_opt_1(bool *label, size_t n, size_t numVertices, size_t numEdges, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, uint64_t *d_edgesOffset,
+//                     const WeightT *costList, WeightT *newCostList, unsigned int *d_distance) {
+//     // Page size in elements (64KB / 4 bytes per unsigned int)
+//     const size_t pageSize = 64*1024 / sizeof(unsigned int);
+//     // Elements per warp
+//     const size_t elementsPerWarp = pageSize / warpSize;
+
+//     // Global thread ID
+//     size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+//     // Warp ID within the block
+//     size_t warpId = tid / warpSize;
+
+//     // Thread lane within the warp
+//     size_t lane = threadIdx.x % warpSize;
+
+//     // Determine which page this warp will process
+//     size_t pageStart = warpId * pageSize;
+
+//     // Ensure we don't process out-of-bounds pages
+//     if (pageStart < n * pageSize) {
+//         bool localChanged = false;
+        
+//         // Process elements within the page
+//         for (size_t i = 0; i < elementsPerWarp; ++i) {
+//             size_t elementIdx = pageStart + lane + i * warpSize;
+//             if (elementIdx < numVertices) {
+//                 // unsigned int k = d_distance[elementIdx];
+//                 if (label[elementIdx]) {
+//                     WeightT cost = newCostList[elementIdx];
+
+//                     // printf("d_edgesOffset[%llu]: %lu, label[%llu]: %d cost: %d\n", 
+//                     //     (long long int) elementIdx, d_edgesOffset[elementIdx], (long long int) elementIdx, label[elementIdx], (int) cost);
+
+//                     for(size_t j = d_edgesOffset[elementIdx]; j < d_edgesOffset[elementIdx+1] /*+ d_edgesSize[elementIdx]*/; ++j) {
+//                         if (newCostList[elementIdx] != cost)
+//                             break;
+//                         uint end_edge = (*d_adjacencyList)[j];
+//                         if (newCostList[end_edge] > cost + /*weightList[i]*/1 /*&& i >= d_edgesOffset[elementIdx]*/)
+//                             atomicMin(&(newCostList[end_edge]), cost + /*weightList[i]*/1);
+
+
+//                         // unsigned int v = (*d_adjacencyList)[j];
+//                         // // printf(" %d ", v );
+//                         // unsigned int dist = d_distance[v];
+//                         // if (level + 1 < dist) {
+//                         //     d_distance[v] = level + 1;
+//                         //     localChanged = true;
+//                         // }
+//                     }
+
+//                     label[elementIdx] = false;
+//                 }
+//             }
+//         }
+
+        
+//     }
+// }
+
+
+
+__global__
+void kernel_coalesce_rdma_opt_warp(bool *label, size_t n, size_t numVertices, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, 
+                    unsigned int *d_edgesOffset, const WeightT *costList, WeightT *newCostList, unsigned int *d_distance) {
+
+    // Thread index
+    size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int warpSize = 4;
+    // Warp index and lane index
+    size_t warpId = thid / warpSize;
+    size_t laneId = thid % warpSize;
+    // Warp size
+    
+
+    // Buffer for storing distances and change flag in shared memory
+    unsigned int shared_distance;
+    unsigned int warp_changed;
+
+    if (warpId < n && label[warpId]) {
+        // Each warp processes one node
+        // if (laneId == 0) {
+            WeightT cost = newCostList[warpId];
+            // warp_changed = 0;
+        // }
+
+        // __syncwarp(); // Synchronize within warp
+        // if (shared_distance == level) {
+            unsigned int nodeStart = d_edgesOffset[warpId];
+            unsigned int nodeEnd = d_edgesOffset[warpId + 1];
+
+            for (size_t i = nodeStart + laneId; i < nodeEnd; i += warpSize) {
+            
+                if (newCostList[warpId] != cost)
+                    break;
+                uint end_edge = (*d_adjacencyList)[i];
+                if (newCostList[end_edge] > cost + /*weightList[i]*/1 /*&& i >= nodeStart*/)
+                    atomicMin(&(newCostList[end_edge]), cost + /*weightList[i]*/1);
+                
+            }
+        
+
+        label[warpId] = false;
+    }
+}
+
+
+// __global__ void 
+// kernel_baseline_rdma(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count,
+//                      const uint64_t *vertexList, rdma_buf<uint64_t> *edgeList, const WeightT *weightList) {
+
+//     const uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+//     if (tid < vertex_count && label[tid]) {
+//         uint64_t start = vertexList[tid];
+//         uint64_t end = vertexList[tid+1];
+
+//         WeightT cost = newCostList[tid];
+
+//         for(uint64_t i = start; i < end; i += 1) {
+//             if (newCostList[tid] != cost)
+//                 break;
+//             uint64_t end_edge = (*edgeList)[i];
+//             if (newCostList[end_edge] > cost + /*weightList[i]*/1 && i >= start)
+//                 atomicMin(&(newCostList[end_edge]), cost + /*weightList[i]*/1);
+//         }
+
+//         label[tid] = false;
+//     }
+// }
+
+// __global__ void kernel_baseline_rdma(size_t n, bool *label, const WeightT *costList, WeightT *newCostList, 
+//                                      const uint64_t vertex_count, const uint64_t *vertexList, 
+//                                      rdma_buf<uint64_t> *edgeList, const WeightT *weightList) {
+//     const uint64_t warpSize = 32; // Assuming warp size is 32
+//     const uint64_t pageSize = 64 * 1024 / sizeof(uint64_t); // Number of edges per page
+//     const uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+//     const uint64_t warpId = threadIdx.x / warpSize; // Unique warp ID
+//     const uint64_t numWarps = (vertex_count + warpSize - 1) / warpSize; // Number of warps
+    
+    
+
+//     uint64_t pageStart = (vertexList[tid] / pageSize) * pageSize;
+//     uint64_t pageEnd = ((vertexList[tid+1] + pageSize - 1) / pageSize) * pageSize;
+
+//     if (pageStart >= n * pageSize) return;
+
+//     if (label[tid]) {
+//         WeightT cost = newCostList[tid];
+
+//         // Each warp handles one page
+//         for (uint64_t i = pageStart + warpId * (pageSize / warpSize); i < pageEnd; i += pageSize / numWarps) {
+//             if (newCostList[tid] != cost) 
+//                 break;
+                
+//             uint64_t end_edge = (*edgeList)[i];
+//             if (newCostList[end_edge] > cost + /*weightList[i]*/1) {
+//                 atomicMin(&(newCostList[end_edge]), cost + /*weightList[i]*/1);
+//             }
+//         }
+        
+//         label[tid] = false;
+//     }
+// }
+
+// __global__ void kernel_baseline_rdma_1(size_t n, uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset, rdma_buf<uint64_t> *edgeList,
+//                                 uint *dist, bool *changed) {
+//     uint64_t threadId = blockDim.x * blockIdx.x + threadIdx.x;
+//     // if(threadId == 0) printf("hello from thread 0\n");
+
+//     if (threadId < numVertex){
+
+//         for (uint64_t nodeId = edgeOffset[threadId]; nodeId < edgeOffset[threadId+1]; nodeId++) {
+//             uint64_t source = threadId;
+//             uint64_t end = (*edgeList)[nodeId]; // edgelist
+//             uint weight = 1; // edgesWeight[nodeId];
+            
+//             if (dist[source] + weight < dist[end]) {
+//                 atomicMin(&dist[end], dist[source] + weight);
+//                 // dist[end] = dist[source] + weight;
+//                 // preNode[end] = source;
+//                 *changed = true;
+//             }
+//         }
+//     }
+// }
+
 

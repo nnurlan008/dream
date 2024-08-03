@@ -118,7 +118,7 @@ struct __attribute__((__packed__)) post_content{
   int wr_opcode; 
   uint32_t qp_num; 
   unsigned int cq_lock[256*64];
-  unsigned int queue_count[256];
+  size_t queue_count[256];
   unsigned int queue_lock[256];
   size_t n_post[256];
   void *qp_buf;  
@@ -159,6 +159,27 @@ struct __attribute__((__packed__)) post_content{
             
     return *this;
   }
+};
+
+struct __attribute__((__packed__)) batch{
+  
+  unsigned int wait_queue[256*64];
+  size_t queue_lock[256];
+  size_t global_post_number[256]; // per queue
+  
+  __forceinline__
+  __host__ __device__ 
+  batch& operator=(const batch& obj) {
+        
+    for(int i = 0; i < 256; i++)
+    {
+      this->queue_lock[i] = obj.queue_lock[i];
+      for(size_t k = 0; k < 64; k++)
+        this->wait_queue[i*64+k] = obj.wait_queue[i*64+k];
+    }
+    return *this;
+  }
+
 };
 
 struct __attribute__((__packed__)) poll_content{
@@ -229,6 +250,8 @@ __device__ int post(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
                     int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db);
 
 __device__ int update_db(uint64_t *ctrl, void *bf_reg);
+
+__device__ int update_db_spec(void *bf_reg, void *qp_buf, unsigned int cur_post);
 
 __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
                     uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, 

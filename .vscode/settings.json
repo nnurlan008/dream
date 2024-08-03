@@ -104,6 +104,8 @@
         "stddef.h": "c",
         "stdint.h": "c",
         "pthread.h": "c",
-        "endian.h": "c"
+        "endian.h": "c",
+        "__config": "cpp",
+        "queue": "cpp"
     }
 }
