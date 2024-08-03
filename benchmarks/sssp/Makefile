@@ -37,11 +37,14 @@ global.o: global.cpp global.hpp
 
 argument_parser.o: argument_parser.cpp argument_parser.hpp
 	$(CXX) -c argument_parser.cpp -o argument_parser.o $(add_flags) $(CXXFLAGS)
-	
+
+readGraph.o: readGraph.cpp graph.h
+	$(CXX) -c readGraph.cpp -o readGraph.o $(add_flags) $(CXXFLAGS)
+
 graph.o: graph.cpp graph.hpp 
 	$(CXX) -c graph.cpp -o graph.o $(add_flags) $(CXXFLAGS)
 
-main: main.o graph.o argument_parser.o  $(SRC_DIR)/rdma_utils.o  global.o
+main: main.o graph.o argument_parser.o  $(SRC_DIR)/rdma_utils.o  global.o readGraph.o
 	$(NVCC) $^ -libverbs -lrdmacm -lcuda -lcudart -o $@ $(add_flags)  $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR)
 
 main.o: main.cu argument_parser.hpp  graph.hpp

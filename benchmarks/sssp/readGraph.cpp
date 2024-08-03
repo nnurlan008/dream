@@ -7,7 +7,7 @@ using namespace std;
 
 
 
-void readfile(Graph &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset, \
+void readfile(Graph_x &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset, \
               uint *u_edgesSize, uint *u_adjacencyList) {
 
     unsigned int n;
@@ -87,7 +87,7 @@ void readfile(Graph &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset
         G.numEdges = m;
 
         G.edgesOffset_r = new uint[G.numVertices+1];
-        // G.edgesSize_r = new uint[G.numVertices];
+        G.edgesSize_r = new uint[G.numVertices];
         G.adjacencyList_r = new uint64_t[G.numEdges];
 
         // long long unsigned int fixed_size = 2.800*1024*1024*1024ull;
@@ -129,7 +129,7 @@ void readfile(Graph &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset
         double t_mem = (double) total_mem/(1024*1024*1024); 
         printf("t_mem: %f\n", t_mem);
 
-		infile.read ((char*)G.edgesOffset_r, sizeof(uint)*(num_nodes+1));
+		infile.read ((char*)G.edgesOffset_r, sizeof(uint)*(num_nodes + 1));
 		// infile.read ((char*)G.edgesSize_r, sizeof(uint)*num_nodes);
         
 		// G_m.nodePointer[num_nodes] = num_edges;

@@ -11,7 +11,7 @@ struct OutEdge{
 
 typedef struct OutEdge E;
 
-struct Graph {
+struct Graph_x {
     std::vector<uint> adjacencyList; // all edges
     std::vector<uint> edgesOffset; // offset to adjacencyList for every vertex
     std::vector<uint> edgesSize; //number of edges for every vertex
@@ -30,7 +30,7 @@ struct Graph_m {
     unsigned int numEdges = 0;
 };
 
-void readfile(Graph &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset, \
+void readfile(Graph_x &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset, \
               uint *u_edgesSize, uint *u_adjacencyList);
 
 // void readGraph(Graph &G, int argc, char **argv);

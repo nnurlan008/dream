@@ -53,8 +53,11 @@ uint64_t GPU_addr_offset;
 // __device__ uint64_t Global_Dev_address;
 // device - info about QPs
 __device__ struct post_content gpost_cont;
+__device__ struct batch gbatch;
 __device__ struct post_content2 gpost_cont2;
 __device__ struct poll_content gpoll_cont;
+__device__ size_t g_qp_index;
+__device__ size_t cq_wait[128];
 
 // host - info about QPs
 struct post_content hpost_cont;
@@ -66,7 +69,7 @@ struct host_keys keys_for_host;
 extern struct rdma_content main_content;
 
 // server mode means data should be sent to server/pool
-#define SERVER_MODE 1
+#define SERVER_MODE 0
 
 #define KB(x) (long long int) x*1024
 #define MB(x) (long long int) KB(x)*1024
@@ -76,7 +79,7 @@ extern struct rdma_content main_content;
 #define MAX_POST 3 
 // request size
 
-#define REQUEST_SIZE 64*1024 // bytes
+#define REQUEST_SIZE 8*1024 // bytes
 
 // define globale vaiable to save the number of post requests
 // and compare them to max_post
@@ -126,6 +129,14 @@ void alloc_global_host_content(struct post_content post_cont, struct poll_conten
     GPU_addr_offset = 0;
 }
 
+// __global__ void alloc_batch(){
+//     for(int i = 0; i < 256; i++)
+//     {
+//       for(size_t k = 0; k < 64; k++)
+//         gbatch.wait_queue[i*64+k] = 0;
+//     }
+// }
+
 __global__ void alloc_global_content(struct post_content *post_cont, struct poll_content *poll_cont, struct post_content2 *post_cont2){
     // copy poll and post content to global 
     gpost_cont = *post_cont;
@@ -138,6 +149,20 @@ __global__ void alloc_global_content(struct post_content *post_cont, struct poll
     GPU_address_offset = 0;
     transfer_time = 0;
     printf("qp_num: %d\n", gpost_cont.qp_num);
+    for(int i = 0; i < 256; i++)
+    {
+        gbatch.queue_lock[i] = 0;
+        gbatch.global_post_number[i] = 0;
+        for(size_t k = 0; k < 64; k++)
+            gbatch.wait_queue[i*64+k] = 0;
+    }
+    g_qp_index = 0;
+    for (size_t i = 0; i < 128; i++)
+    {
+        cq_wait[i] = 0;
+    }
+    
+    
 }
 
 struct tlb_entry {
@@ -805,9 +830,236 @@ struct rdma_buf {
 
         __forceinline__
         __device__
-        void read(uint64_t che){
-            int qp_index = che%256; // get_smid(); // warp_id() % 256; // ;
+        void request_queue(uint64_t che){
 
+        }
+
+    //    __forceinline__
+    //     __device__
+    //     void read(uint64_t che){
+    //         int qp_index = get_smid()%128; // che%128; // warp_id() % 256; // ;
+    //         size_t tid = blockDim.x * blockIdx.x + threadIdx.x; 
+
+    //         int tmp_che1 = che;
+    //         // printf("intro che: %d\n", tmp_che1);
+           
+    //         unsigned long long int data_size = request_size*sizeof(T);
+            
+            
+    //         volatile size_t *p_index = &gpost_cont.n_post[qp_index];
+    //         volatile uint *queue_lock = &gpost_cont.queue_lock[qp_index];
+
+    //         volatile long unsigned int *before_post_count = &gpost_cont.queue_count[qp_index];
+    //         //  __threadfence_system();
+    //         // int lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+    //         while(/**queue_lock == 1 */atomicAdd((unsigned int *)queue_lock, 0) == 1){
+    //             // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+    //             __threadfence();
+    //         }
+
+    //         size_t cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+    //         // __threadfence();
+    //         while(cur_post > 63){
+                
+    //             // int num_filled = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 0);
+    //             // lock_situ = atomicAdd((unsigned int *)queue_lock, 0);
+    //             while(*p_index != 0 || *queue_lock == 1){ 
+    //             // while(atomicAdd((unsigned long long int *)p_index, 0) != 0 || atomicAdd((unsigned int *)queue_lock, 0) == 1){
+    //                 __threadfence();
+    //                 // num_filled = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 0);
+    //                 // __threadfence();
+    //                 // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+                    
+    //             }
+                
+    //             cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+    //             __threadfence();
+    //         }
+           
+    //         // __threadfence();
+    //         atomicAdd((unsigned long long int *)before_post_count, (unsigned long long int ) 1);
+    //         __threadfence();
+
+            
+    //         volatile long unsigned int *queue_count = &gbatch.global_post_number[qp_index];
+    //         volatile long unsigned int *global_post_number = &gbatch.queue_lock[qp_index];
+
+    //         // __threadfence();
+    //         int entry_index = qp_index*64 + cur_post&63;
+    //         // volatile unsigned int *cq_lock = &gpost_cont.cq_lock[entry_index];
+    //         volatile uint *wait_queue = &gbatch.wait_queue[entry_index];
+            
+
+    //         int retries = 0;
+            
+    //         uint64_t rem_addr = host_address + che*request_size*sizeof(T);
+    //         int rkey_index = (/*d_TLB[che].host_address*/ rem_addr - d_remote_address/*gpost_cont.wr_rdma_remote_addr*/)/(8*1024*1024*1024llu);
+    //         uint64_t value_ctrl;
+    //         int finished;
+
+    //         atomicCAS((unsigned int *)wait_queue, (unsigned int) 0, (unsigned int) 1);
+            
+    //         unsigned int req_number = atomicAdd((unsigned long long int *)global_post_number, (unsigned long long int ) 1);
+    //         post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T) /*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
+    //                 req_number, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+            
+    //         // __threadfence();
+    //         atomicAdd((unsigned long long int *)queue_count,  (unsigned long long int ) 1);
+    //         __threadfence();
+    //         atomicCAS((unsigned int *)wait_queue, (unsigned int) 1, (unsigned int) 2);
+    //         __threadfence();
+    //         // *wait_queue = 1;
+
+    //         // __nanosleep(100);
+    //         // __threadfence();
+    //         // printf("before lock cur_post: %d qp_index: %d qc: %d bpc: %d tmp_max: %d\n", 
+    //         //                     cur_post, qp_index, (int) *queue_count, (int) *before_post_count, (int) *global_post_number);
+    //         if(atomicCAS((unsigned int *)queue_lock, (unsigned int) 0, (unsigned int) 1) == 0){
+    //             // __threadfence_system();
+    //             unsigned int biggest_request = cur_post;
+    //             volatile uint *whole_wait_queue = gbatch.wait_queue;
+    //             __nanosleep(10);
+    //             retries = 0;
+    //              __threadfence();
+    //             // // int qc = atomicAdd((unsigned long long int *)queue_count, (unsigned long long int ) 0);
+    //             // // __threadfence_system();
+    //             // // int bpc = atomicAdd((unsigned long long int *)before_post_count, (unsigned long long int ) 0);
+    //             // // __threadfence_system();
+    //             // while(atomicAdd((unsigned long long int *)queue_count, 0) != atomicAdd((unsigned long long int *)before_post_count, 0) ){
+    //             // // while(/**queue_count != *before_post_count*/){
+    //             //     // __threadfence();
+    //             //     if(retries > 100000){
+    //             //         int tmp_max = *global_post_number - 1;
+    //             //         int qc = (int) *queue_count;
+    //             //         printf("got the lock with cur_post: %d qp_index: %d qc: %d bpc: %d tmp_max: %d\n", 
+    //             //                 cur_post, qp_index, qc, (int) *before_post_count, tmp_max);
+    //             //         retries =- 1;
+    //             //     }
+    //             //     retries++; 
+    //             //     __threadfence();
+    //             //     // __nanosleep(10);
+    //             // }
+
+    //             for(int k = 0; k < *before_post_count; k++){
+    //                 if(whole_wait_queue[qp_index*64 + k] == 2){
+    //                     int qc_temp2 = (int) *queue_count;
+    //                     // printf("inside wait queue no wait with\n");
+    //                     __nanosleep(70000);
+    //                     continue;
+    //                 }
+    //                 if(whole_wait_queue[qp_index*64 + k] == 0){
+    //                     int qc_temp2 = (int) *queue_count;
+    //                     // printf("inside wait queue zero detected!\n");
+    //                     __nanosleep(70000);
+    //                     continue;
+    //                 }
+    //                 if(whole_wait_queue[qp_index*64 + k] == 1){
+    //                     retries == 0;
+    //                     while(whole_wait_queue[qp_index*64 + k] == 1){
+    //                         if(retries > 100000){
+    //                             int qc_temp2 = (int) *queue_count;
+    //                             printf("inside wait queue with max: %d  *qc: %d bpc: %d k: %d \
+    //                                     qp_index: %d whole_wait_queue[qp_index*64 + k]: %d\n", 
+    //                                     (int) *global_post_number-1, qc_temp2, (int) *before_post_count, (int) k, 
+    //                                     (int) qp_index, (int) whole_wait_queue[qp_index*64 + k]);
+    //                             retries = -1;
+    //                         }
+    //                         retries++;
+                            
+    //                     }
+                    
+    //                     __threadfence();
+    //                     whole_wait_queue[qp_index*64 + k] = 0;
+    //                 }
+    //             }
+                
+    //             int max = atomicAdd((unsigned long long int *)global_post_number, (unsigned long long int ) 0) - 1;
+    //             __threadfence();
+    //             // *global_post_number - 1;
+    //             update_db_spec((void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_buf + 8192*qp_index, max);
+                 
+                
+    //             int i = max;
+    //             int temp_qc = *queue_count;
+    //             // atomicAdd((unsigned long long int *)queue_count, (unsigned long long int ) 0);;
+    //             // printf("is going to wait for completion with max: %d i: %d, temp_qc: %d che: %d\n", max, i, temp_qc, tmp_che1);
+    //             for (int i = temp_qc - 1; i >= 0 ; i -= 1)
+    //             {
+    //                 void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + ((max - i) & 63) * 64;
+    //                 struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+    //                 volatile uint8_t *op_flag = &cqe64->op_own;
+    //                 retries = 0;
+    //                 __threadfence_system();
+    //                 // int tmp_che = che;
+    //                 // printf("is going to wait for completion with max: %d i: %d, temp_qc: %d che: %d\n", max, (int) i, temp_qc, tmp_che1);
+    //                 while(*op_flag == 240){
+    //                     if(retries > 100000){
+    //                         int big_temp = atomicAdd((unsigned long long int *)queue_count, (unsigned long long int ) 0);
+    //                         int bpc = atomicAdd((unsigned long long int *)before_post_count, (unsigned long long int ) 0);
+    //                         printf("waiting for completion with max: %d  *qc: %d bpc: %d i: %d\n", 
+    //                                 max, temp_qc, bpc, (int) i);
+    //                         retries = -1;
+    //                     }
+    //                     retries++;
+    //                      __threadfence_system();
+    //                 }
+    //                 // printf("                done completion with max: %d i: %d, temp_qc: %d che: %d\n", max, i, temp_qc, tmp_che1);
+    //                 *op_flag = 240;
+    //                  __threadfence_system();
+    //                 // void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
+    //                 // *(uint32_t *) cq_dbrec = (uint32_t) htonl((max + i + 1) & 0xffffff);
+    //                 // __threadfence_system();
+    //             }
+                
+    //             if(temp_qc > 0){
+    //                 void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
+    //                 *(uint32_t *) cq_dbrec = (uint32_t) htonl((max + 1) & 0xffffff);
+    //                 __threadfence_system();
+    //             }
+    //             // if(*queue_count == 4)
+    //             // atomicExch((unsigned long long int *) queue_count, 0);
+    //             *queue_count = 0;
+    //             __threadfence();
+    //             // *wait_queue = 0;
+    //             *before_post_count = 0;
+    //             // atomicExch((unsigned long long int *) before_post_count, 0);
+    //             __threadfence();
+    //             *p_index = 0; // update post number
+    //             // atomicExch((unsigned long long int *) p_index, 0);
+    //             __threadfence();
+    //             *queue_lock = 0;
+    //             // atomicExch((unsigned int *) queue_lock, 0);
+    //             __threadfence();
+    //         }
+    //         else{
+               
+    //             retries = 0;
+    //             // __threadfence();
+    //             // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+    //             __threadfence();
+    //             int max = *global_post_number - 1;
+    //             // printf("is going to wait in else with cur_post: %d qp_index: %d max: %d\n", cur_post, qp_index, max);
+    //             while(*queue_lock == 1/*lock_situ == 1*/){
+                    
+    //                 if(retries > 100000){
+    //                     printf("waiting in else with cur_post: %d qp_index: %d max: %d\n", cur_post, qp_index, max);
+    //                     retries =- 1;
+    //                 }
+    //                 // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+    //                 __threadfence();
+    //                 retries++;
+    //             }
+                
+    //         }
+            
+    //     }
+
+        __forceinline__
+        __device__
+        void read(uint64_t che){
+
+            int qp_index = get_smid()%128; // che%8; // (); // warp_id() % 256; // ;
+            // atomicAdd((unsigned long long int *)&g_qp_index, 1)
             // unsigned int mask = __match_any_sync(__activemask(), qp_index);
             // unsigned int leader = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
 
@@ -815,15 +1067,25 @@ struct rdma_buf {
             unsigned long long int data_size = request_size*sizeof(T);
             void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
             
-            bool isSet = false;
+            // bool isSet = false;
             volatile uint *cq_lock = &gpost_cont.cq_lock[qp_index];
             
-            // __syncwarp(mask);
-            int retries = 0;
-            // if(lane_id() == leader){
-                while(atomicCAS((unsigned int *)cq_lock, 0, 1) != 0){
-                    // retries++;
-                }
+            
+            // int retries = 0;
+            
+            while(atomicCAS((unsigned int *)cq_lock, 0, 1) != 0){
+                
+                // if(retries >= 0){
+                //     qp_index = atomicAdd((unsigned long long int *)&g_qp_index, 1)%128;
+                //     cq_lock = &gpost_cont.cq_lock[qp_index];
+                //     retries = -1;
+                // }
+                // retries++;
+            }
+            
+            // printf("retries: %d qp_index: %d\n", retries, qp_index);
+            // atomicAdd((unsigned long long int *)&g_qp_index, (unsigned long long int) retries);
+            // retries = 0;
 
             volatile size_t *p_index = &gpost_cont.n_post[qp_index];
             unsigned int cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
@@ -833,46 +1095,44 @@ struct rdma_buf {
             uint64_t rem_addr = host_address + che*request_size*sizeof(T);
             int rkey_index = (/*d_TLB[che].host_address*/ rem_addr - d_remote_address/*gpost_cont.wr_rdma_remote_addr*/)/(8*1024*1024*1024llu);
             uint64_t value_ctrl;
-            int finished;
-            
+            // int finished;
+            // uint64_t thid = blockDim.x * blockIdx.x + threadIdx.x;
+            // printf("che: %llu qp_index: %d thid : %llu\n", che, qp_index, thid);
+            // printf("che: %llu thid: %llu ", che, thid);
 
             post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T) /*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
                     cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
-            // __syncwarp(mask);
-            // printf("mask: %d\n", mask);
-            // if(cur_post == (*p_index-1)){
-                
-                // update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
-            // }
-            // __syncwarp(mask);
+
+            atomicAdd((unsigned long long int *)&g_qp_index, (unsigned long long int) 1);
+
+            // update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
             volatile uint8_t *op_flag = &cqe64->op_own;
-            retries = 0;
-            
+            int retries = 0;
             while(*op_flag == 240){
-                    if(retries > 15){
-                    //     unsigned int mask2 = __match_any_sync(__activemask(), (unsigned long long)qp_index);
+                    // if(retries > 15){
+                    // //     unsigned int mask2 = __match_any_sync(__activemask(), (unsigned long long)qp_index);
                         
-                    //     cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
-                    //     cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
-                    //     op_flag = &cqe64->op_own;
-                    //     // unsigned int leader2 = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
-                        post_m(rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T), 4, gpost_cont.qp_num + qp_index, 
-                        cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
-                    //     __syncwarp(mask2);
-                    //     if(cur_post == (*p_index-1)){
-                            // update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
-                    //     }
-                    //     __syncwarp(mask2);
-                        retries = -1;
-                    }
-                    // atomicAdd((unsigned long long int *) &transfer_time, 1);
+                    // //     cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+                    // //     cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
+                    // //     op_flag = &cqe64->op_own;
+                    // //     // unsigned int leader2 = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
+                    //     post_m(rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T), 4, gpost_cont.qp_num + qp_index, 
+                    //     cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+                    // //     __syncwarp(mask2);
+                    // //     if(cur_post == (*p_index-1)){
+                    //         // update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
+                    // //     }
+                    // //     __syncwarp(mask2);
+                    //     retries = -1;
+                    // }
+                    // // atomicAdd((unsigned long long int *) &transfer_time, 1);
                     retries++;
                     
             }
+            // atomicAdd((unsigned long long int *)&cq_wait[qp_index], (unsigned long long int) retries);
             // __syncwarp(mask);
             // __threadfence_system();
             *op_flag = 240;
-            
             // if(lane_id() == leader){  
             // __threadfence_system();
             *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post + 1) & 0xffffff);
@@ -952,185 +1212,6 @@ struct rdma_buf {
         // unsigned long long int update_gpu_offset(unsigned long long int data_size){
         //     unsigned long long int offset = atomicAdd((unsigned long long int *)&GPU_address_offset, (unsigned long long int) data_size);
         //     return offset;
-        // }
-
-        
-
-        // // [] operator for lvalue
-        // __forceinline__
-        // __device__ 
-        // T operator[](const size_t index) {
-        //     // T *add = (T *) address;
-        //     // #ifdef  __CUDA_ARCH__
-        //     // printf("GPU access\n");
-        //         uint64_t che;
-        //         uint64_t id = blockDim.x * blockIdx.x + threadIdx.x; 
-        //         // printf("rvalue\n");
-        //         // int buf_index = id/16384;
-        //         struct ibv_wc wc;
-        //         che = floor((double)index/request_size); //getTLBindex(index, request_size);
-        //         // select which qp and cq to use:
-        //         // volatile uint *entry = &tlb_buffer[che];
-        //         // printf("sadasdrequest_size: %d che: %d checkTLB(0, tlb_buffer): %d\n", request_size, che, checkTLB(0, tlb_buffer));
-        //         // TODO: for oversubscription, first check if gpu has enough free memory
-        //         // __syncthreads();
-                    
-        //             // lock entry:
-        //             // volatile uint8_t *state = &d_TLB[che].state;
-        //             // volatile uint *lock = &d_TLB[che].lock;
-        //             // int reg_371200 = 0;
-        //             // if(index == 371200){
-        //             //     printf("index: %d d_TLB[che].state: %d d_TLB[che].host_address: %p reg_371200++: %d\n", 371200, d_TLB[che].state, d_TLB[che].host_address, reg_371200++);
-        //             // }
-        //             if(index < 0 || index >= size/sizeof(T) || che < 0 || che >= tlb_size) {
-        //                 printf("index: %llu Invalid index/tlb index: %llu\n", index, che);
-        //                 return T();
-        //             }
-        //             if(d_TLB[che].state == 2 || d_TLB[che].state == 4){ // page completely on gpu or dirty on gpu
-        //                 T *tmp_array =  (T *) d_TLB[che].device_address;
-        //                 // printf("d_TLB[che].state: %d index: %llu tmp_array[0]: %d\n", d_TLB[che].state, index, tmp_array[0]);
-        //                 // LRU is incremented
-        //                 // if(index == 371200){
-        //                 //     printf("index: %d  data is in device reg_371200++: %d\n", 371200, reg_371200++);
-        //                 // }
-        //                 // if(index == 0) return tmp_array[0];
-        //                 // else return tmp_array[index%request_size];
-        //                 return tmp_array[index%request_size];
-        //             }
-        //             // if(index == 371200){
-        //             //     printf("index: %d trying to get tlb lock reg_371200++: %d\n", 371200, reg_371200++);
-        //             // }
-        //             // uint32_t mask = __activemask();// test<<< 1, 1>>>(u_adjacencyList);
-
-                    
-        //             if(d_TLB[che].state == 0 || d_TLB[che].state == 3){ // page completely on cpu or dirty on cpu
-        //             // get the number of threads that are accessing here within the same warp
-        //             // and how many of them will be requester and how many of them will be requesting
-        //                 if(d_TLB[che].lock_entry()){
-        //                     // requesters go here
-        //                     // requestings will be polling for entry update by requesters
-        //                     // requesters from the same warp selects leader thread to get 
-        //                     // one qp index and all those threads will submit their requests 
-        //                     // the leader updates the db 
-        //                     int qp_index = (che&255); // che & 255;
-
-        //                     // int mask = __match_any_sync(__activemask(), (unsigned long long)qp_index);
-
-                        
-        //                     // printf("qp_index: %d\n", qp_index);
-        //                     unsigned long long int data_size;
-        //                     if(che == tlb_size -1) data_size = size - che*request_size*sizeof(T);
-        //                     else data_size = request_size*sizeof(T);
-        //                     void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
-                            
-        //                     bool isSet = false;
-        //                     // volatile uint *cq_lock = &gpost_cont.cq_lock[qp_index];
-        //                     // check which group of requests this thread needs to insert
-        //                     // 
-        //                     int get_lock = 0;
-        //                     // while(atomicCAS((unsigned int *)cq_lock, 0, 1) != 0);
-
-        //                     // {
-        //                     //     if(get_lock > 10){
-        //                     //         qp_index = (qp_index + 1) & 255;
-        //                     //         cq_lock = &gpost_cont.cq_lock[qp_index];
-        //                     //         get_lock = -1;
-        //                     //     }
-        //                     //     get_lock++;
-        //                     // }
-
-        //                         volatile size_t *p_index = &gpost_cont.n_post[qp_index];
-        //                         int cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
-                                
-        //                         void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
-        //                         struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
-        //                         volatile uint8_t *op_flag = &cqe64->op_own;
-
-        //                         unsigned long long int offset = atomicAdd((unsigned long long int *)&GPU_address_offset, (unsigned long long int) data_size);
-        //                         // if(d_TLB[che].device_address == NULL)
-        //                         d_TLB[che].device_address = Global_GPU_address + offset; // update_gpu_offset( (unsigned long long int) data_size);
-        //                         int rkey_index = (d_TLB[che].host_address - gpost_cont.wr_rdma_remote_addr)/(8*1024*1024*1024llu);
-
-
-        //                         volatile uint *entry_lock = &gpost_cont.cq_lock[qp_index*64 + (cur_post & 63)];
-        //                         while(atomicCAS((unsigned int *)entry_lock, 0, 1) != 0); // lock the entry first
-        //                         volatile uint *queue_lock = &gpost_cont.queue_lock[qp_index];
-        //                         volatile unsigned int *count_index = &gpost_cont.queue_count[qp_index];
-        //                         int global_count = gpost_cont.queue_count[qp_index];
-
-                                
-                                
-        //                         uint64_t value_ctrl;
-        //                         post_m(d_TLB[che].host_address, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address, 4, gpost_cont.qp_num + qp_index, 
-        //                                cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
-                                
-        //                         // while(!(cur_post&63 == (*count_index)&63))
-        //                         // {
-        //                         //     count_index = &gpost_cont.queue_count[qp_index];
-        //                         //     printf("cur_post&63: %d (*count_index)&63: %d\n", cur_post, (*count_index)&63);
-        //                         // }
-        //                         uint post_number = cur_post & 63;
-        //                         while(atomicCAS((unsigned int *)&gpost_cont.queue_count[qp_index], post_number, 1000) != post_number){
-        //                             // printf("qp_index: %d cur_post: %d *count_index: %d\n", qp_index, cur_post, *count_index);
-        //                         }
-        //                         // while(cur_post&63 != (*count_index)&63)
-        //                         // if(post_number%2 == 0)
-        //                             update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
-
-        //                         // uint64_t value_ctrl;
-        //                         // post_m(d_TLB[che].host_address, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address, 4, gpost_cont.qp_num + qp_index, 
-        //                         //         cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
-        //                         // update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
-                               
-        //                         // printf("entering - id: %d d_TLB[che].device_address: %p d_TLB[che].host_address: %p\n",\
-        //                         //     id, d_TLB[che].device_address, d_TLB[che].host_address);
-        //                         // int max_retries = 10000; // Define a suitable number of retries.
-        //                         int retries = 0, rounds = 0;
-        //                         while(*op_flag == 240){
-                                    
-        //                             if(retries>15){
-        //                                 // update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
-        //                                 post_m(d_TLB[che].host_address, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address, 4, gpost_cont.qp_num + qp_index, 
-        //                                     cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
-        //                                 update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
-        //                                 retries = -1;
-        //                                 // printf("cur_post: %d retries: %d\n", cur_post, retries);
-        //                                 rounds++;
-        //                             }
-        //                             retries++;
-        //                             // printf("qp_index: %d cur_post: %d retries: %d\n", qp_index, cur_post, retries);
-        //                             if(rounds > 5) break;
-        //                         }
-        //                         // printf("cur_post: %d retries: %d\n", cur_post, retries);
-                               
-        //                         *op_flag = 240;
-        //                         // __threadfence_system();
-        //                         *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post+1) & 0xffffff);
-        //                         // printf("count_index: %d retries: %d\n", *count_index, retries);
-        //                         // atomicAdd((unsigned int *)count_index, (unsigned int ) 1);
-        //                         post_number = (post_number+1) & 63;
-        //                         // while(atomicCAS((unsigned int *)&gpost_cont.queue_count[qp_index], 1000, (unsigned int) post_number) != 1000);
-        //                         int old_value = atomicCAS((unsigned int *)count_index, 1000, post_number);
-        //                         // printf("qp_index: %d cur_post: %d *count_index: %d old_value: %d\n", qp_index, post_number, old_value, 1000);
-                                
-        //                     // *queue_lock = 0;
-        //                     *entry_lock = 0;
-        //                     d_TLB[che].state = 2;
-        //                     d_TLB[che].release_lock();
-        //                 }
-        //                 // if(index == 371200){
-        //                 //     printf("index: %d  other thread posting reg_371200++: %d\n", 371200, reg_371200++);
-        //                 // }
-        //                 while(d_TLB[che].state != 2);
-        //                 // if(index == 371200){
-        //                 //     printf("index: %d  other thread posted and updated tlb reg_371200++: %d\n", 371200, reg_371200++);
-        //                 // }
-        //             }
-
-        //             T *tmp_array = (T *) d_TLB[che].device_address;
-        //         int i = index&(request_size-1);
-                
-        //         return tmp_array[i]; // tmp_array[(int)index&255]; // tmp_array[index%request_size];
         // }
 
         // [] operator for lvalue the default one

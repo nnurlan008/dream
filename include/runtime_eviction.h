@@ -954,7 +954,7 @@ struct rdma_buf {
         __forceinline__
         __device__
         void read(uint64_t che){
-            int qp_index = che%256; // get_smid(); // warp_id() % 256; // ;
+            int qp_index = get_smid()%128; // get_smid(); // warp_id() % 256; // ;
 
             // unsigned int mask = __match_any_sync(__activemask(), qp_index);
             // unsigned int leader = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader

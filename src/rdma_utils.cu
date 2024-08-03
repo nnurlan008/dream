@@ -491,7 +491,7 @@ int connect(const char *ip, struct context *s_ctx){
     TEST_NZ(getaddrinfo(ip, "9700", NULL, &addr));
     printf("ip: %s\n", ip);
     TEST_Z(ec = rdma_create_event_channel());
-    TEST_NZ(rdma_create_id(ec, &conn_id, NULL, RDMA_PS_IB));
+    TEST_NZ(rdma_create_id(ec, &conn_id, NULL, RDMA_PS_TCP));
     TEST_NZ(rdma_resolve_addr(conn_id, NULL, addr->ai_addr, TIMEOUT_IN_MS));
 
     freeaddrinfo(addr);
@@ -2635,6 +2635,18 @@ __device__ int post_s(struct post_wr wr, int cur_post, void *qp_buf, void *bf_re
 	return 0;
 }
 
+__device__ int update_db_spec(void *bf_reg, void *qp_buf, unsigned int cur_post)
+{
+	void *seg;
+	unsigned int idx = cur_post & 63;
+    seg = (qp_buf + 256 + (idx * 64)); // mlx5_get_send_wqe(qp, idx);
+    struct mlx5_wqe_ctrl_seg *ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+   
+    __threadfence_system();
+    *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl ;// 
+	return 0;
+}
+
 __device__ int update_db(uint64_t *ctrl, void *bf_reg)
 {
     __threadfence_system();
@@ -2681,28 +2693,38 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
 
     // mlx5_opcode = 16;// wr_opcode*2 + 8 - 2*(wr_opcode == 2); // mlx5_ib_opcode[wr->opcode];
     // *(uint64_t *) seg = (uint64_t) (htonl((uint16_t) cur_post * 256 | 16)) |  ((uint64_t) htonl(3 | (qp_num *256)) << 32);
+    
     ctrl->opmod_idx_opcode = htonl(((uint16_t) cur_post * 256) | 16);
+    // __threadfence();
     // printf("id: %d, cur_post: %d qp_num: %d\n", id, cur_post, qp_num-gpost_cont1->qp_num);
     // printf("ctrl: %p, &ctrl->opmod_idx_opcode: %p\n", ctrl, &ctrl->opmod_idx_opcode);
     // printf("ctrl: %p, &ctrl->qpn_ds: %p\n", ctrl, &ctrl->qpn_ds);
     ctrl->qpn_ds = htonl(3 | (qp_num *256));
+    // __threadfence();
     ctrl->signature = 0;
     ctrl->fm_ce_se = 8; // MLX5_WQE_CTRL_CQ_UPDATE;
+    // __threadfence();
     ctrl->imm = 0; // 
     // ctrl->dci_stream_channel_id = 0;
 
     struct mlx5_wqe_raddr_seg *rdma = (struct mlx5_wqe_raddr_seg *)(seg + 16); // seg + 16; // sizeof(*ctrl);
     rdma->raddr    = htonl64(wr_rdma_remote_addr);
+    // __threadfence();
     rdma->rkey     = htonl(wr_rdma_rkey);
+    // __threadfence();
     rdma->reserved = 0;
+    // __threadfence();
 
     struct mlx5_wqe_data_seg *data = (struct mlx5_wqe_data_seg *) (seg + 32);
     // *(unsigned long long *) (seg + 32) = ((unsigned long long)htonl(wr_sg_length) | (unsigned long long) htonl(wr_sg_lkey) << 32); 
     // *(unsigned long long *) (seg + 96) = (unsigned long long) htonl64(wr_sg_addr) << 64;
     // *(uint64_t *) (seg + 32) = (uint64_t) (htonl(wr_sg_length) | (uint64_t) htonl(wr_sg_lkey) << 32);
     data->byte_count = htonl(wr_sg_length); // htonl(wr_sg_list->length);
+    // __threadfence();
     data->lkey       = htonl(wr_sg_lkey); // htonl(wr_sg_list->lkey);
+    // __threadfence();
     data->addr       = htonl64(wr_sg_addr); // htonl64(wr_sg_list->addr);
+    // __threadfence();
     // if(id == 0)
     // printf("data: %p, &data->addr: %p\n", data, &data->addr);
 
@@ -2720,6 +2742,7 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // qp_sq->head += 1;
     // if(cur_post == 0)
     // qp_db[1] = (uint16_t) (cur_post + 1) ; // htonl(cur_post & 0xffff);
+    
     
     // __threadfence_system();
     // uint32_t val[2];
