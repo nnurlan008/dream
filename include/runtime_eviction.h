@@ -1,5 +1,5 @@
-#ifndef RUNTIME_EVICTION_H
-#define RUNTIME_EVICTION_H
+#ifndef RUNTIME_PREFETCHING_H
+#define RUNTIME_PREFETCHING_H
 
 #ifndef __device__
 #define __device__
@@ -15,8 +15,10 @@
 extern "C++" {
 #endif
 
+#include <simt/atomic>
 #include <stdint.h>
 #include <sys/types.h>
+
 // #include <infiniband/verbs.h>
 
 
@@ -27,6 +29,8 @@ using namespace std;
 #include "../src/rdma_utils.cuh"
 #include "../src/rdma_utils.h"
 #include "primitives.h"
+
+
 
 
 
@@ -48,19 +52,21 @@ __device__ unsigned long long int transfer_time;
 // for eviction: 
 // introduce two cursors; R: request, E: evict
 __device__ size_t R_cursor, E_cursor, num_pages;
-// __device__ long long int *page_map;
-
 
 uint64_t GPU_address;
 uint64_t GPU_addr_offset;
-
-
+uint64_t allowed_size;
 
 // __device__ uint64_t Global_Dev_address;
 // device - info about QPs
 __device__ struct post_content gpost_cont;
+__device__ struct batch gbatch;
 __device__ struct post_content2 gpost_cont2;
 __device__ struct poll_content gpoll_cont;
+__device__ size_t g_qp_index;
+__device__ size_t cq_wait[128];
+
+__device__ int activeThreads[128]; // = 0;
 
 // host - info about QPs
 struct post_content hpost_cont;
@@ -72,7 +78,7 @@ struct host_keys keys_for_host;
 extern struct rdma_content main_content;
 
 // server mode means data should be sent to server/pool
-#define SERVER_MODE 1
+#define SERVER_MODE 0
 
 #define KB(x) (long long int) x*1024
 #define MB(x) (long long int) KB(x)*1024
@@ -82,7 +88,7 @@ extern struct rdma_content main_content;
 #define MAX_POST 3 
 // request size
 
-#define REQUEST_SIZE 64*1024 // bytes
+#define REQUEST_SIZE 8*1024 // bytes
 
 // define globale vaiable to save the number of post requests
 // and compare them to max_post
@@ -91,6 +97,7 @@ extern struct rdma_content main_content;
 void *rdmaAlloc(uint64_t global_start_address, size_t offset){
     return (void *)global_start_address + offset;
 }
+
 
 
 // typedef's:
@@ -119,14 +126,28 @@ __device__ void sleep_nanoseconds(int nanoseconds) {
     }
 }
 
+#define oversubs_ratio_macro  1
+#define rest_memory 16*1024*1024*1024llu // restricted memory
+
+unsigned long long closestUpperDivisible(unsigned long long num, unsigned long long divisor) {
+    return ((num + divisor - 1) / divisor) * divisor;
+}
+
+__device__
+unsigned long long dev_closestUpperDivisible(unsigned long long num, unsigned long long divisor) {
+    return ((num + divisor - 1) / divisor) * divisor;
+}
+
 __global__
-void start_page_queue(const size_t size,const size_t page_size){
+void start_page_queue(const size_t size, const size_t page_size){
     R_cursor = 0;
     E_cursor = 0;
-    num_pages = size/page_size;
+    // page_size = REQUEST_SIZE;
+    size_t aligned_size = size/oversubs_ratio_macro;
+    aligned_size = dev_closestUpperDivisible(aligned_size , page_size);
+    num_pages = aligned_size/page_size; // size/page_size;
     printf("num_pages: %llu\n", (unsigned long long) num_pages);
     printf("page_size: %llu\n", (unsigned long long) page_size);
-
 }
 
 void alloc_global_host_content(struct post_content post_cont, struct poll_content poll_cont, struct host_keys keys){
@@ -140,28 +161,15 @@ void alloc_global_host_content(struct post_content post_cont, struct poll_conten
     printf("function: %s line: %d\n", __FILE__, __LINE__);
     GPU_address = post_cont.wr_sg_addr;
     GPU_addr_offset = 0;
-
-    // printf("page_map_size: %llu\n", (unsigned long long) page_map_size);
-    // if(cudaSuccess != cudaMalloc((void **) &page_map, page_map_size*sizeof(long long int)))
-    // {
-    //     printf("Page map could not be allocated on device!\n");
-    //     exit(-1);
-    // }
-    // long long int *temp = (long long int *) malloc(page_map_size*sizeof(long long int));
-    // for (size_t i = 0; i < page_map_size; i++)
-    // {
-    //     temp[i] = -1;
-    // }
-    
-    // int ret = cudaMemcpy(page_map, temp, page_map_size*sizeof(long long int), cudaMemcpyHostToDevice);
-    // if(cudaSuccess != ret)
-    // {
-    //     printf("Page map could not be set; ret: %d!\n", ret);
-    //     exit(-1);
-    // }
-    // free(temp);
-
 }
+
+// __global__ void alloc_batch(){
+//     for(int i = 0; i < 256; i++)
+//     {
+//       for(size_t k = 0; k < 64; k++)
+//         gbatch.wait_queue[i*64+k] = 0;
+//     }
+// }
 
 __global__ void alloc_global_content(struct post_content *post_cont, struct poll_content *poll_cont, struct post_content2 *post_cont2){
     // copy poll and post content to global 
@@ -175,42 +183,25 @@ __global__ void alloc_global_content(struct post_content *post_cont, struct poll
     GPU_address_offset = 0;
     transfer_time = 0;
     printf("qp_num: %d\n", gpost_cont.qp_num);
+    for(int i = 0; i < 256; i++)
+    {
+        gbatch.queue_lock[i] = 0;
+        gbatch.global_post_number[i] = 0;
+        for(size_t k = 0; k < 64; k++)
+            gbatch.wait_queue[i*64+k] = 0;
+    }
+    g_qp_index = 0;
+    for (size_t i = 0; i < 128; i++)
+    {
+        cq_wait[i] = 0;
+        activeThreads[i] = 0;
+        // QP_count.queue_count[i].store(0, simt::memory_order_relaxed);
+
+    }
+     
 }
 
-struct page_map_entry{
-    long long int state;
-    uint lock; // 1: locked, 0: not locked
-
-    __forceinline__
-    __host__ __device__
-    page_map_entry() { init(); }
-
-    __forceinline__
-    __host__
-    void init() {
-        state = -1;
-        lock = 0;
-    }
-
-    __forceinline__
-    __device__
-    bool lock_entry(){
-        volatile uint *entry = (volatile uint *) &lock;
-        int locked = atomicCAS((unsigned int *)entry, 0, 1);
-        return locked == 0;
-    }
-
-    __forceinline__
-    __device__
-    bool release_lock(){
-        volatile uint *entry = (unsigned int *) &lock;
-        int locked = atomicCAS((unsigned int *)entry, 1, 0);
-        return locked == 1;
-    }
-
-};
-
-struct page_entry {
+struct tlb_entry {
     // uint64_t global_id;
     
     // data_page_t* page = nullptr;
@@ -224,11 +215,10 @@ struct page_entry {
     uint lock; // 1: locked, 0: not locked
     volatile uint64_t device_address;
     uint64_t host_address;
-    long long int page_number; // virtual number for 
 
     __forceinline__
     __host__ __device__
-    page_entry(int state, uint64_t host_address) { init(state, host_address); }
+    tlb_entry(int state, uint64_t host_address) { init(state, host_address); }
 
     __forceinline__
     __host__
@@ -237,7 +227,29 @@ struct page_entry {
         lock = 0;
         host_address = i_host_address;
         device_address = NULL;
-        page_number = -1;
+    }
+
+    __forceinline__
+    __device__
+    uint lock_state(){
+        volatile uint *entry = (volatile uint *) &lock;
+        return *entry;
+    }
+
+    __forceinline__
+    __device__
+    uint inc_lock(){
+        volatile uint *entry = (volatile uint *) &lock;
+        uint locked = atomicAdd((unsigned int *)entry, 1);
+        return locked;
+    }
+
+    __forceinline__
+    __device__
+    uint dec_lock(){
+        volatile uint *entry = (volatile uint *) &lock;
+        uint locked = atomicSub((unsigned int *)entry, 1);
+        return locked;
     }
 
     __forceinline__
@@ -273,7 +285,7 @@ struct page_entry {
     // }
 };
 
-__global__ void memcpyDtoH_global(page_entry *d_TLB, size_t size, size_t tlb_size, int request_size, int sizeof_T){
+__global__ void memcpyDtoH_global(tlb_entry *d_TLB, size_t size, size_t tlb_size, int request_size, int sizeof_T){
     size_t index = blockIdx.x * blockDim.x + threadIdx.x;
     size_t id = blockIdx.x * blockDim.x + threadIdx.x;
     size_t stride = blockDim.x * gridDim.x;
@@ -508,6 +520,18 @@ int memcpyServerToHost_global(){
     return 0;
 }
 
+const int Q_SIZE = 128;
+// Kernel function to initialize the queue_count array
+__global__ void initQueueCount(simt::atomic<size_t, simt::thread_scope_device> *queue_count, 
+                               simt::atomic<size_t, simt::thread_scope_device> *qp_filled) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (idx < Q_SIZE) {
+        // Initialize each atomic variable to 0
+        queue_count[idx].store(0, simt::memory_order_relaxed);
+        qp_filled[idx].store(0, simt::memory_order_relaxed);
+    }
+}
+
 template<typename T>
 struct rdma_buf {
     // private:
@@ -526,13 +550,23 @@ struct rdma_buf {
         T *host_buffer;  // in server mode this will be server address
         T *local_buffer; // in server mode this will be host buffer
         size_t tlb_size;
-        page_entry *host_TLB, *d_TLB;
+        tlb_entry *host_TLB, *d_TLB;
         unsigned int *h_tlb, *d_tlb;
 
         // server mode only:
         struct ibv_mr *buffer_mr;
-        page_map_entry *h_page_map;
-        __device__ /*long long int*/ page_map_entry *page_map;
+        int *page_number;
+        int *h_page_number;
+        uint *page_lock;
+        int *page_map;
+        int *h_page_map;
+
+        size_t numPages;
+
+        simt::atomic<size_t, simt::thread_scope_device> *queue_count;
+        simt::atomic<size_t, simt::thread_scope_device> *qp_filled; // 0: empty
+
+    // Constructor
         
         // constructor
         // __device__ __host__
@@ -583,8 +617,8 @@ struct rdma_buf {
             host_address = remote_address + Address_Offset;
             size = user_size;
             request_size = REQUEST_SIZE/sizeof(T);
-            // dev_addr = GPU_address + GPU_addr_offset;
-            // dev_buffer = (T *) dev_addr;
+            dev_addr = GPU_address + GPU_addr_offset;
+            dev_buffer = (T *) dev_addr;
              
             printf("request_size: %d sizeof(T): %d\n", request_size, sizeof(T));
              
@@ -597,6 +631,7 @@ struct rdma_buf {
                 printf("Error on TLB Buffer allocation!\n");
                 exit(-1);
             }
+            printf("RDMA buf started.\n");
         }
 
         // allocate tlb data structure on device so that device can access
@@ -626,7 +661,6 @@ struct rdma_buf {
                 local_buffer = host_buffer;
             }
             // check if the offset does not exceed allowed memory
-            alloc_page_map();
             return 0; // for success
         }
         
@@ -637,19 +671,52 @@ struct rdma_buf {
             
             // if(cudaSuccess != cudaMalloc(&tlb_buffer, tlb_size*sizeof(unsigned int)))
             //     return -1;
-            if(cudaSuccess != cudaMalloc(&d_TLB, tlb_size*sizeof(page_entry)))
+            if(cudaSuccess != cudaMalloc(&d_TLB, tlb_size*sizeof(tlb_entry)))
                 return -1;
 
             if(cudaSuccess != cudaMalloc(&d_tlb, tlb_size*sizeof(unsigned int)))
                 return -1;
 
+            if(cudaSuccess != cudaMalloc(&page_number, tlb_size*sizeof(int)))
+                return -1;
+
+            if(cudaSuccess != cudaMalloc(&page_lock, tlb_size*sizeof(unsigned int)))
+                return -1;
+
+            if(cudaSuccess != cudaMemset(page_lock, 0, tlb_size*sizeof(unsigned int)))
+                return -1;
+
+            size_t restricted_gpu_mem = rest_memory; 
+            const size_t page_size = REQUEST_SIZE; 
+
+            size_t aligned_size = restricted_gpu_mem/oversubs_ratio_macro;
+            aligned_size = closestUpperDivisible(aligned_size , page_size);
+            numPages = aligned_size/page_size;
+
+            printf("numPages for page_map: %llu\n", (unsigned long long) numPages);
+
+            if(cudaSuccess != cudaMalloc(&page_map, numPages*sizeof(int)))
+                return -1;
+
+            // if(cudaSuccess != cudaMemset(page_map, -1, numPages*sizeof(int)))
+            //     return -1;
+
+            if(cudaSuccess != cudaMalloc(&queue_count, Q_SIZE*sizeof(simt::atomic<size_t, simt::thread_scope_device>) ))
+                return -1;
+
+            if(cudaSuccess != cudaMalloc(&qp_filled, Q_SIZE*sizeof(simt::atomic<size_t, simt::thread_scope_device>) ))
+                return -1;
+
+            initQueueCount<<<2,128>>>(queue_count, qp_filled);
             // if(cudaSuccess != cudaMallocManaged(&tlb_sync_host, 1*sizeof(tlb_entry)))
             //     return -1;
 
             printf("tlb_size: %llu sizeof(tlb_entry): %d\n", tlb_size, sizeof(uint8_t));
             
-            host_TLB = (page_entry *) malloc(tlb_size*sizeof(page_entry));
+            host_TLB = (tlb_entry *) malloc(tlb_size*sizeof(tlb_entry));
             h_tlb = (unsigned int *) malloc(tlb_size*sizeof(unsigned int));
+            h_page_number = (int *) malloc(tlb_size*sizeof(int));
+            printf("line: %d\n", __LINE__);
 
             for(size_t i = 0; i < tlb_size; i++){
                 // printf("host_address: %p\n", host_address);
@@ -657,81 +724,49 @@ struct rdma_buf {
                 // printf("host_address + %llu*REQUEST_SIZE: %p\n", i, host_address + i*REQUEST_SIZE);
                 host_TLB[i].init(0, host_address + i*REQUEST_SIZE);
                 h_tlb[i] = 0;
-                // host_TLB[i].device_address = GPU_address + GPU_addr_offset;
-                // GPU_addr_offset += REQUEST_SIZE;
+                host_TLB[i].device_address = GPU_address + GPU_addr_offset;
+                GPU_addr_offset += REQUEST_SIZE;
+                h_page_number[i] = -1;
                 // printf("host_TLB[%d].device_address: %p\n", i, host_TLB[i].device_address);
                 if(i == tlb_size-1) printf("host_address + %llu*REQUEST_SIZE: %p\n", i, host_address + i*REQUEST_SIZE);
             }
-            // printf("Global_GPU_address: %p\n", Global_GPU_address);
+            printf("line: %d\n", __LINE__);
+            h_page_map = (int *) malloc(numPages*sizeof(int));
+            for (size_t i = 0; i < numPages; i++)
+            {
+                h_page_map[i] = -1;
+            }
+            
+            printf("line: %d\n", __LINE__);
+            
             if(update_device_tlb() == -1) return -1;
-
+            free(h_page_number);
+            free(h_page_map);
             // printf("tlb_buffer: %p\n", tlb_buffer);
-            return 0;
-        }
-
-        int alloc_page_map(){
-            
-            size_t restricted_gpu_mem = sizeof(unsigned int)*1963263822llu;
-            restricted_gpu_mem = restricted_gpu_mem/3;
-            const size_t page_size = REQUEST_SIZE;
-
-            size_t page_map_size = restricted_gpu_mem/page_size;
-
-            // allocating page map with page_map_entry
-            printf("restricted_gpu_mem: %llu\n", (long long int) restricted_gpu_mem);
-            h_page_map = (page_map_entry *) malloc(page_map_size*sizeof(page_map_entry)); 
-
-            for (size_t i = 0; i < page_map_size; i++)
-            {
-                h_page_map[i].init();
-            }
-            
-            if(cudaSuccess != cudaMalloc((void **) &page_map, page_map_size*sizeof(page_map_entry)))
-            {
-                printf("Page map could not be allocated on device!\n");
-                exit(-1);
-            }
-
-            int ret = cudaMemcpy(page_map, h_page_map, page_map_size*sizeof(page_map_entry), cudaMemcpyHostToDevice);
-            if(cudaSuccess != ret)
-            {
-                printf("Page map could not be set; ret: %d!\n", ret);
-                exit(-1);
-            }
-
-            // printf("page_map_size: %llu\n", (unsigned long long) page_map_size);
-            // if(cudaSuccess != cudaMalloc((void **) &page_map, page_map_size*sizeof(long long int)))
-            // {
-            //     printf("Page map could not be allocated on device!\n");
-            //     exit(-1);
-            // }
-            // long long int *temp = (long long int *) malloc(page_map_size*sizeof(long long int));
-            // for (size_t i = 0; i < page_map_size; i++)
-            // {
-            //     temp[i] = -1;
-            // }
-            
-            // int ret = cudaMemcpy(page_map, temp, page_map_size*sizeof(long long int), cudaMemcpyHostToDevice);
-            // if(cudaSuccess != ret)
-            // {
-            //     printf("Page map could not be set; ret: %d!\n", ret);
-            //     exit(-1);
-            // }
-            // free(temp);
             return 0;
         }
 
         __forceinline__
         __host__
         int update_device_tlb(){
-            if(cudaSuccess != cudaDeviceSynchronize()) return -1;
-            if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(page_entry), cudaMemcpyHostToDevice))
+            if(cudaSuccess != cudaDeviceSynchronize()) 
                 return -1;
-
-            if(cudaSuccess != cudaMemcpy(d_tlb, h_tlb, tlb_size*sizeof(unsigned int), cudaMemcpyHostToDevice))
+            printf("line: %d\n", __LINE__);
+            if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(tlb_entry), cudaMemcpyHostToDevice))
                 return -1;
+            printf("line: %d\n", __LINE__);
+            if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(tlb_entry), cudaMemcpyHostToDevice))
+                return -1;
+            printf("line: %d\n", __LINE__);
+            if(cudaSuccess != cudaMemcpy(page_number, h_page_number, tlb_size*sizeof(int), cudaMemcpyHostToDevice))
+                return -1;
+            printf("line: %d\n", __LINE__);
+            if(cudaSuccess != cudaMemcpy(page_map, h_page_map, numPages*sizeof(int), cudaMemcpyHostToDevice))
+                return -1;
+            printf("line: %d\n", __LINE__);
             if(cudaSuccess != cudaDeviceSynchronize()) return -1;
-            return 0;
+                return 0;
+            printf("line: %d\n", __LINE__);
         }
 
         // use the below function online in local mode 
@@ -932,6 +967,369 @@ struct rdma_buf {
 
         __forceinline__
         __device__
+        void request_queue(uint64_t che){
+
+        }
+
+    //    __forceinline__
+    //     __device__
+    //     void read(uint64_t che){
+    //         int qp_index = get_smid()%128; // che%128; // warp_id() % 256; // ;
+    //         size_t tid = blockDim.x * blockIdx.x + threadIdx.x; 
+
+    //         int tmp_che1 = che;
+    //         // printf("intro che: %d\n", tmp_che1);
+           
+    //         unsigned long long int data_size = request_size*sizeof(T);
+            
+            
+    //         volatile size_t *p_index = &gpost_cont.n_post[qp_index];
+    //         volatile uint *queue_lock = &gpost_cont.queue_lock[qp_index];
+
+    //         volatile long unsigned int *before_post_count = &gpost_cont.queue_count[qp_index];
+    //         //  __threadfence_system();
+    //         // int lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+    //         while(/**queue_lock == 1 */atomicAdd((unsigned int *)queue_lock, 0) == 1){
+    //             // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+    //             __threadfence();
+    //         }
+
+    //         size_t cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+    //         // __threadfence();
+    //         while(cur_post > 63){
+                
+    //             // int num_filled = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 0);
+    //             // lock_situ = atomicAdd((unsigned int *)queue_lock, 0);
+    //             while(*p_index != 0 || *queue_lock == 1){ 
+    //             // while(atomicAdd((unsigned long long int *)p_index, 0) != 0 || atomicAdd((unsigned int *)queue_lock, 0) == 1){
+    //                 __threadfence();
+    //                 // num_filled = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 0);
+    //                 // __threadfence();
+    //                 // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+                    
+    //             }
+                
+    //             cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+    //             __threadfence();
+    //         }
+           
+    //         // __threadfence();
+    //         atomicAdd((unsigned long long int *)before_post_count, (unsigned long long int ) 1);
+    //         __threadfence();
+
+            
+    //         volatile long unsigned int *queue_count = &gbatch.global_post_number[qp_index];
+    //         volatile long unsigned int *global_post_number = &gbatch.queue_lock[qp_index];
+
+    //         // __threadfence();
+    //         int entry_index = qp_index*64 + cur_post&63;
+    //         // volatile unsigned int *cq_lock = &gpost_cont.cq_lock[entry_index];
+    //         volatile uint *wait_queue = &gbatch.wait_queue[entry_index];
+            
+
+    //         int retries = 0;
+            
+    //         uint64_t rem_addr = host_address + che*request_size*sizeof(T);
+    //         int rkey_index = (/*d_TLB[che].host_address*/ rem_addr - d_remote_address/*gpost_cont.wr_rdma_remote_addr*/)/(8*1024*1024*1024llu);
+    //         uint64_t value_ctrl;
+    //         int finished;
+
+    //         atomicCAS((unsigned int *)wait_queue, (unsigned int) 0, (unsigned int) 1);
+            
+    //         unsigned int req_number = atomicAdd((unsigned long long int *)global_post_number, (unsigned long long int ) 1);
+    //         post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T) /*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
+    //                 req_number, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+            
+    //         // __threadfence();
+    //         atomicAdd((unsigned long long int *)queue_count,  (unsigned long long int ) 1);
+    //         __threadfence();
+    //         atomicCAS((unsigned int *)wait_queue, (unsigned int) 1, (unsigned int) 2);
+    //         __threadfence();
+    //         // *wait_queue = 1;
+
+    //         // __nanosleep(100);
+    //         // __threadfence();
+    //         // printf("before lock cur_post: %d qp_index: %d qc: %d bpc: %d tmp_max: %d\n", 
+    //         //                     cur_post, qp_index, (int) *queue_count, (int) *before_post_count, (int) *global_post_number);
+    //         if(atomicCAS((unsigned int *)queue_lock, (unsigned int) 0, (unsigned int) 1) == 0){
+    //             // __threadfence_system();
+    //             unsigned int biggest_request = cur_post;
+    //             volatile uint *whole_wait_queue = gbatch.wait_queue;
+    //             __nanosleep(10);
+    //             retries = 0;
+    //              __threadfence();
+    //             // // int qc = atomicAdd((unsigned long long int *)queue_count, (unsigned long long int ) 0);
+    //             // // __threadfence_system();
+    //             // // int bpc = atomicAdd((unsigned long long int *)before_post_count, (unsigned long long int ) 0);
+    //             // // __threadfence_system();
+    //             // while(atomicAdd((unsigned long long int *)queue_count, 0) != atomicAdd((unsigned long long int *)before_post_count, 0) ){
+    //             // // while(/**queue_count != *before_post_count*/){
+    //             //     // __threadfence();
+    //             //     if(retries > 100000){
+    //             //         int tmp_max = *global_post_number - 1;
+    //             //         int qc = (int) *queue_count;
+    //             //         printf("got the lock with cur_post: %d qp_index: %d qc: %d bpc: %d tmp_max: %d\n", 
+    //             //                 cur_post, qp_index, qc, (int) *before_post_count, tmp_max);
+    //             //         retries =- 1;
+    //             //     }
+    //             //     retries++; 
+    //             //     __threadfence();
+    //             //     // __nanosleep(10);
+    //             // }
+
+    //             for(int k = 0; k < *before_post_count; k++){
+    //                 if(whole_wait_queue[qp_index*64 + k] == 2){
+    //                     int qc_temp2 = (int) *queue_count;
+    //                     // printf("inside wait queue no wait with\n");
+    //                     __nanosleep(70000);
+    //                     continue;
+    //                 }
+    //                 if(whole_wait_queue[qp_index*64 + k] == 0){
+    //                     int qc_temp2 = (int) *queue_count;
+    //                     // printf("inside wait queue zero detected!\n");
+    //                     __nanosleep(70000);
+    //                     continue;
+    //                 }
+    //                 if(whole_wait_queue[qp_index*64 + k] == 1){
+    //                     retries == 0;
+    //                     while(whole_wait_queue[qp_index*64 + k] == 1){
+    //                         if(retries > 100000){
+    //                             int qc_temp2 = (int) *queue_count;
+    //                             printf("inside wait queue with max: %d  *qc: %d bpc: %d k: %d \
+    //                                     qp_index: %d whole_wait_queue[qp_index*64 + k]: %d\n", 
+    //                                     (int) *global_post_number-1, qc_temp2, (int) *before_post_count, (int) k, 
+    //                                     (int) qp_index, (int) whole_wait_queue[qp_index*64 + k]);
+    //                             retries = -1;
+    //                         }
+    //                         retries++;
+                            
+    //                     }
+                    
+    //                     __threadfence();
+    //                     whole_wait_queue[qp_index*64 + k] = 0;
+    //                 }
+    //             }
+                
+    //             int max = atomicAdd((unsigned long long int *)global_post_number, (unsigned long long int ) 0) - 1;
+    //             __threadfence();
+    //             // *global_post_number - 1;
+    //             update_db_spec((void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_buf + 8192*qp_index, max);
+                 
+                
+    //             int i = max;
+    //             int temp_qc = *queue_count;
+    //             // atomicAdd((unsigned long long int *)queue_count, (unsigned long long int ) 0);;
+    //             // printf("is going to wait for completion with max: %d i: %d, temp_qc: %d che: %d\n", max, i, temp_qc, tmp_che1);
+    //             for (int i = temp_qc - 1; i >= 0 ; i -= 1)
+    //             {
+    //                 void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + ((max - i) & 63) * 64;
+    //                 struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+    //                 volatile uint8_t *op_flag = &cqe64->op_own;
+    //                 retries = 0;
+    //                 __threadfence_system();
+    //                 // int tmp_che = che;
+    //                 // printf("is going to wait for completion with max: %d i: %d, temp_qc: %d che: %d\n", max, (int) i, temp_qc, tmp_che1);
+    //                 while(*op_flag == 240){
+    //                     if(retries > 100000){
+    //                         int big_temp = atomicAdd((unsigned long long int *)queue_count, (unsigned long long int ) 0);
+    //                         int bpc = atomicAdd((unsigned long long int *)before_post_count, (unsigned long long int ) 0);
+    //                         printf("waiting for completion with max: %d  *qc: %d bpc: %d i: %d\n", 
+    //                                 max, temp_qc, bpc, (int) i);
+    //                         retries = -1;
+    //                     }
+    //                     retries++;
+    //                      __threadfence_system();
+    //                 }
+    //                 // printf("                done completion with max: %d i: %d, temp_qc: %d che: %d\n", max, i, temp_qc, tmp_che1);
+    //                 *op_flag = 240;
+    //                  __threadfence_system();
+    //                 // void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
+    //                 // *(uint32_t *) cq_dbrec = (uint32_t) htonl((max + i + 1) & 0xffffff);
+    //                 // __threadfence_system();
+    //             }
+                
+    //             if(temp_qc > 0){
+    //                 void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
+    //                 *(uint32_t *) cq_dbrec = (uint32_t) htonl((max + 1) & 0xffffff);
+    //                 __threadfence_system();
+    //             }
+    //             // if(*queue_count == 4)
+    //             // atomicExch((unsigned long long int *) queue_count, 0);
+    //             *queue_count = 0;
+    //             __threadfence();
+    //             // *wait_queue = 0;
+    //             *before_post_count = 0;
+    //             // atomicExch((unsigned long long int *) before_post_count, 0);
+    //             __threadfence();
+    //             *p_index = 0; // update post number
+    //             // atomicExch((unsigned long long int *) p_index, 0);
+    //             __threadfence();
+    //             *queue_lock = 0;
+    //             // atomicExch((unsigned int *) queue_lock, 0);
+    //             __threadfence();
+    //         }
+    //         else{
+               
+    //             retries = 0;
+    //             // __threadfence();
+    //             // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+    //             __threadfence();
+    //             int max = *global_post_number - 1;
+    //             // printf("is going to wait in else with cur_post: %d qp_index: %d max: %d\n", cur_post, qp_index, max);
+    //             while(*queue_lock == 1/*lock_situ == 1*/){
+                    
+    //                 if(retries > 100000){
+    //                     printf("waiting in else with cur_post: %d qp_index: %d max: %d\n", cur_post, qp_index, max);
+    //                     retries =- 1;
+    //                 }
+    //                 // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+    //                 __threadfence();
+    //                 retries++;
+    //             }
+                
+    //         }
+            
+    //     }
+    
+
+    __forceinline__
+    __device__
+    void read_batch(uint64_t che){
+
+        int qp_index = get_smid()%24; // che%8; // (); // warp_id() % 256; // ;
+        unsigned long long int data_size = request_size*sizeof(T);
+        void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
+        
+        volatile int *activeThreads_ptr = &activeThreads[qp_index];
+        volatile size_t *global_qp_number = &gpost_cont.queue_count[qp_index];
+
+        volatile uint *queue_count1 = &gpost_cont.queue_lock[qp_index];
+        volatile uint *cq_lock = &gpost_cont.cq_lock[qp_index];
+        
+        int currentCount = atomicAdd((int *) activeThreads_ptr, 1);
+        int retries = 1, retries2 = 1;
+        // printf("qp_index: %d retries: %d currentCount: %d  global_qp_number: %d before in > 63 \n", qp_index, retries, currentCount, (int *) global_qp_number);
+        while(currentCount - 8*(*global_qp_number) > 7){
+        
+
+            if(retries2 > 1000000) {
+               
+                retries2 = -1;
+            }
+            retries2++;
+        }
+
+        volatile size_t *p_index = &gpost_cont.n_post[qp_index];
+        // unsigned int cur_post = currentCount;
+        retries = 1;
+        uint ticket = atomicAdd((unsigned int *)queue_count1, (unsigned int ) 1);
+        __threadfence_system();
+        void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (ticket & 63) * 64;
+        struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+        
+        uint64_t rem_addr = host_address + che*request_size*sizeof(T);
+        int rkey_index = (/*d_TLB[che].host_address*/ rem_addr - d_remote_address/*gpost_cont.wr_rdma_remote_addr*/)/(8*1024*1024*1024llu);
+
+        d_TLB[che].device_address = dev_addr + che*request_size*sizeof(T);
+        
+        uint64_t value_ctrl;
+        post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address, 4, gpost_cont.qp_num + qp_index, 
+                /*(*global_qp_number)*64+*/ticket, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+
+        __threadfence_system();
+        
+        atomicAdd((unsigned long long int *)p_index, 1);
+        __threadfence_system();
+        if(atomicCAS((unsigned int *)cq_lock, 0, 1) == 0){
+ 
+            __nanosleep(10000);
+            __threadfence_system();
+            int n = 1;
+            while((*p_index) != (*queue_count1)/*qp_filled[qp_index].load(simt::memory_order_acquire)*/){
+                // __nanosleep(1000*n);
+                __threadfence_system();
+                n++;
+            }
+            // __threadfence_system();
+            uint max = (*p_index)-1; // qp_filled[qp_index].load(simt::memory_order_acquire) - 1;
+            update_db_spec((void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_buf + 8192*qp_index, (*p_index)-1);
+            retries = 1;
+            volatile uint8_t *op_flag = &cqe64->op_own;
+            while(*op_flag == 240){
+                    
+                    if(retries > 1000000) {
+                        printf("updating polling: qp_index: %d retries: %d cur_post: %d max: %d (*p_index): %d ticket: %d\n",
+                         qp_index, retries, (int) currentCount, (int) max, (int) (*p_index), (int) ticket);
+                        retries = -1;
+                        // break;
+                    }
+                    retries++;
+            }
+            *op_flag = 240;
+            __threadfence_system();
+            *(uint32_t *) cq_dbrec = (uint32_t) htonl((/*(*global_qp_number)*64 + */(*p_index)-1 + 1) & 0xffffff);
+            __threadfence_system();
+            
+            atomicCAS((unsigned int *)cq_lock, 1, 0);
+        }
+        else{
+            retries = 1;
+            __threadfence_system();
+            uint max = (*p_index) - 1;
+            // qp_filled[qp_index].load(simt::memory_order_acquire) - 1;
+            volatile uint8_t *op_flag = &cqe64->op_own;
+            while(*op_flag == 240){
+                    if(retries > 9500){
+                    //    read(che);
+                        post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, /*dev_addr + che*request_size*sizeof(T)*/d_TLB[che].device_address, 4, gpost_cont.qp_num + qp_index, 
+                        currentCount, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+                        update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
+                        retries = 1;
+                    }
+                    if(retries > 1000000) {
+                        printf("waiting polling: qp_index: %d retries: %d cur_post: %d p_index: %d activeThreads: %d, ticket: %d\n", 
+                                qp_index, retries, (int) currentCount, (int)  max, activeThreads[qp_index], (int) ticket);
+                        retries = -1;
+                        // break;
+                    }
+                    retries++;
+            }
+            *op_flag = 240;
+            __threadfence_system();
+            retries = 1;
+            while((*cq_lock) == 1){
+                if(retries > 1000000) {
+                        printf("stuck in cq_lock==1: qp_index: %d retries: %d cur_post: %d max: %d (*p_index): %d\n",
+                         qp_index, retries, (int) currentCount, (int) max, (int) (*p_index));
+                        retries = -1;
+                    }
+                    retries++;
+            }
+        }
+        if((currentCount+1) % 8 == 0){
+            retries = 1;
+            atomicAdd((unsigned long long int *)global_qp_number, 1);
+        }
+    }
+
+    __forceinline__
+    __device__
+    bool lock_page(uint64_t page_n){
+        volatile uint *entry = (volatile uint *) &page_lock[page_n];
+        uint locked = atomicCAS((unsigned int *)entry, 0, 1);
+        return locked == 0;
+    }
+
+    __forceinline__
+    __device__
+    bool release_page(uint64_t page_n){
+        volatile uint *entry = (volatile uint *) &page_lock[page_n];;
+        uint locked = atomicCAS((unsigned int *)entry, 1, 0);
+        return locked == 1;
+    }
+    
+        __forceinline__
+        __device__
         size_t get_page(){
             size_t ret = atomicAdd( (unsigned long long int *) &R_cursor, 1)%num_pages;
             return ret;
@@ -953,9 +1351,89 @@ struct rdma_buf {
 
         __forceinline__
         __device__
-        void read(uint64_t che){
-            int qp_index = get_smid()%128; // get_smid(); // warp_id() % 256; // ;
+        int get_page_number(size_t che){
+            int pageNumber = page_number[che];
+            // printf("page number: %li\n", pageNumber);
 
+            if(pageNumber == -1){
+                do{
+                    pageNumber = (int) get_page();
+                    // printf("page number: %li\n", pageNumber); 
+                    int page_to_evict = page_map[pageNumber];
+                    // printf("1. che: %llu evicting: %llu\n", (unsigned long long) che, (unsigned long long) page_to_evict);
+                    if(page_to_evict != -1){
+                        // printf("1. che: %llu evicting: %llu\n", (unsigned long long) che, (unsigned long long) page_number);
+                        int retries = 1;
+                        volatile uint *entry = (volatile uint *) &page_lock[page_to_evict];
+                        bool success = true;
+                        while(atomicCAS((unsigned int *)entry, 0, 10000) != 0){
+                            // if(retries > 100000) {
+                            //     // pageNumber = (int) get_page();
+                            //     retries = 0;
+                            //     success = false;
+                            //     break;
+                            //     // printf("stuck in eviction for reading page: %d\n", (int) che);
+                            // }
+                            retries++;
+                        }
+                        if (success == false) continue;
+                        // printf("che: %llu evicting: %llu d_tlb[page_to_evict]: %d\n", (unsigned long long) che, (unsigned long long) page_number, d_tlb[page_to_evict]);
+                        atomicCAS(&d_tlb[page_to_evict], 2, 0);
+                        // d_TLB[page_to_evict].device_address = NULL;
+                        // d_TLB[page_to_evict].page_number = -1;
+                        page_number[page_to_evict] = -1;
+                        // d_TLB[page_to_evict].release_lock();
+                        // release_page(page_to_evict);
+                        atomicExch((unsigned int *)entry, 0);
+                        // while(atomicCAS((unsigned int *)entry, 1000, 0) != 1000);
+                    }
+                    page_map[pageNumber] = (int) che;
+                    page_number[che] = pageNumber;
+                    break;
+                }
+                while(true);
+            }
+
+            // if(pageNumber == -1){
+            //     pageNumber = (int) get_page();
+            //     // printf("page number: %li\n", pageNumber); 
+            //     int page_to_evict = page_map[pageNumber];
+            //     // printf("1. che: %llu evicting: %llu\n", (unsigned long long) che, (unsigned long long) page_to_evict);
+            //     if(page_to_evict != -1){
+            //         // printf("1. che: %llu evicting: %llu\n", (unsigned long long) che, (unsigned long long) page_number);
+            //         int retries = 1;
+            //         volatile uint *entry = (volatile uint *) &page_lock[page_to_evict];
+            //         while(/*!lock_page(page_to_evict)*/atomicCAS((unsigned int *)entry, 0, 1000) != 0){
+            //             if(retries > 1000) {
+            //                 pageNumber = (int) get_page();
+            //                 retries = 0;
+                            
+            //                 // printf("stuck in eviction for reading page: %d\n", (int) che);
+            //             }
+            //             retries++;
+            //         }
+            //         // printf("che: %llu evicting: %llu d_tlb[page_to_evict]: %d\n", (unsigned long long) che, (unsigned long long) page_number, d_tlb[page_to_evict]);
+            //         atomicCAS(&d_tlb[page_to_evict], 2, 0);
+            //         // d_TLB[page_to_evict].device_address = NULL;
+            //         // d_TLB[page_to_evict].page_number = -1;
+            //         page_number[page_to_evict] = -1;
+            //         // d_TLB[page_to_evict].release_lock();
+            //         // release_page(page_to_evict);
+            //         atomicExch((unsigned int *)entry, 0);
+            //         // while(atomicCAS((unsigned int *)entry, 1000, 0) != 1000);
+            //     }
+            //     page_map[pageNumber] = (int) che;
+            //     page_number[che] = pageNumber;
+            // }
+            return pageNumber;
+        }
+
+        __forceinline__
+        __device__
+        void read(uint64_t che){
+
+            int qp_index = get_smid()%128; // che%8; // (); // warp_id() % 256; // ;
+            // atomicAdd((unsigned long long int *)&g_qp_index, 1)
             // unsigned int mask = __match_any_sync(__activemask(), qp_index);
             // unsigned int leader = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
 
@@ -963,87 +1441,77 @@ struct rdma_buf {
             unsigned long long int data_size = request_size*sizeof(T);
             void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
             
-            bool isSet = false;
+            // bool isSet = false;
             volatile uint *cq_lock = &gpost_cont.cq_lock[qp_index];
+
             
-            // __syncwarp(mask);
-            int retries = 0;
-            // if(lane_id() == leader){
-                while(atomicCAS((unsigned int *)cq_lock, 0, 1) != 0){
-                    // retries++;
-                }
+            int retries = 1;
             
+            
+
+            while(atomicCAS((unsigned int *)cq_lock, 0, 1) != 0){
+                
+                // if(retries >= 100000){
+                //     // qp_index = atomicAdd((unsigned long long int *)&g_qp_index, 1)%128;
+                //     // cq_lock = &gpost_cont.cq_lock[qp_index];
+                //     printf("qp_index: %d retries: %d stuck in lock cq\n", qp_index, retries);
+                //     retries = -1;
+                // }
+                // retries++;
+            }
+            // printf("qp_index: %d retries: %d\n", qp_index, retries);
+            // printf("retries: %d qp_index: %d\n", retries, qp_index);
+            // atomicAdd((unsigned long long int *)&g_qp_index, (unsigned long long int) retries);
+            // retries = 0;
+
             volatile size_t *p_index = &gpost_cont.n_post[qp_index];
             unsigned int cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
             void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
             struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
             
-            // get_page is circular 
-            if(d_TLB[che].page_number == -1){
-                size_t page_number = get_page();
-                size_t page_to_evict = page_map[page_number].state;
-                if(page_to_evict != -1){
-                    // printf("1. che: %llu evicting: %llu\n", (unsigned long long) che, (unsigned long long) page_number);
-                    
-                    while(!d_TLB[page_to_evict].lock_entry());
-                    // printf("che: %llu evicting: %llu d_tlb[page_to_evict]: %d\n", (unsigned long long) che, (unsigned long long) page_number, d_tlb[page_to_evict]);
-                    atomicCAS(&d_tlb[page_to_evict], 2, 0);
-                    d_TLB[page_to_evict].device_address = NULL;
-                    d_TLB[page_to_evict].page_number = -1;
-                    
-                    d_TLB[page_to_evict].release_lock();
-                }
-                page_map[page_number].state = che;
-                d_TLB[che].page_number = page_number;
-            }
-            d_TLB[che].device_address = d_TLB[che].page_number*data_size + Global_GPU_address;
-
-            // if(d_TLB[che].device_address == NULL) 
-            //     printf("inside read - d_TLB[%llu].device_address: %p\n", che, d_TLB[che].device_address);
-
             uint64_t rem_addr = host_address + che*request_size*sizeof(T);
             int rkey_index = (/*d_TLB[che].host_address*/ rem_addr - d_remote_address/*gpost_cont.wr_rdma_remote_addr*/)/(8*1024*1024*1024llu);
             uint64_t value_ctrl;
-            int finished;
+            // int finished;
+            // uint64_t thid = blockDim.x * blockIdx.x + threadIdx.x;
+            // printf("che: %llu qp_index: %d thid : %llu\n", che, qp_index, thid);
+            // printf("che: %llu thid: %llu ", che, thid);
+            // unsigned long long start = clock64();
+            // d_TLB[che].device_address = dev_addr + che*request_size*sizeof(T);
+            // get_page is circular 
+            int pageNumber = get_page_number(che);
             
+            /*page_number[che] = (long long int) */atomicAdd((unsigned long long int *)&g_qp_index, (unsigned long long int) 1);
+            // get_page_number(che); //page_number_list[che]; // d_TLB[che].page_number;
 
-            post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address /*dev_addr + che*request_size*sizeof(T)*/, 4, gpost_cont.qp_num + qp_index, 
+            post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + pageNumber*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
                     cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
-            // __syncwarp(mask);
-            // printf("mask: %d\n", mask);
-            // if(cur_post == (*p_index-1)){
-                
-                // update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
-            // }
-            // __syncwarp(mask);
+            
+            
+            // unsigned long long end = clock64();
+            // unsigned long long elapsed = end - start;
+            // printf("Elapsed clock cycles: %llu\n", elapsed);
+
+            // update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
+            // 
+
             volatile uint8_t *op_flag = &cqe64->op_own;
             retries = 0;
-            
             while(*op_flag == 240){
-                    if(retries > 15){
-                    //     unsigned int mask2 = __match_any_sync(__activemask(), (unsigned long long)qp_index);
-                        
-                    //     cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
-                    //     cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
-                    //     op_flag = &cqe64->op_own;
-                    //     // unsigned int leader2 = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
-                        post_m(rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address /*dev_addr + che*request_size*sizeof(T)*/, 4, gpost_cont.qp_num + qp_index, 
-                        cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
-                    //     __syncwarp(mask2);
-                    //     if(cur_post == (*p_index-1)){
-                            // update_db(&value_ctrl, (void *) gpost_cont.bf_reg[qp_index]);
-                    //     }
-                    //     __syncwarp(mask2);
-                        retries = -1;
-                    }
-                    // atomicAdd((unsigned long long int *) &transfer_time, 1);
-                    retries++;
+                    
+                    // retries++;
+                    // if(retries>100000) {
+                    //     printf("stuck in completion che: %llu qp_index: %d\n", che, qp_index);
+                    //     retries=-1;
+                    // }
                     
             }
+            
+
+            // atomicAdd((unsigned long long int *)&cq_wait[qp_index], (unsigned long long int) retries);
             // __syncwarp(mask);
             // __threadfence_system();
             *op_flag = 240;
-            
             // if(lane_id() == leader){  
             // __threadfence_system();
             *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post + 1) & 0xffffff);
@@ -1051,55 +1519,347 @@ struct rdma_buf {
         }
 
 
+        // // check TLB
+        // __forceinline__
+        // __device__ __host__
+        // uint8_t checkTLB(size_t index, unsigned int *tlb_buffer){
+        //     // printf("index: %d\n", index);
+        //     return tlb_buffer[index];
+        // }
+
+        // __forceinline__
+        // __device__ __host__
+        // size_t getTLBindex(size_t index, int request_size){
+        //     // printf("index: %d sadasdrequest_size: %d\n", index, request_size);
+        //     return floor((double)index/request_size);
+        // }
+
+        // // lock TLB entry
+        // __forceinline__
+        // __device__
+        // int lock_tlb_entry(size_t index){
+        //     // if(atomicCAS((unsigned int *)&tlb_buffer[index], 0, 1) == 0){
+        //     //     return 1; // on success
+        //     // }
+        //     return 0; // on failure
+        // }
+
+        // __forceinline__
+        // __device__
+        // int lock_cq_entry(size_t index){
+        //     bool isSet = false; 
+        //     do 
+        //     {
+        //         if (isSet = atomicCAS((unsigned int *)&gpost_cont.cq_lock[index], (unsigned int) 0, (unsigned int) 1) == 0) 
+        //         {
+        //             return isSet;
+        //         }
+        //         // if (isSet) 
+        //         // {
+        //         //     mutex = 0;
+        //         // }
+        //     } 
+        //     while (!isSet);
+            
+        //     // while(atomicCAS((unsigned int *)&gpost_cont.cq_lock[index], (unsigned int) 0, (unsigned int) 1)) != 0){
+        //     //     // printf("index: %d gpost_cont.cq_lock[index]: %d isSet: %d\n", 
+        //     //     //         index, gpost_cont.cq_lock[index], isSet);
+        //     //     // sleep_d(20);
+        //     // };
+            
+        //     // return 1;
+        //     // if(atomicCAS((unsigned int *)&gpost_cont.cq_lock[index], 0, 1) == 0){
+        //     //     return 1; // on success
+        //     // }
+        //     // return 0; // on failure
+        // }
         
+        // // sleep for device
+        // __forceinline__
+        // __device__
+        // void sleep_d(clock_t delay){
+        //     clock_t start_clock = clock();
+        //     // clock_t clock_offset = 0;
+        //     while (clock() - start_clock < delay)
+        //     {
+                
+        //     }
+        // }
+
+        // __forceinline__
+        // __device__ 
+        // unsigned long long int update_gpu_offset(unsigned long long int data_size){
+        //     unsigned long long int offset = atomicAdd((unsigned long long int *)&GPU_address_offset, (unsigned long long int) data_size);
+        //     return offset;
+        // }
 
         // [] operator for lvalue the default one
         __forceinline__
         __device__ 
         T operator[](const size_t index) {
-            // T *add = (T *) address;
-            // #ifdef  __CUDA_ARCH__
                 uint64_t che;
                 uint64_t id = blockDim.x * blockIdx.x + threadIdx.x; 
-
-                che = floor((double)index/request_size); // floor((double)index/request_size); //getTLBindex(index, request_size);
-                // select which qp and cq to use:
-                // TODO: for oversubscription, first check if gpu has enough free memory
-                // volatile uint8_t *page_entry = &d_tlb[che];
-
-
+                che = index/request_size;
 
                 unsigned int mask1 = __match_any_sync(__activemask(), (unsigned long long)che);
                 unsigned int leader1 = __ffs(mask1) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
-                T return_val;
-                if(leader1 == lane_id()){
-                    while(!d_TLB[che].lock_entry());
-                    if(d_tlb[che] == 0){
-                        read(che);
-                        atomicCAS(&d_tlb[che], 0, 2);
-                    }
-                }
                 
+                T return_val;
+                volatile uint *entry;
+                if(leader1 == lane_id()){
+                    entry = (volatile uint *) &page_lock[che];
+                    // bool loop = false;
+                    int retries = 1;
 
+                    uint turn;
+                    do{
+                        turn = atomicAdd((unsigned int *)entry, 1);
+                        if(turn == 0){
+                            if(d_tlb[che] == 0){
+                                // atomicCAS(&d_tlb[che], 0, 1);
+                                read(che);
+                                // read_batch(che);
+                                atomicCAS(&d_tlb[che], 0, 2);
+                            }
+                            break;
+                        }
+                        else if(turn > 0 && turn < 5000){
+                            volatile uint *pageStatus = (volatile uint *) &d_tlb[che];
+                            __threadfence();  
+                            int retr = 1;
+                            bool success = true;
+                            while(atomicAdd(&d_tlb[che], 0) != 2){
+                                // if(retr > 1000) {
+                                //     success = false;
+                                //     atomicSub((unsigned int *)entry, 1);
+                                //     break;
+                                // }
+                                // if(retr > 100000){
+                                //     printf("stuck in else if for page status update: %d pageStatus: %d entry: %d\n", 
+                                //     (int) che, (int) *pageStatus, (int) *entry);
+                                //     retr=-1;
+                                // }
+                                retr++;
+                                // __nanosleep(500);
+                                __threadfence();
+                            }
+                            break;
+                        }
+                        else{
+                            __threadfence();
+                            while(atomicAdd((unsigned int *)entry, 0) >= 5000){
+                                __threadfence();
+                            }
+                        }
+                        // else if(turn >= 1000){ // being evicted
+                        //     atomicSub((unsigned int *)entry, 1);
+                        // }
+
+                        // if(retries > 100000){
+                        //     printf("stuck in lock_page for reading page: %d turn: %d\n", (int) che, (int) turn);
+                        //     retries=-1;
+                        // }
+                        retries++;
+                    }
+                    while(true);
+
+
+                    // do{
+                    //     if(atomicCAS((unsigned int *)entry, 0, 1) == 0){
+                    //         // got the lock for page
+                    //         if(d_tlb[che] == 0){
+                    //             // atomicCAS(&d_tlb[che], 0, 1);
+                    //             read(che);
+                    //             // read_batch(che);
+                    //             atomicCAS(&d_tlb[che], 0, 2);
+                    //         }
+                    //         break;
+                    //     }
+                    //     else if(atomicCAS((unsigned int *)entry, 0, 1) > 0 && atomicCAS((unsigned int *)entry, 0, 1) < 100){
+                    //         // other page is already reading from this
+                    //         if(atomicAdd((unsigned int *)entry, 1) < 1000){
+                    //             volatile uint *pageStatus = (volatile uint *) &d_tlb[che];
+                    //             __threadfence();  
+                    //             int retr = 1;
+                    //             bool success = true;
+                    //             while(*pageStatus != 2){
+                    //                 // if(retr > 1000) {
+                    //                 //     success = false;
+                    //                 //     atomicSub((unsigned int *)entry, 1);
+                    //                 //     break;
+                    //                 // }
+                    //                 if(retr > 100000){
+                    //                     printf("stuck in else if for page status update: %d pageStatus: %d entry: %d\n", 
+                    //                     (int) che, (int) *pageStatus, (int) *entry);
+                    //                     retr=-1;
+                    //                 }
+                    //                 retr++;
+                    //                 // __nanosleep(500);
+                    //                 __threadfence();
+                    //             }
+                    //             if(success)
+                    //                 break;
+                    //         }
+                            
+                    //     }
+
+                    //     if(retries > 100000){
+                    //         printf("stuck in lock_page for reading page: %d\n", (int) che);
+                    //         retries=-1;
+                    //     }
+                    //     retries++;
+                        
+                    // }while(true);
+
+
+                    // // unsigned long long start = clock64();
+                    // while(/*!d_TLB[che].lock_entry()*//*!lock_page(che)*/atomicCAS((unsigned int *)entry, 0, 1) != 0){
+                    //     if(retries > 100000) {
+                    //         printf("stuck in lock_page for reading page\n");
+                    //         retries=-1;
+                    //     }
+                    //     retries++;
+                    // }
+                    // // unsigned long long end = clock64();
+                    // // unsigned long long elapsed = end - start;
+                    // // printf("Elapsed clock cycles: %llu\n", elapsed);
+                    
+                    // if(d_tlb[che] == 0){
+                    //     // atomicCAS(&d_tlb[che], 0, 1);
+                    //     read(che);
+                    //     // read_batch(che);
+                    //     atomicCAS(&d_tlb[che], 0, 2);
+                    // }
+                }
                 __syncwarp(mask1);
-                if(d_TLB[che].device_address == NULL){
-                    // printf("mask1: %d, d_TLB[%llu].device_address: %p\n", mask1, che, d_TLB[che].device_address);
-                    return_val = (T) 0;
-                }
-                else{
-                    T *tmp_array = (T *) d_TLB[che].device_address; 
-                    return_val = tmp_array[index%request_size];
-                }
+                // volatile int *che_entry = (volatile int *) &page_number[che];
+                __threadfence(); // _system();
+                T *tmp_array = (T *) (dev_addr + /*atomicAdd((int *)che_entry, 0)*/ page_number[che]*request_size*sizeof(T)); // (T *) d_TLB[che].device_address;
+                // if(page_number[che] < 0) printf("page_number[che]: %d d_tlb[che]: %d\n", page_number[che], (int) d_tlb[che]);
+                // return_val = page_number[che] < 0 ? 0: tmp_array[index%request_size];
+                return_val = tmp_array[index%request_size];
+                // dev_buffer[index];
                 __syncwarp(mask1);
                 // __syncthreads();
                 if(leader1 == lane_id()){
-                    d_TLB[che].release_lock();
+                    // release_page(che);
+                    atomicSub((unsigned int *)entry, 1); 
+                    // atomicCAS((unsigned int *)entry, 1, 0) 
+                    // d_TLB[che].release_lock();
                 }
                 // __syncwarp(mask1);
 
                 return return_val;
 
+                
+
+                //  // floor((double)index/request_size); //getTLBindex(index, request_size);
+                // // select which qp and cq to use:xs
+                // // TODO: for oversubscription, first check if gpu has enough free memory
+                // // volatile uint8_t *page_entry = &d_tlb[che];
+                //     if(/*d_TLB[che].state == 2*/d_tlb[che] == 2){ // page completely on gpu or dirty on gpu
+                //         // T *tmp_array =  (T *) d_TLB[che].device_address;
+                //         // // LRU is incremented
+                //         // // printf(" tlb: 2 ");
+                //         // return tmp_array[index%request_size];
+                        
+                //         return dev_buffer[index];
+                //     }
+                //     if(/*d_TLB[che].state == 0 || d_TLB[che].state == 5*/d_tlb[che] == 0){ // page completely on cpu or dirty on cpu
+                    
+                //         // unsigned int mask1 = __activemask(); // __match_any_sync(__activemask(), (unsigned long long)qp_index);
+                //         // unsigned int leader1 = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
+
+                //         if(d_TLB[che].lock_entry()){
+                //             read(che);
+                //             atomicCAS(&d_tlb[che], 0, 2);
+                //             // *page = 2;
+                //             // if(lane_id() == leader)
+                                
+                //             d_TLB[che].release_lock();
+                //         }
+                //         // else{
+                //         //     // volatile unsigned int *tlb_value = (volatile unsigned int *) &d_tlb[che];
+                //         //     int prefetched = 0;
+                //         //     int prefetch_index = che+1;
+                //         //     int tries = 0;
+                //         //     while (prefetch_index < tlb_size){
+                //         //         if(d_tlb[prefetch_index] == 0) {
+                //         //             if(d_TLB[prefetch_index].lock_entry()){
+                //         //                 prefetched = 1;
+                //         //                 break;
+                //         //             }
+                //         //         }
+                //         //         if(tries>5) break;
+                //         //         tries++;
+                //         //         prefetch_index++;   
+                //         //     }
+                            
+                //         //     if(prefetched){
+                //         //         read(prefetch_index);
+                //         //         // printf("prefetching page: %llu\n", prefetch_index);
+                                
+                //         //         atomicCAS(&d_tlb[prefetch_index], 0, 2);
+                //         //         d_TLB[prefetch_index].release_lock();
+                //         //     }
+
+                //         // }
+
+                //         volatile unsigned int *tlb_value = (volatile unsigned int *) &d_tlb[che];
+                //         while(true){
+                //             if(*tlb_value == 2) break;
+                //             // __nanosleep(100);
+                //         };
+
+                       
+                        
+                //     }
+                //     // __syncthreads();
+                //     return dev_buffer[index];
+                //     // return T();
         }
+
+        
+
+        // __forceinline__
+        // __device__
+        // T& operator[](const size_t index){ 
+        // // rvalue(size_t index, T new_value){
+            
+        //     // #ifdef  __CUDA_ARCH__
+        //         printf("lvalue\n");
+        //         T *tmp_array;
+        //         // int ind;
+        //         // int che = floor((double)index/request_size);
+        //         // if(d_TLB[che].state == 2){
+        //         //     tmp_array = (T *)d_TLB[che].device_address;
+        //         //     ind = index&(request_size-1);gpost_cont
+        //         //     // tmp_array[ind] = new_value;
+        //         // }
+        //         // else if(d_TLB[che].state == 0){
+                    
+        //         //     if(d_TLB[che].lock_entry()){
+        //         //         unsigned long long int data_size = request_size*sizeof(T);
+        //         //         unsigned long long int offset = atomicAdd((unsigned long long int *)&GPU_address_offset, (unsigned long long int) data_size);
+        //         //         d_TLB[che].device_address = Global_GPU_address + offset;
+                        
+        //         //         d_TLB[che].state = 2;
+        //         //         d_TLB[che].release_lock();
+        //         //     }
+        //         //     else{
+        //         //         while(d_TLB[che].state != 2);
+        //         //     }
+        //         //     tmp_array = (T *)d_TLB[che].device_address;
+        //         //     ind = index&(request_size-1);
+        //         //     // tmp_array[ind] = new_value;
+                    
+        //         // }
+        //         unsigned long long int data_size = request_size*sizeof(T);
+        //         unsigned long long int offset = atomicAdd((unsigned long long int *)&GPU_address_offset, (unsigned long long int) data_size);
+        //         tmp_array = (T *) Global_GPU_address + offset;
+        //     return tmp_array[0];
+
+        // }
 
         // destructor ~
 
@@ -1144,6 +1904,227 @@ struct rdma_buf {
                 
             // #endif
         }
+
+        // __forceinline__
+        // __device__
+        // void read(uint64_t che){
+        //     int qp_index = get_smid()%128; // che%128; // warp_id() % 256; // ;
+        //     size_t tid = blockDim.x * blockIdx.x + threadIdx.x; 
+
+        //     int tmp_che1 = che;
+        //     // printf("intro che: %d\n", tmp_che1);
+           
+        //     unsigned long long int data_size = request_size*sizeof(T);
+            
+            
+        //     volatile size_t *p_index = &gpost_cont.n_post[qp_index];
+        //     volatile uint *queue_lock = &gpost_cont.queue_lock[qp_index];
+
+        //     volatile long unsigned int *before_post_count = &gpost_cont.queue_count[qp_index];
+        //     //  __threadfence_system();
+        //     // int lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+        //     while(/**queue_lock == 1 */atomicAdd((unsigned int *)queue_lock, 0) == 1){
+        //         // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+        //         __threadfence();
+        //     }
+
+        //     size_t cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+        //     // __threadfence();
+        //     while(cur_post > 63){
+                
+        //         // int num_filled = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 0);
+        //         // lock_situ = atomicAdd((unsigned int *)queue_lock, 0);
+        //         while(*p_index != 0 || *queue_lock == 1){ 
+        //         // while(atomicAdd((unsigned long long int *)p_index, 0) != 0 || atomicAdd((unsigned int *)queue_lock, 0) == 1){
+        //             __threadfence();
+        //             // num_filled = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 0);
+        //             // __threadfence();
+        //             // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+                    
+        //         }
+                
+        //         cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+        //         __threadfence();
+        //     }
+           
+        //     // __threadfence();
+        //     atomicAdd((unsigned long long int *)before_post_count, (unsigned long long int ) 1);
+        //     __threadfence();
+
+            
+        //     volatile long unsigned int *queue_count = &gbatch.global_post_number[qp_index];
+        //     volatile long unsigned int *global_post_number = &gbatch.queue_lock[qp_index];
+
+        //     // __threadfence();
+        //     int entry_index = qp_index*64 + cur_post&63;
+        //     // volatile unsigned int *cq_lock = &gpost_cont.cq_lock[entry_index];
+        //     volatile uint *wait_queue = &gbatch.wait_queue[entry_index];
+            
+
+        //     int retries = 0;
+            
+        //     uint64_t rem_addr = host_address + che*request_size*sizeof(T);
+        //     int rkey_index = (/*d_TLB[che].host_address*/ rem_addr - d_remote_address/*gpost_cont.wr_rdma_remote_addr*/)/(8*1024*1024*1024llu);
+        //     uint64_t value_ctrl;
+        //     int finished;
+
+        //     atomicCAS((unsigned int *)wait_queue, (unsigned int) 0, (unsigned int) 1);
+            
+        //     unsigned int req_number = atomicAdd((unsigned long long int *)global_post_number, (unsigned long long int ) 1);
+        //     post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T) /*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
+        //             req_number, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+            
+        //     // __threadfence();
+        //     atomicAdd((unsigned long long int *)queue_count,  (unsigned long long int ) 1);
+        //     __threadfence();
+        //     atomicCAS((unsigned int *)wait_queue, (unsigned int) 1, (unsigned int) 2);
+        //     __threadfence();
+        //     // *wait_queue = 1;
+
+        //     // __nanosleep(100);
+        //     // __threadfence();
+        //     // printf("before lock cur_post: %d qp_index: %d qc: %d bpc: %d tmp_max: %d\n", 
+        //     //                     cur_post, qp_index, (int) *queue_count, (int) *before_post_count, (int) *global_post_number);
+        //     if(atomicCAS((unsigned int *)queue_lock, (unsigned int) 0, (unsigned int) 1) == 0){
+        //         // __threadfence_system();
+        //         unsigned int biggest_request = cur_post;
+        //         volatile uint *whole_wait_queue = gbatch.wait_queue;
+        //         __nanosleep(10);
+        //         retries = 0;
+        //          __threadfence();
+        //         // // int qc = atomicAdd((unsigned long long int *)queue_count, (unsigned long long int ) 0);
+        //         // // __threadfence_system();
+        //         // // int bpc = atomicAdd((unsigned long long int *)before_post_count, (unsigned long long int ) 0);
+        //         // // __threadfence_system();
+        //         // while(atomicAdd((unsigned long long int *)queue_count, 0) != atomicAdd((unsigned long long int *)before_post_count, 0) ){
+        //         // // while(/**queue_count != *before_post_count*/){
+        //         //     // __threadfence();
+        //         //     if(retries > 100000){
+        //         //         int tmp_max = *global_post_number - 1;
+        //         //         int qc = (int) *queue_count;
+        //         //         printf("got the lock with cur_post: %d qp_index: %d qc: %d bpc: %d tmp_max: %d\n", 
+        //         //                 cur_post, qp_index, qc, (int) *before_post_count, tmp_max);
+        //         //         retries =- 1;
+        //         //     }
+        //         //     retries++; 
+        //         //     __threadfence();
+        //         //     // __nanosleep(10);
+        //         // }
+
+        //         for(int k = 0; k < *before_post_count; k++){
+        //             if(whole_wait_queue[qp_index*64 + k] == 2){
+        //                 int qc_temp2 = (int) *queue_count;
+        //                 // printf("inside wait queue no wait with\n");
+        //                 __nanosleep(70000);
+        //                 continue;
+        //             }
+        //             if(whole_wait_queue[qp_index*64 + k] == 0){
+        //                 int qc_temp2 = (int) *queue_count;
+        //                 // printf("inside wait queue zero detected!\n");
+        //                 __nanosleep(70000);
+        //                 continue;
+        //             }
+        //             if(whole_wait_queue[qp_index*64 + k] == 1){
+        //                 retries == 0;
+        //                 while(whole_wait_queue[qp_index*64 + k] == 1){
+        //                     if(retries > 100000){
+        //                         int qc_temp2 = (int) *queue_count;
+        //                         printf("inside wait queue with max: %d  *qc: %d bpc: %d k: %d \
+        //                                 qp_index: %d whole_wait_queue[qp_index*64 + k]: %d\n", 
+        //                                 (int) *global_post_number-1, qc_temp2, (int) *before_post_count, (int) k, 
+        //                                 (int) qp_index, (int) whole_wait_queue[qp_index*64 + k]);
+        //                         retries = -1;
+        //                     }
+        //                     retries++;
+                            
+        //                 }
+                    
+        //                 __threadfence();
+        //                 whole_wait_queue[qp_index*64 + k] = 0;
+        //             }
+        //         }
+                
+        //         int max = atomicAdd((unsigned long long int *)global_post_number, (unsigned long long int ) 0) - 1;
+        //         __threadfence();
+        //         // *global_post_number - 1;
+        //         update_db_spec((void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_buf + 8192*qp_index, max);
+                 
+                
+        //         int i = max;
+        //         int temp_qc = *queue_count;
+        //         // atomicAdd((unsigned long long int *)queue_count, (unsigned long long int ) 0);;
+        //         // printf("is going to wait for completion with max: %d i: %d, temp_qc: %d che: %d\n", max, i, temp_qc, tmp_che1);
+        //         for (int i = temp_qc - 1; i >= 0 ; i -= 1)
+        //         {
+        //             void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + ((max - i) & 63) * 64;
+        //             struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+        //             volatile uint8_t *op_flag = &cqe64->op_own;
+        //             retries = 0;
+        //             __threadfence_system();
+        //             // int tmp_che = che;
+        //             // printf("is going to wait for completion with max: %d i: %d, temp_qc: %d che: %d\n", max, (int) i, temp_qc, tmp_che1);
+        //             while(*op_flag == 240){
+        //                 if(retries > 100000){
+        //                     int big_temp = atomicAdd((unsigned long long int *)queue_count, (unsigned long long int ) 0);
+        //                     int bpc = atomicAdd((unsigned long long int *)before_post_count, (unsigned long long int ) 0);
+        //                     printf("waiting for completion with max: %d  *qc: %d bpc: %d i: %d\n", 
+        //                             max, temp_qc, bpc, (int) i);
+        //                     retries = -1;
+        //                 }
+        //                 retries++;
+        //                  __threadfence_system();
+        //             }
+        //             // printf("                done completion with max: %d i: %d, temp_qc: %d che: %d\n", max, i, temp_qc, tmp_che1);
+        //             *op_flag = 240;
+        //              __threadfence_system();
+        //             // void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
+        //             // *(uint32_t *) cq_dbrec = (uint32_t) htonl((max + i + 1) & 0xffffff);
+        //             // __threadfence_system();
+        //         }
+                
+        //         if(temp_qc > 0){
+        //             void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
+        //             *(uint32_t *) cq_dbrec = (uint32_t) htonl((max + 1) & 0xffffff);
+        //             __threadfence_system();
+        //         }
+        //         // if(*queue_count == 4)
+        //         // atomicExch((unsigned long long int *) queue_count, 0);
+        //         *queue_count = 0;
+        //         __threadfence();
+        //         // *wait_queue = 0;
+        //         *before_post_count = 0;
+        //         // atomicExch((unsigned long long int *) before_post_count, 0);
+        //         __threadfence();
+        //         *p_index = 0; // update post number
+        //         // atomicExch((unsigned long long int *) p_index, 0);
+        //         __threadfence();
+        //         *queue_lock = 0;
+        //         // atomicExch((unsigned int *) queue_lock, 0);
+        //         __threadfence();
+        //     }
+        //     else{
+               
+        //         retries = 0;
+        //         // __threadfence();
+        //         // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+        //         __threadfence();
+        //         int max = *global_post_number - 1;
+        //         // printf("is going to wait in else with cur_post: %d qp_index: %d max: %d\n", cur_post, qp_index, max);
+        //         while(*queue_lock == 1/*lock_situ == 1*/){
+                    
+        //             if(retries > 100000){
+        //                 printf("waiting in else with cur_post: %d qp_index: %d max: %d\n", cur_post, qp_index, max);
+        //                 retries =- 1;
+        //             }
+        //             // lock_situ = atomicAdd((unsigned int *)queue_lock, 0); 
+        //             __threadfence();
+        //             retries++;
+        //         }
+                
+        //     }
+            
+        // }
+
     // tlb entry update
 };
 
