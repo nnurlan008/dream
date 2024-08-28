@@ -121,13 +121,13 @@ enum {
 #define MINMAX_ASSERT_COMPATIBLE(a, b) \
 	BUILD_ASSERT(__builtin_types_compatible_p(a, b))
 
-#define min(a, b) \
-	({ \
-		typeof(a) _a = (a); \
-		typeof(b) _b = (b); \
-		MINMAX_ASSERT_COMPATIBLE(typeof(_a), typeof(_b)); \
-		_a < _b ? _a : _b; \
-	})
+// #define min(a, b) \
+// 	({ \
+// 		typeof(a) _a = (a); \
+// 		typeof(b) _b = (b); \
+// 		MINMAX_ASSERT_COMPATIBLE(typeof(_a), typeof(_b)); \
+// 		_a < _b ? _a : _b; \
+// 	})
 
 #define min_t(t, a, b) \
 	({ \
