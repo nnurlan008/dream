@@ -1264,6 +1264,14 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
     cudaSetDevice(1);
     checkError(cudaMalloc((void **) &d_distance_gpu1, G.numVertices*sizeof(unsigned int)));
     checkError(cudaMemcpy(d_distance_gpu1, h_distance, G.numVertices*sizeof(unsigned int), cudaMemcpyHostToDevice));
+
+    // checkError(cudaMallocManaged((void **) &d_distance_gpu1, G.numVertices*sizeof(unsigned int)));
+    // memcpy(d_distance_gpu1, h_distance, G.numVertices*sizeof(unsigned int));
+    // // checkError(cudaMemAdvise(d_distance_gpu1, G.numVertices*sizeof(unsigned int), cudaMemAdviseSetReadMostly, 0));
+    // // checkError(cudaMemAdvise(d_distance_gpu1, G.numVertices*sizeof(unsigned int), cudaMemAdviseSetReadMostly, 1));
+
+    // checkError(cudaMemAdvise(d_distance_gpu1, G.numVertices*sizeof(unsigned int), cudaMemAdviseSetAccessedBy, 0));
+    // checkError(cudaMemAdvise(d_distance_gpu1, G.numVertices*sizeof(unsigned int), cudaMemAdviseSetAccessedBy, 1));
     free(h_distance);
 
     cudaSetDevice(0);
@@ -1506,7 +1514,7 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
     cudaDeviceProp devProp;
     cudaGetDeviceProperties(&devProp, 0);
     printf("Cuda device clock rate = %d\n", devProp.clockRate);
-
+    
     
 
     uint64_t numthreads = BLOCK_SIZE;
@@ -1568,13 +1576,16 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         }
         case 2: {// new representation{
             // printf("rdma new representation\n");
-            size_t n_pages = new_size*sizeof(unsigned int)/(8*1024)+1;
+            size_t n_pages = new_size*sizeof(unsigned int)/(4*1024)+1;
+            numthreads = 512;
+            numblocks = (n_pages*32)/numthreads + 1;
+            dim3 blockDim(numthreads, (numblocks+numthreads)/numthreads);
             cudaSetDevice(0);
-            kernel_coalesce_new_repr_rdma<<<(n_pages*32)/416 + 1, 416, 0, stream0>>>
+            kernel_coalesce_new_repr_rdma<<< blockDim, numthreads, 0, stream0 >>>
             (level_gpu0, n_pages, /*G.numVertices*/0, new_size, d_distance_gpu0, d_new_offset_gpu0, d_new_vertexList_gpu0, rdma_adjacencyList_gpu0,
             d_changed_gpu0);
             cudaSetDevice(1);
-            kernel_coalesce_new_repr_rdma<<<(n_pages*32)/416 + 1, 416, 0, stream1>>>
+            kernel_coalesce_new_repr_rdma<<< blockDim, numthreads, 0, stream1 >>>
             (level_gpu1, n_pages, /*G.numVertices*/1, new_size, d_distance_gpu1, d_new_offset_gpu1, d_new_vertexList_gpu1, rdma_adjacencyList_gpu1,
             d_changed_gpu1);
             // ret1 = cudaDeviceSynchronize();
@@ -1647,94 +1658,7 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
 
         cudaSetDevice(1);
         checkError(cudaStreamSynchronize(stream1));
-    }  
-
-
- 
-    // while (changed_h_gpu1) {
-    //     changed_h_gpu1 = 0;
-    //     cudaSetDevice(1);
-    //     checkError(cudaMemcpy(d_changed_gpu1, &changed_h_gpu1, sizeof(unsigned int), cudaMemcpyHostToDevice));
-    //     switch (u_case)
-    //     {
-
-    //     case 0:{
-    //         // printf("direct transfer\n");
-    //         simpleBfs_modVertexList<<<G.numVertices / 1024 + 1, 1024, 0, stream1>>>
-    //         (G.numVertices, level_gpu1, d_adjacencyList_gpu1, d_edgesOffset_gpu1, d_distance_gpu1, d_changed_gpu1); 
-    //         // ret1 = cudaDeviceSynchronize();
-    //         break;
-    //     }
-    //     case 1:{
-    //         // printf("rdma edgelist representation\n");
-    //         size_t n_pages = G.numVertices*sizeof(unsigned int)/(4*1024)+1;
-    //         cudaSetDevice(1);
-    //         simpleBfs_rdma_optimized_warp<<</*G.numVertices / 256 + 1, 256*/(n_pages*32)/384 + 1, 384, 0, stream1>>>(
-    //                     n_pages, G.numVertices, level_gpu1, rdma_adjacencyList_gpu1, d_edgesOffset_gpu1, d_edgesSize_gpu1, d_distance_gpu1, d_changed_gpu1); 
-    //         // ret1 = cudaDeviceSynchronize();
-    //         break;
-    //     }
-    //     case 2: {// new representation{
-    //         // printf("rdma new representation\n");
-    //         size_t n_pages = new_size*sizeof(unsigned int)/(64*1024)+1;
-    //         kernel_coalesce_new_repr_rdma<<<(n_pages*32)/384 + 1, 384, 0, stream1>>>
-    //         (level_gpu1, n_pages, G.numVertices, new_size, d_distance_gpu1, d_new_offset_gpu1, d_new_vertexList_gpu1, rdma_adjacencyList_gpu1,
-    //         d_changed_gpu1);
-    //         // ret1 = cudaDeviceSynchronize();
-    //         break;
-    //     }
-    //     case 3:{
-    //         // printf("direct new representation\n");
-    //         size_t n_pages = new_size*sizeof(unsigned int)/(4*1024)+1;
-    //         kernel_coalesce_new_repr<<<(n_pages*32)/512 + 1, 512, 0, stream1>>>
-    //         (level_gpu1, n_pages, G.numVertices, new_size, d_distance_gpu1, d_new_offset_gpu1, d_new_vertexList_gpu1, d_adjacencyList_gpu1,
-    //         d_changed_gpu1);
-    //         // ret1 = cudaDeviceSynchronize();
-    //         break;
-    //     }
-    //     case 4: {
-    //         // printf("uvm new representation\n");
-    //         size_t n_pages = new_size*sizeof(unsigned int)/(4*1024)+1;
-    //         kernel_coalesce_new_repr<<<(n_pages*32)/512 + 1, 512, 0, stream1>>>
-    //         (level_gpu1, n_pages, G.numVertices, new_size, d_distance_gpu1, d_new_offset_gpu1, d_new_vertexList_gpu1, uvm_adjacencyList_gpu1,
-    //         d_changed_gpu1);
-    //         // ret1 = cudaDeviceSynchronize();
-    //         break;
-    //     }
-    //     case 5:{
-    //         // printf("uvm transfer edge list\n");
-    //         // simpleBfs_modVertexList<<<G.numVertices / 1024 + 1, 1024>>>
-    //         // (G.numVertices, level, uvm_adjacencyList, d_edgesOffset, d_distance, d_changed); 
-    //         numthreads = BLOCK_SIZE;
-    //         numblocks = ((G.numVertices * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
-    //         dim3 blockDim(BLOCK_SIZE, (numblocks+BLOCK_SIZE)/BLOCK_SIZE);
-    //         bfs_kernel_coalesce_chunk<<<blockDim, numthreads, 0, stream1>>>
-    //         (d_distance_gpu1, level_gpu1, G.numVertices, d_edgesOffset_gpu1, uvm_adjacencyList_gpu1, d_changed_gpu1);
-    //         // ret1 = cudaDeviceSynchronize();
-    //         break;
-    //     }
-    //     case 6:{
-    //         // printf("direct transfer\n");
-    //         simpleBfs_modVertexList<<<G.numVertices / 1024 + 1, 1024, 0, stream1>>>
-    //         (G.numVertices, level_gpu1, /*d_adjacencyList*/uvm_adjacencyList_gpu1, d_edgesOffset_gpu1, d_distance_gpu1, d_changed_gpu1); 
-    //         // ret1 = cudaDeviceSynchronize();
-    //         break;
-    //     }
-    //     default:
-    //         break;
-    //     }
-    //     // if(u_case == 1 || u_case == 2){
-    //     //     print_retires<<<1,1>>>();
-    //     //     ret1 = cudaDeviceSynchronize();
-    //     // }
-        
-    //     // printf("ret1: %d cudaGetLastError(): %d level_gpu0: %d\n", ret1, cudaGetLastError(), level_gpu1);
-        
-    //     checkError(cudaMemcpy(&changed_h_gpu1, d_changed_gpu1, sizeof(unsigned int), cudaMemcpyDeviceToHost));
-    //     level_gpu1++;
-    // }     
-
-    
+    }     
 
     cudaEventRecord(event2, (cudaStream_t) 1);
     printf("cudaGetLastError(): %d level_gpu0: %d level_gpu1: %d\n", cudaGetLastError(), level_gpu0, level_gpu1);
@@ -1835,7 +1759,7 @@ int main(int argc, char **argv)
 
     // ------------------- new representation for rdma only: -----------------//
     auto start = std::chrono::steady_clock::now();                
-    size_t new_size = 0, treshold = 128;
+    size_t new_size = 0, treshold = 48;
     for (size_t i = 0; i < G.numVertices; i++)
     {
         uint64_t degree = u_edgesOffset[i+1] - u_edgesOffset[i];
@@ -2785,12 +2709,13 @@ __global__ void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t gpu, 
 
 
     // Page size in elements (64KB / 4 bytes per unsigned int)
-    const size_t pageSize = 8*1024 / sizeof(unsigned int);
+    const size_t pageSize = 4*1024 / sizeof(unsigned int);
     // Elements per warp
     const size_t elementsPerWarp = pageSize / warpSize;
 
     // Global thread ID
-    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t tid = blockDim.x * 512 * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    // = blockIdx.x * blockDim.x + threadIdx.x;
     // if(tid == 0) printf("warpSize: %d\n", warpSize);
     // Warp ID within the block
     size_t warpId = tid / warpSize;
@@ -2814,9 +2739,9 @@ __global__ void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t gpu, 
                     // Process adjacent nodes
                     // if(new_offset[elementIdx+1] - d_edgesOffset[elementIdx] >= 2*1024)
                     //     printf("elementx: %llu\n", elementIdx);
-                    startVertex = new_offset[elementIdx];
-                    k = new_offset[elementIdx+1];
-                    uint v; // = k - startVertex;
+                    // startVertex = new_offset[elementIdx];
+                    // k = new_offset[elementIdx+1];
+                    // uint v; // = k - startVertex;
                     // if(k - startVertex > pageSize)
                     // {
                     //     v = (k - startVertex) / 2;
@@ -2824,10 +2749,11 @@ __global__ void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t gpu, 
                     // else v = 0; 
 
                     // if(gpu == 0){
-                        if(k - startVertex > pageSize)
-                            warpId = ((k - startVertex) / 2)*(gpu + 1);
-                        else 
-                            warpId = (k - startVertex)*(1-gpu); 
+                        // if(k - startVertex > pageSize)
+                        //     warpId = ((k - startVertex) / 2)*(gpu + 1);
+                        // else 
+                        //     warpId = (k - startVertex)*(1-gpu); 
+                        // warpId = (k - startVertex) > pageSize ? ((k - startVertex) / 2)*(gpu + 1) : (k - startVertex)*(1-gpu); 
                     // }
                     // else{ // gpu == 1
                     //     if(k - startVertex > pageSize)
@@ -2836,8 +2762,8 @@ __global__ void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t gpu, 
                     //     }
                     //     else v = 0;
                     // }
-                    for(size_t j = startVertex + warpId*gpu; j < startVertex + warpId; ++j) {
-                        v = (*edgeList)[j]; // shared_data[j - pageStart];
+                    for(size_t j = new_offset[elementIdx]; j < new_offset[elementIdx+1]; ++j) {
+                        uint v = (*edgeList)[j]; // shared_data[j - pageStart];
                         
                         unsigned int dist = d_distance[v];
                         if (level + 1 < dist) {
