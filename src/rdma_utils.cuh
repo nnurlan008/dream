@@ -121,6 +121,39 @@ struct context_2gpu_2nic {
   struct rdma_cm_id	*id[2];
 };
 
+struct context_2nic {
+  struct ibv_context *ctx[2];
+  struct ibv_pd *pd[2];
+  struct ibv_cq *main_cq[2];
+  struct ibv_comp_channel *comp_channel[2];
+  struct ibv_qp *main_qp[2];
+
+  // struct ibv_qp **gpu1_qp;
+  // struct ibv_cq **gpu1_cq;
+  // the foolowing double pointers contain qp and cq pointers
+  // for both gpus (first 128 for GPU0 and the next 128 for GPU1)
+  struct ibv_qp **gpu_qp;
+  struct ibv_cq **gpu_cq;
+  // void* volatile cqbuf = NULL;
+  // void* volatile wqbuf = NULL;
+  void** volatile cqbuf;
+  int cqbuf_size;
+  void** volatile wqbuf;
+  int wqbuf_size;
+  int n_bufs;
+
+  void *gpu_buffer;
+  unsigned long long int gpu_buf_size; // 3 MB
+
+  struct ibv_mr *pool_mr;
+  struct ibv_mr *gpu_mr[2];
+  
+  // struct ibv_mr server_mr;
+  struct MemPool server_memory[2];
+
+  struct rdma_cm_id	*id[2];
+};
+
 struct remote_qp_info{
     uint32_t target_qp_num[256];
     uint16_t target_lid;
@@ -367,6 +400,8 @@ int connect(const char *ip, struct context *s_ctx);
 int local_connect(const char *mlx_name, struct context *s_ctx);
 int local_connect_2gpu(const char *mlx_name, struct context_2gpu *s_ctx);
 int local_connect_2gpu_2nic(const char *mlx_name, struct context_2gpu_2nic *s_ctx, int gpu);
+int local_connect_2nic(const char *mlx_name, struct context_2nic *s_ctx, int nic, int gpu);
+
 int prepare_post_poll_content(struct context *s_ctx, struct post_content *post_cont, struct poll_content *poll_cont, struct post_content2 *post_cont2, \
                               struct post_content *host_post, struct poll_content *host_poll, struct host_keys *host_post2);
 
@@ -374,6 +409,9 @@ int prepare_post_poll_content_2gpu(struct context_2gpu *s_ctx, struct post_conte
                               struct post_content *host_post, struct poll_content *host_poll, struct host_keys *host_post2, struct gpu_memory_info *gpu_infos);
 
 int prepare_post_poll_content_2gpu_2nic(struct context_2gpu_2nic *s_ctx, struct post_content *post_cont, struct poll_content *poll_cont, struct server_content_2nic *post_cont2, \
+                              struct post_content *host_post, struct poll_content *host_poll, struct host_keys *host_post2, struct gpu_memory_info *gpu_infos);
+
+int prepare_post_poll_content_2nic(struct context_2nic *s_ctx, struct post_content *post_cont, struct poll_content *poll_cont, struct server_content_2nic *post_cont2, \
                               struct post_content *host_post, struct poll_content *host_poll, struct host_keys *host_post2, struct gpu_memory_info *gpu_infos);
 
 void host_poll_fake(struct ibv_cq *cq1, struct ibv_wc *wc);

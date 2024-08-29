@@ -1130,11 +1130,11 @@ struct rdma_buf {
             uint64_t value_ctrl;
             atomicAdd((unsigned long long int *)&g_qp_index, (unsigned long long int) 1);
             
-            if(che == 100){
-                printf("rkey_index: %d gpu: %d d_remote_address[gpu]: %p rem_addr: %p\n", rkey_index, gpu, d_remote_address[gpu], rem_addr);
-                printf("server_content.wr_rdma_rkey[rkey_index+gpu*5]: %d lkey: %d\n", server_content.wr_rdma_rkey[rkey_index+gpu*5], lkey);
-                printf("gpu: %d gpu_cq_bufs[gpu]: %p\n", gpu, gpu_cq_bufs[gpu]);
-            }
+            // if(che == 100){
+            //     printf("rkey_index: %d gpu: %d d_remote_address[gpu]: %p rem_addr: %p\n", rkey_index, gpu, d_remote_address[gpu], rem_addr);
+            //     printf("server_content.wr_rdma_rkey[rkey_index+gpu*5]: %d lkey: %d\n", server_content.wr_rdma_rkey[rkey_index+gpu*5], lkey);
+            //     printf("gpu: %d gpu_cq_bufs[gpu]: %p\n", gpu, gpu_cq_bufs[gpu]);
+            // }
             // printf("gpost_cont.bf_reg[%d]: %p\n", (qp_index), gpost_cont.bf_reg[qp_index]);
             post_m(/*d_TLB[che].host_address*/ rem_addr, server_content.wr_rdma_rkey[rkey_index+gpu*5], data_size, lkey /*gpost_cont.wr_sg_lkey*/, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpu_qp_num[gpu] + (qp_index-84*gpu), 
                     cur_post, &value_ctrl, /*gpost_cont.qp_buf*/ qp_buf + 8192*(qp_index-84*gpu), (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
