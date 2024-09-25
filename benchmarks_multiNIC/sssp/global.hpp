@@ -35,6 +35,8 @@ void printPreNode(uint* preNode, uint size);
 
 void compareResult(uint* dist1, uint* dist2, uint numNodes);
 
+void compareResult(float* dist1, float* dist2, uint numNodes);
+
 void printLoopInfo(vector<LoopInfo> info);
 
 void printLoopInfoV1(vector<LoopInfo> info);

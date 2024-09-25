@@ -28,6 +28,9 @@
 #include <iostream>
 using namespace std;
 
+#include <chrono>
+
+
 extern "C"{
   #include "rdma_utils.h"
 }
@@ -35,14 +38,21 @@ extern "C"{
 #include "rdma_utils.cuh"
 
 // #include <simt/atomic>
+__device__ int GLOBAL_REQUEST_SIZE;
 
 struct rdma_content main_content;
 struct MemPool MemoryPool;
 uint64_t remote_address;
 uint64_t remote_address_2nic[2];
 
+__device__ struct post_content rdma_utils_content;
 __device__ struct post_content *gpost_cont1;
 __device__ struct poll_content *gpoll_cont1;
+
+__device__ uint32_t gpu_mrs_lkey_rdma_utils[2];
+__device__ uint64_t gpu_qp_bufs_rdma_utils[2];
+__device__ uint64_t gpu_qp_num_rdma_utils[2];
+__device__ uint64_t gpu_cq_bufs_rdma_utils[2];
 
 const int TIMEOUT_IN_MS = 500; /* ms */
 
@@ -1020,7 +1030,7 @@ int rts_qp(struct ibv_qp *qp){
     return ret;
 }
 
-int local_connect(const char *mlx_name, struct context *s_ctx){
+int local_connect_cpu_benchmark(const char *mlx_name, struct context *s_ctx, int mesg_size, int u_iter){
     int ret;
 
     s_ctx->ctx = createContext(mlx_name);
@@ -1039,6 +1049,422 @@ int local_connect(const char *mlx_name, struct context *s_ctx){
         s_ctx->pd, s_ctx->gpu_buffer, s_ctx->gpu_buf_size,
         IBV_ACCESS_LOCAL_WRITE
     ));
+
+    printf("s_ctx->gpu_mr->addr: 0x%llx\n", s_ctx->gpu_mr->addr);
+    printf("s_ctx->gpu_mr->lkey: %d\n", s_ctx->gpu_mr->lkey);
+
+    void *memoryPool = (void *) malloc(RDMA_BUFFER_SIZE);
+    if(memoryPool == NULL) {
+        printf("Memory pool could not be created!\n");
+        exit(-1);
+    }
+    remote_address = (uint64_t) memoryPool;
+    struct ibv_mr *temp_mr;
+    
+    for(int index = 0; index < N_8GB_Region; index++){
+        TEST_Z(temp_mr = ibv_reg_mr(
+                s_ctx->pd, 
+                memoryPool + index*Region_Size, 
+                Region_Size, 
+                IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ));
+                
+        printf("Registered server address: %p, server rkey: %d length: %llu\n\n\n", \
+        temp_mr->addr, temp_mr->rkey, temp_mr->length);
+
+        // s_ctx->server_memory.addresses[0]
+        // s_ctx->server_memory.lkeys[0]
+        // s_ctx->server_memory.rkeys[0]
+
+        s_ctx->server_memory.addresses[index] = (uint64_t) (memoryPool + index*Region_Size);
+        s_ctx->server_memory.rkeys[index] = temp_mr->rkey;
+        s_ctx->server_memory.lkeys[index] = temp_mr->lkey;
+    }  
+
+    if(cudaSuccess != cudaDeviceSynchronize()) return -1;
+    // s_ctx->n_bufs = 256;
+    // s_ctx->cqbuf_size = 4096*2;
+    // s_ctx->wqbuf_size = 8192;
+    // // s_ctx->gpu_buf_size = 3*1024*1024;
+
+    // s_ctx->wqbuf = (void ** volatile) calloc(s_ctx->n_bufs, sizeof(void *));
+    // s_ctx->cqbuf = (void **) calloc(s_ctx->n_bufs, sizeof(void *));
+    // for(int i = 0; i < s_ctx->n_bufs; i++){
+    //     void* volatile temp;
+    //     ret = cudaMalloc((void **)&temp, s_ctx->wqbuf_size);
+    //     if (cudaSuccess != ret) {
+    //         printf("error on cudaMalloc for wqbuf: %d\n", ret);
+    //         exit(0);
+    //     }
+    //     ret = cudaMemset(temp, 0, s_ctx->wqbuf_size);
+    //     if (cudaSuccess != ret) {
+    //         printf("error on cudaMemset for wqbuf: %d\n", ret);
+    //         exit(0);
+    //     }
+    //     s_ctx->wqbuf[i] = temp;
+    // }
+    // for(int i = 0; i < s_ctx->n_bufs; i++){
+    //     // printf("s_ctx->wqbuf[i]: 0x%llx\n", s_ctx->wqbuf[i]);
+    //     void* volatile temp;
+    //     ret = cudaMalloc((void **) &temp, s_ctx->cqbuf_size);
+    //     if (cudaSuccess != ret) {
+    //         printf("error on cudaMalloc for cqbuf: %d\n", ret);
+    //         exit(0);
+    //     }
+    //     ret = cudaMemset(temp, 0, s_ctx->cqbuf_size);
+    //     if (cudaSuccess != ret) {
+    //         printf("error on cudaMemset for cqbuf: %d\n", ret);
+    //         exit(0);
+    //     }
+    //     s_ctx->cqbuf[i] = temp;
+    //     if(cudaSuccess != cudaDeviceSynchronize()) return -1;
+    //     invalidate_cq<<<1,1>>>(s_ctx->cqbuf[i]);
+    //     if(cudaSuccess != cudaDeviceSynchronize()) return -1;
+    //     printf("s_ctx->cqbuf[%d]: 0x%llx\n", i, s_ctx->cqbuf[i]);
+    // }
+
+    struct ibv_qp_init_attr main_qp_attr;
+    memset(&main_qp_attr, 0, sizeof(main_qp_attr));
+        
+        main_qp_attr.send_cq = s_ctx->main_cq;
+        main_qp_attr.recv_cq = s_ctx->main_cq;
+        main_qp_attr.qp_type = IBV_QPT_RC;
+
+        main_qp_attr.cap.max_send_wr = 10;
+        main_qp_attr.cap.max_recv_wr = 10;
+        main_qp_attr.cap.max_send_sge = 1;
+        main_qp_attr.cap.max_recv_sge = 1;
+
+    ibv_qp *temp_qp;
+    TEST_Z(s_ctx->main_qp = ibv_create_qp(s_ctx->pd, &main_qp_attr));
+    TEST_Z(temp_qp = ibv_create_qp(s_ctx->pd, &main_qp_attr));
+
+    struct ibv_qp_attr qp_attr1;
+    
+
+    if(init_qp(s_ctx->main_qp) != 0)
+    {
+        printf("Failed to modify main qp to INIT. ret: %d\n", ret);
+        exit(-1);
+    }
+    if(init_qp(temp_qp) != 0)
+    {
+        printf("Failed to modify main qp to INIT. ret: %d\n", ret);
+        exit(-1);
+    }
+
+    ibv_port_attr main_port_attr, temp_port_attr;
+    ibv_query_port(s_ctx->ctx, 1, &main_port_attr);
+    ibv_query_port(s_ctx->ctx, 1, &temp_port_attr);
+
+    union ibv_gid gid;; 
+    int gid_entry;
+    int mylid;
+    get_myglid(s_ctx->ctx, 1, &gid, &gid_entry);
+    get_mylid(s_ctx->ctx, 1, &mylid);
+
+    ret = rtr_qp(s_ctx->main_qp, temp_qp->qp_num, temp_port_attr.lid, gid, gid_entry);
+    if(ret != 0) {
+        printf("Failed to modify main qp to RTR. ret: %d\n", ret);
+        exit(-1);
+    }
+
+    ret = rtr_qp(temp_qp, s_ctx->main_qp->qp_num, main_port_attr.lid, gid, gid_entry);
+    if(ret != 0) {
+        printf("Failed to modify temp qp to RTR. ret: %d\n", ret);
+        exit(-1);
+    }
+
+    ret = rts_qp(s_ctx->main_qp);
+    if(ret != 0) {
+        printf("Failed to modify qp to RTS. ret: %d\n", ret);
+        exit(-1);
+    }
+
+    struct ibv_send_wr wr, *bad_wr = NULL;
+    struct ibv_sge sge;
+    struct ibv_wc wc;
+    size_t srv_size = 1024;
+    int *srv_buffer = (int *) malloc(srv_size*sizeof(int));
+    struct ibv_mr *srv_mr;
+    
+    TEST_Z(srv_mr = ibv_reg_mr(
+        s_ctx->pd, srv_buffer, srv_size*sizeof(int),
+        IBV_ACCESS_LOCAL_WRITE
+    ));
+
+    // server CQs:
+    // struct ibv_cq **host_CQs = (struct ibv_cq **) calloc(s_ctx->n_bufs, sizeof(struct ibv_cq *));
+    // for (int i = 0; i < s_ctx->n_bufs; i++){
+    //     TEST_Z(host_CQs[i] = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */
+    //     TEST_NZ(ibv_req_notify_cq(host_CQs[i], 0));
+    // }
+    // server QPs:
+    struct ibv_qp **host_QPs = (struct ibv_qp **) calloc(s_ctx->n_bufs, sizeof(struct ibv_qp *));
+    for(int i = 0; i < s_ctx->n_bufs; i++){
+        struct ibv_qp_init_attr qp_attr;
+        memset(&qp_attr, 0, sizeof(qp_attr));
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.send_cq = s_ctx->main_cq;
+        qp_attr.recv_cq = s_ctx->main_cq;
+        // qp_attr.send_cq = host_CQs[i];
+        // qp_attr.recv_cq = host_CQs[i];
+        qp_attr.qp_type = IBV_QPT_RC;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.cap.max_send_wr = 10;
+        qp_attr.cap.max_recv_wr = 10;
+        qp_attr.cap.max_send_sge = 1;
+        qp_attr.cap.max_recv_sge = 1;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        TEST_Z(host_QPs[i] = ibv_create_qp(s_ctx->pd, &qp_attr));
+        if (!host_QPs[i]){
+            printf("host_QPs[%d] failed\n", i);
+            exit(-1);
+        }
+        // printf("gpu_qp[i]->qp_num: %d\n", s_ctx->gpu_qp[i]->qp_num);
+    }
+    struct remote_qp_info host_qp_info; 
+    for (int i = 0; i < s_ctx->n_bufs; i++){
+        host_qp_info.target_qp_num[i] = host_QPs[i]->qp_num;
+        // printf("client qp num: %d\n", s_ctx->gpu_qp[i]->qp_num);
+    }
+    host_qp_info.target_gid = gid;
+    host_qp_info.target_lid = mylid;
+
+
+
+
+
+    // server CQs:
+    struct ibv_cq **host_CQs_2 = (struct ibv_cq **) calloc(s_ctx->n_bufs, sizeof(struct ibv_cq *));
+    for (int i = 0; i < s_ctx->n_bufs; i++){
+        TEST_Z(host_CQs_2[i] = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */
+        TEST_NZ(ibv_req_notify_cq(host_CQs_2[i], 0));
+    }
+    // server QPs:
+    struct ibv_qp **host_QPs_2 = (struct ibv_qp **) calloc(s_ctx->n_bufs, sizeof(struct ibv_qp *));
+    for(int i = 0; i < s_ctx->n_bufs; i++){
+        struct ibv_qp_init_attr qp_attr;
+        memset(&qp_attr, 0, sizeof(qp_attr));
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.send_cq = host_CQs_2[i]; s_ctx->main_cq;
+        qp_attr.recv_cq = host_CQs_2[i];
+        // qp_attr.send_cq = host_CQs[i];
+        // qp_attr.recv_cq = host_CQs[i];
+        qp_attr.qp_type = IBV_QPT_RC;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        qp_attr.cap.max_send_wr = 10;
+        qp_attr.cap.max_recv_wr = 10;
+        qp_attr.cap.max_send_sge = 1;
+        qp_attr.cap.max_recv_sge = 1;
+        // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+        TEST_Z(host_QPs_2[i] = ibv_create_qp(s_ctx->pd, &qp_attr));
+        if (!host_QPs_2[i]){
+            printf("host_QPs[%d] failed\n", i);
+            exit(-1);
+        }
+        // printf("gpu_qp[i]->qp_num: %d\n", s_ctx->gpu_qp[i]->qp_num);
+    }
+    struct remote_qp_info host_qp_info_2; 
+    for (int i = 0; i < s_ctx->n_bufs; i++){
+        host_qp_info_2.target_qp_num[i] = host_QPs_2[i]->qp_num;
+        // printf("client qp num: %d\n", s_ctx->gpu_qp[i]->qp_num);
+    }
+    host_qp_info_2.target_gid = gid;
+    host_qp_info_2.target_lid = mylid;
+
+
+
+
+
+    for(int i = 0; i < s_ctx->n_bufs; i++){
+        
+        ret = init_qp(host_QPs_2[i]); 
+        if(ret != 0)
+        {
+            printf("Failed to modify gpu_qp[%d] to INIT. ret: %d\n", i, ret);
+            exit(-1);
+        }
+        ret = init_qp(host_QPs[i]); 
+        if(ret != 0)
+        {
+            printf("Failed to modify gpu_qp[%d] to INIT. ret: %d\n", i, ret);
+            exit(-1);
+        }
+        
+
+        ret = rtr_qp(host_QPs_2[i], host_qp_info.target_qp_num[i], main_port_attr.lid, gid, gid_entry);
+        if(ret != 0) {
+            printf("Failed to modify gpu_qp[%d] to RTR. ret: %d\n", i, ret);
+            exit(-1);
+        }
+        ret = rtr_qp(host_QPs[i], host_qp_info_2.target_qp_num[i], main_port_attr.lid, gid, gid_entry);
+        if(ret != 0) {
+            printf("Failed to modify host_QPs[%d] to RTR. ret: %d\n", i, ret);
+            exit(-1);
+        }
+
+        rts_qp(host_QPs_2[i]);
+        if(ret != 0) {
+            printf("Failed to modify gpu_qp[%d] to RTS. ret: %d\n", i, ret);
+            exit(-1);
+        }
+
+    } 
+
+
+
+
+    for (size_t i = 0; i < 1024; i++)
+    {
+        srv_buffer[i] = 5;
+    }
+
+    int *server_temp = (int *) s_ctx->server_memory.addresses[0]; // + 8*1024*1024*1024llu;
+    for (size_t i = 0; i < 1024; i++)
+    {
+        server_temp[i] = 4;
+    }
+    
+
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+    struct ibv_wc wc1;
+    // conn = (struct connection *)(uintptr_t)wc.wr_id;
+    bad_wr = NULL;
+    memset(&wr, 0, sizeof(wr));
+    // wr.wr_id = (uintptr_t)conn;
+    wr.opcode = IBV_WR_RDMA_READ;
+    wr.sg_list = &sge;
+    wr.num_sge = 1;
+    wr.send_flags = IBV_SEND_SIGNALED;
+    wr.wr.rdma.remote_addr = s_ctx->server_memory.addresses[0]; // + 8*1024*1024*1024llu; 
+    // (uintptr_t)s_ctx->server_mr.addr + 8*1024*1024*1024llu-1020;//10*1024*1024*1024llu;
+    wr.wr.rdma.rkey = s_ctx->server_memory.rkeys[0];// s_ctx->server_mr.rkey;
+    sge.addr = (uintptr_t) s_ctx->gpu_mr->addr; // (uintptr_t)srv_buffer;
+    sge.length = 1024*4;
+    sge.lkey = s_ctx->gpu_mr->rkey; // srv_mr->lkey;
+    printf("Function name: %s, line number: %d conn->peer_mr.addr: %p\n", __func__, __LINE__, s_ctx->server_memory.addresses[0]);
+    printf("Function name: %s, line number: %d conn->peer_mr.rkey: %p mesg_size: %d\n", __func__, __LINE__, s_ctx->server_memory.rkeys[1], mesg_size);
+    
+    int NUM_THREADS = s_ctx->n_bufs, msg_size = mesg_size*1024;
+    int * tmp_int = (int *) wr.wr.rdma.remote_addr;
+    size_t size = 8*1024*1024*1024llu;
+    for (size_t i = 0; i < size/sizeof(int); i++)
+    {
+        tmp_int[i] = 14;
+    }
+
+
+    // ret = ibv_post_send(s_ctx->main_qp, &wr, &bad_wr);
+    // printf("post ret: %d\n", ret);
+    // do{
+    //     ret = ibv_poll_cq(s_ctx->main_cq, 1, &wc1);
+    //     printf("poll ret: %d\n", ret);
+    // }while(ret == 0);
+
+    // process_gpu_mr((int *) s_ctx->gpu_mr->addr, 1024);
+    // exit(0);
+
+    // printf("sizeof(srv_buffer): %llu\n", srv_size);
+    // bool flag = false;
+    // for(int i = 0; i < sge.length/4; i++){
+    //     printf(" srv_buffer[%d]: %d ", i, srv_buffer[i]);
+    //     if(srv_buffer[i] != 2) {
+    //         printf("srv_buffer[%d]: %d\n", i, srv_buffer[i]);
+    //         flag = true;
+    //         break;
+    //     }
+    // }
+    // if(flag) printf("problem\n");
+    // else printf("no problem!\n");
+
+    // exit(0);
+
+    pthread_t threads[NUM_THREADS];
+
+    float b1, b2;
+    struct cpu_benchmark_content cont[NUM_THREADS];
+    for (size_t i = 0; i < NUM_THREADS; i++)
+    {
+        cont[i] = {
+            .cpu_cq = host_CQs_2[i],// s_ctx->main_cq,
+            .num_entries = 1,
+            // .wc = &wc1,
+            .cpu_qp = host_QPs_2[i],// s_ctx->main_qp,
+            // .bad_wr = &bad_wr,
+            .rem_addr = (void *) s_ctx->server_memory.addresses[0] + i*msg_size,
+            .gpu_addr = s_ctx->gpu_mr->addr + msg_size*i,
+            .rkey = s_ctx->server_memory.rkeys[0],
+            .lkey = s_ctx->gpu_mr->rkey,
+            .num_packets = 1,
+            .mesg_size = msg_size,
+            .bandwidth = &b1,
+            .thread_num = (int) i,
+        };
+    }
+    
+    
+    size_t iter = size/(NUM_THREADS*msg_size);
+    auto start = std::chrono::steady_clock::now();
+    iter = u_iter;
+    for(size_t k = 0; k < iter; k++){
+        // printf("iter number: %d\n", k);
+        for (size_t i = 0; i < NUM_THREADS; i++)
+        {
+            // cont[i].rem_addr += k*NUM_THREADS*msg_size;
+            // cont[i].gpu_addr += k*NUM_THREADS*msg_size;
+            TEST_NZ(pthread_create(&threads[i], NULL, cpu_benchmark, &cont[i]));
+            // pthread_join(threads[i], NULL);
+        }
+        
+        for (size_t i = 0; i < NUM_THREADS; i++)
+        {
+            pthread_join(threads[i], NULL);
+        }
+
+    }
+
+    auto end = std::chrono::steady_clock::now();
+    // long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::chrono::duration<double, std::milli> duration = end - start;
+    float dur = (float) duration.count();
+    printf("Elapsed time in milliseconds for CPU benchmark: %0.3f ms. num threads: %d mesg size: %d iter: %d\n\n", dur, NUM_THREADS, msg_size, iter);
+    b1 = ((float) iter*msg_size*NUM_THREADS)/(dur*0.001*1024*1024*1024);
+
+
+    printf("Function name: %s, line number: %d b1; %0.3f total memory in MiB: %.2f\n", __func__, __LINE__, b1, (float)iter*msg_size*NUM_THREADS/1024/1024);
+
+    // exit(0);
+    return 0;
+}
+
+int local_connect(const char *mlx_name, struct context *s_ctx){
+    int ret;
+
+    s_ctx->ctx = createContext(mlx_name);
+    TEST_Z(s_ctx->pd = ibv_alloc_pd(s_ctx->ctx));
+    TEST_Z(s_ctx->comp_channel = ibv_create_comp_channel(s_ctx->ctx));
+
+    TEST_Z(s_ctx->main_cq = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */
+    TEST_NZ(ibv_req_notify_cq(s_ctx->main_cq, 0));
+
+    cudaError_t state = cudaMalloc((void **) &s_ctx->gpu_buffer, s_ctx->gpu_buf_size);
+    if(state != cudaSuccess)
+        printf("Error on cudamalloc\n");
+    printf("s_ctx->gpu_buf_size: %llu\n", s_ctx->gpu_buf_size);
+    printf("s_ctx->gpu_buffer: 0x%llx\n", s_ctx->gpu_buffer);
+    auto start1 = std::chrono::steady_clock::now();
+    // checkError(cudaMemAdvise(uvm_adjacencyList, G.numEdges*sizeof(unsigned int), cudaMemAdviseSetAccessedBy, 0));
+    
+    TEST_Z(s_ctx->gpu_mr = ibv_reg_mr(
+        s_ctx->pd, s_ctx->gpu_buffer, s_ctx->gpu_buf_size,
+        IBV_ACCESS_LOCAL_WRITE
+    ));
+
+    auto end1 = std::chrono::steady_clock::now();
+    long duration1 = std::chrono::duration_cast<std::chrono::milliseconds>(end1 - start1).count();
+    printf("Elapsed time for ibv_reg_mr cuda memory in milliseconds : %li ms.\n\n", duration1);
+
+    // exit(0);
 
     printf("s_ctx->gpu_mr->addr: 0x%llx\n", s_ctx->gpu_mr->addr);
     printf("s_ctx->gpu_mr->lkey: %d\n", s_ctx->gpu_mr->lkey);
@@ -1211,6 +1637,12 @@ int local_connect(const char *mlx_name, struct context *s_ctx){
         IBV_ACCESS_LOCAL_WRITE
     ));
 
+    // // server CQs:
+    // struct ibv_cq **host_CQs = (struct ibv_cq **) calloc(s_ctx->n_bufs, sizeof(struct ibv_cq *));
+    // for (int i = 0; i < s_ctx->n_bufs; i++){
+    //     TEST_Z(host_CQs[i] = ibv_create_cq(s_ctx->ctx, 10, NULL, s_ctx->comp_channel, 0)); /* cqe=10 is arbitrary */
+    //     TEST_NZ(ibv_req_notify_cq(host_CQs[i], 0));
+    // }
     // server QPs:
     struct ibv_qp **host_QPs = (struct ibv_qp **) calloc(s_ctx->n_bufs, sizeof(struct ibv_qp *));
     for(int i = 0; i < s_ctx->n_bufs; i++){
@@ -1219,6 +1651,8 @@ int local_connect(const char *mlx_name, struct context *s_ctx){
         // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
         qp_attr.send_cq = s_ctx->main_cq;
         qp_attr.recv_cq = s_ctx->main_cq;
+        // qp_attr.send_cq = host_CQs[i];
+        // qp_attr.recv_cq = host_CQs[i];
         qp_attr.qp_type = IBV_QPT_RC;
         // printf("Function name: %s, line number: %d\n", __func__, __LINE__);
         qp_attr.cap.max_send_wr = 10;
@@ -1325,6 +1759,15 @@ int local_connect(const char *mlx_name, struct context *s_ctx){
     sge.lkey = s_ctx->gpu_mr->rkey; // srv_mr->lkey;
     printf("Function name: %s, line number: %d conn->peer_mr.addr: %p\n", __func__, __LINE__, s_ctx->server_memory.addresses[0]);
     printf("Function name: %s, line number: %d conn->peer_mr.rkey: %p\n", __func__, __LINE__, s_ctx->server_memory.rkeys[1]);
+    
+    int NUM_THREADS = 48, msg_size = 256*1024;
+    int * tmp_int = (int *) wr.wr.rdma.remote_addr;
+    for (size_t i = 0; i < msg_size*NUM_THREADS/sizeof(int); i++)
+    {
+        tmp_int[i] = 14;
+    }
+
+
     // ret = ibv_post_send(s_ctx->main_qp, &wr, &bad_wr);
     // printf("post ret: %d\n", ret);
     // do{
@@ -1350,7 +1793,67 @@ int local_connect(const char *mlx_name, struct context *s_ctx){
 
     // exit(0);
 
+    
+    float b1, b2;
+    struct cpu_benchmark_content cont[NUM_THREADS];
+    for (size_t i = 0; i < NUM_THREADS; i++)
+    {
+        cont[i] = {
+            .cpu_cq = s_ctx->main_cq,
+            .num_entries = 1,
+            // .wc = &wc1,
+            .cpu_qp = s_ctx->main_qp,
+            // .bad_wr = &bad_wr,
+            .rem_addr = (void *) s_ctx->server_memory.addresses[0] + i*msg_size,
+            .gpu_addr = s_ctx->gpu_mr->addr + msg_size*i,
+            .rkey = s_ctx->server_memory.rkeys[0],
+            .lkey = s_ctx->gpu_mr->rkey,
+            .num_packets = 1,
+            .mesg_size = msg_size,
+            .bandwidth = &b1,
+            .thread_num = (int) i,
+        };
+    }
+    
+    
 
+    // wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr + 4096;
+    // sge.addr = (uintptr_t)s_ctx->gpu_buffer + 4096;
+
+    // cont2 = {
+    //     .cq_ptr = s_ctx->gpu_cq[1],
+    //     .num_entries = 1,
+    //     .wc = &wc1,
+    //     .ibqp = s_ctx->gpu_qp[1],
+    //     .wr = &wr,
+    //     .bad_wr = &bad_wr,
+    //     .num_packets = 2,
+    //     .mesg_size = 128,
+    //     .bandwidth = &b2,
+    // };
+
+    // pthread_t threads[NUM_THREADS];
+
+    // auto start = std::chrono::steady_clock::now();
+    // for (size_t i = 0; i < NUM_THREADS; i++)
+    // {
+    //     TEST_NZ(pthread_create(&threads[i], NULL, cpu_benchmark, &cont[i]));
+    // }
+    
+    // for (size_t i = 0; i < NUM_THREADS; i++)
+    // {
+    //     pthread_join(threads[i], NULL);
+    // }
+
+    // auto end = std::chrono::steady_clock::now();
+    // // long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    // std::chrono::duration<double, std::milli> duration = end - start;
+    // printf("Elapsed time in milliseconds for CPU benchmark: %0.3f ms. num threads: %d mesg size: %d\n\n", duration.count(), NUM_THREADS, msg_size);
+    
+
+    printf("Function name: %s, line number: %d\n", __func__, __LINE__);
+
+    // exit(0);
     return 0;
 }
 
@@ -2155,6 +2658,8 @@ int local_connect_2nic(const char *mlx_name, struct context_2nic *s_ctx, int nic
     TEST_NZ(ibv_req_notify_cq(s_ctx->main_cq[nic], 0));
 
     // this should be GPU 0
+    cudaDeviceSynchronize();
+    printf("gpu: %d \n", gpu);
     cudaSetDevice(gpu);
     if(s_ctx->gpu_buffer == NULL){
         cudaError_t state = cudaMalloc((void **) &s_ctx->gpu_buffer, s_ctx->gpu_buf_size);
@@ -2162,14 +2667,25 @@ int local_connect_2nic(const char *mlx_name, struct context_2nic *s_ctx, int nic
             printf("Error on cudamalloc\n");
             exit(-1);
         }
+        // printf("Error on cudamalloc state; %d\n", state);
     }
+    
+
     printf("nic: %d gpu: %d s_ctx->gpu_buf_size: %llu\n", nic, gpu, s_ctx->gpu_buf_size);
-    printf("nic: %d gpu: %d s_ctx->gpu_buffer: 0x%llx\n", nic, gpu, s_ctx->gpu_buffer);
+    printf("nic: %d gpu: %d s_ctx->gpu_buffer: %p\n", nic, gpu, s_ctx->gpu_buffer);
 
     TEST_Z(s_ctx->gpu_mr[nic] = ibv_reg_mr(
         s_ctx->pd[nic], s_ctx->gpu_buffer, s_ctx->gpu_buf_size,
         IBV_ACCESS_LOCAL_WRITE
     ));
+
+    // s_ctx->gpu_mr[nic] = ibv_reg_mr(
+    //     s_ctx->pd[nic], s_ctx->gpu_buffer, s_ctx->gpu_buf_size,
+    //     IBV_ACCESS_LOCAL_WRITE
+    // );
+    // printf("nic: %d s_ctx->gpu_mr[nic]: %d errno: %d\n", nic, s_ctx->gpu_mr[nic], errno);
+
+    // if(s_ctx->gpu_mr[nic] == 0) exit(-1);
     
     printf("s_ctx->gpu_mr->addr: 0x%llx\n", s_ctx->gpu_mr[nic]->addr);
     printf("s_ctx->gpu_mr->lkey: %d\n", s_ctx->gpu_mr[nic]->lkey);
@@ -2563,6 +3079,78 @@ int local_connect_2nic(const char *mlx_name, struct context_2nic *s_ctx, int nic
     return 0;
 }
 
+__device__ void device_process_gpu_mr(int *addr, int size, int thread_num){
+    printf("gpu code running dev\n");
+    printf("\n\nGpu memory read: %d, %d thread_num: %d\n\n", addr[2], addr[size-1], thread_num);
+}
+
+__global__ void global_process_gpu_mr(int *addr, int size, int thread_num){
+    printf("gpu code running\n");
+    device_process_gpu_mr(addr, size, thread_num);
+}
+
+void process_gpu_mr_t(int *addr, int size, int thread_num){
+    printf("gpu code running\n");
+    cudaError_t success = cudaDeviceSynchronize();
+    printf("success: %d cudaGetLastError:%d\n", success, cudaGetLastError());
+    if(success != 0) exit(-1);
+    printf("gpu code running\n");
+    printf("success: %d cudaGetLastError:%d\n", success, cudaGetLastError());
+    global_process_gpu_mr<<<1, 1>>> (addr, size, thread_num);
+
+    success = cudaDeviceSynchronize();
+    printf("success: %d cudaGetLastError:%d\n", success, cudaGetLastError());
+    if(success != 0) exit(-1);
+}
+
+void *cpu_benchmark(void *param1){
+    struct cpu_benchmark_content *param = (struct cpu_benchmark_content *) param1;
+    struct ibv_send_wr wr, *bad_wr = NULL;
+    struct ibv_sge sge;
+    bad_wr = NULL;
+    memset(&wr, 0, sizeof(wr));
+    
+    wr.opcode = IBV_WR_RDMA_READ;
+    wr.sg_list = &sge;
+    wr.num_sge = 1;
+    wr.send_flags = IBV_SEND_SIGNALED;
+    wr.wr.rdma.remote_addr = (uint64_t) param->rem_addr; // + 8*1024*1024*1024llu; 
+    // (uintptr_t)s_ctx->server_mr.addr + 8*1024*1024*1024llu-1020;//10*1024*1024*1024llu;
+    wr.wr.rdma.rkey = param->rkey;// s_ctx->server_mr.rkey;
+    sge.addr = (uintptr_t) param->gpu_addr; // (uintptr_t)srv_buffer;
+    sge.length = param->mesg_size;
+    sge.lkey = param->lkey; // srv_mr->lkey;
+
+    // cpu_benchmark_whole(param->cq_ptr, 1, param->wc, param->ibqp, param->wr, \
+    //                     param->bad_wr, param->num_packets, param->mesg_size, param->bandwidth);
+    struct ibv_wc wc;
+    int ret = ibv_post_send(param->cpu_qp, &wr, &bad_wr);
+    // printf("post ret: %d\n", ret);
+    do{
+        ret = ibv_poll_cq(param->cpu_cq, 1, &wc);
+        // printf("poll ret: %d\n", ret);
+    }while(ret == 0);
+
+    // process_gpu_mr_t((int *) param->gpu_addr, param->mesg_size/sizeof(int), param->thread_num);
+    // exit(0);
+
+    // printf("sizeof(srv_buffer): %llu\n", srv_size);
+    // bool flag = false;
+    // for(int i = 0; i < sge.length/4; i++){
+    //     printf(" srv_buffer[%d]: %d ", i, srv_buffer[i]);
+    //     if(srv_buffer[i] != 2) {
+    //         printf("srv_buffer[%d]: %d\n", i, srv_buffer[i]);
+    //         flag = true;
+    //         break;
+    //     }
+    // }
+    // if(flag) printf("problem\n");
+    // else printf("no problem!\n");
+
+    // exit(0);
+
+}
+
 void *benchmark(void *param1){
     struct benchmark_content *param = (struct benchmark_content *) param1;
     cpu_benchmark_whole(param->cq_ptr, 1, param->wc, param->ibqp, param->wr, \
@@ -2631,6 +3219,8 @@ void process_gpu_mr(int *addr, int size){
     success = cudaDeviceSynchronize();
     if(success != 0) exit(-1);
 }
+
+
 
 __device__ int device_gpu_post_send(unsigned int qpbf_bufsize,/* unsigned int qpsq_cur_post,
           unsigned int qpsq_wqe_cnt,*/ uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
@@ -3969,9 +4559,9 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     //     *(volatile uint32_t *)bf_reg = (uint32_t) htonl(htonl64(val) >> 32);
     // *(volatile uint32_t *)(bf_reg+4) = (uint32_t) htonl(htonl64(val));
         // *(volatile uint32_t *)(bf_reg+4) = (uint32_t) htonl(htonl64(val));
-        // *value_ctrl = *(uint64_t *) ctrl;
-        __threadfence_system();
-        *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl; // 
+            // *value_ctrl = *(uint64_t *) ctrl;
+    __threadfence_system();
+    *(volatile uint64_t *)bf_reg = *(uint64_t *) ctrl; // 
         
         // *(volatile uint64_t *)bf_reg = ((uint64_t) val[1] << 32 | val[0]);
         // __threadfence_system();
@@ -3982,6 +4572,182 @@ __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
     // __threadfence_system()
     
 	return 0;
+}
+
+__device__ int update_db_index_opt(unsigned int cur_post, int qp_index)
+{
+	void *seg;
+	// unsigned int idx = cur_post & 63;
+    seg = (rdma_utils_content.qp_buf + 8192*qp_index + 256 + ((cur_post & 63) * 64)); // mlx5_get_send_wqe(qp, idx);
+    struct mlx5_wqe_ctrl_seg *ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+   
+    __threadfence_system();
+    *(volatile uint64_t *) rdma_utils_content.bf_reg[qp_index] = *(uint64_t *) ctrl ;// 
+	return 0;
+}
+
+__device__ void post_opt3(uint64_t wr_sg_addr, void *seg)
+{
+
+    // struct mlx5_wqe_data_seg *data = (struct mlx5_wqe_data_seg *) (seg + 32);
+    // data->byte_count = htonl(GLOBAL_REQUEST_SIZE); // htonl(wr_sg_list->length);
+    // data->lkey       = htonl(gpost_cont.wr_sg_lkey); // htonl(wr_sg_list->lkey);
+    // data->addr       = htonl64(wr_sg_addr); // htonl64(wr_sg_list->addr);
+
+    // seg = seg+32;
+    *(unsigned int *) (seg+32) = htonl(GLOBAL_REQUEST_SIZE);
+    *(unsigned int *) (seg+32 + sizeof(unsigned int)) = htonl(rdma_utils_content.wr_sg_lkey);
+    *(unsigned long long *) (seg+32 + sizeof(unsigned int) + sizeof(unsigned int)) = htonl64(wr_sg_addr);
+
+ 
+}
+
+__device__ void post_opt2(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey, void *seg)
+{
+
+    struct mlx5_wqe_raddr_seg *rdma = (struct mlx5_wqe_raddr_seg *)(seg + 16); // seg + 16; // sizeof(*ctrl);
+
+    rdma->raddr    = htonl64(wr_rdma_remote_addr);
+    rdma->rkey     = htonl(wr_rdma_rkey);
+    rdma->reserved = 0;
+ 
+}
+
+__device__ 
+void post_opt1(int cur_post, int qp_index, void *seg)
+{
+
+    struct mlx5_wqe_ctrl_seg * ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+    ctrl->opmod_idx_opcode = htonl(((uint16_t) cur_post * 256) | 16);
+    ctrl->qpn_ds = htonl(3 | ((rdma_utils_content.qp_num + qp_index) *256));
+    ctrl->signature = 0;
+    ctrl->fm_ce_se = 8; // MLX5_WQE_CTRL_CQ_UPDATE;
+    ctrl->imm = 0; // 
+ 
+}
+
+__device__ 
+void post_opt(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+                        uint64_t wr_sg_addr,
+                        int cur_post,
+                        int qp_index)
+{
+
+	// unsigned int idx = cur_post & 63;
+
+    // printf("gpost_cont.qp_num: %d gpost_cont.wr_sg_lkey: %d GLOBAL_REQUEST_SIZE: %d gpost_cont.qp_buf: %p wr_rdma_rkey: %d wr_rdma_remote_addr: p\n", 
+    //         gpost_cont.qp_num, gpost_cont.wr_sg_lkey, GLOBAL_REQUEST_SIZE, gpost_cont.qp_buf, wr_rdma_rkey, wr_rdma_remote_addr);
+
+    void * __restrict__ seg = (rdma_utils_content.qp_buf + 8192*qp_index + 256 + ((cur_post & 63) * 64)); // mlx5_get_send_wqe(qp, idx);
+    post_opt1(cur_post, qp_index, seg);
+    // struct mlx5_wqe_ctrl_seg *ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+    // ctrl->opmod_idx_opcode = htonl(((uint16_t) cur_post * 256) | 16);
+    // ctrl->qpn_ds = htonl(3 | ((gpost_cont.qp_num + qp_index) *256));
+    // ctrl->signature = 0;
+    // ctrl->fm_ce_se = 8; // MLX5_WQE_CTRL_CQ_UPDATE;
+    // ctrl->imm = 0; // 
+
+    post_opt2(wr_rdma_remote_addr, wr_rdma_rkey, seg);
+
+    // struct mlx5_wqe_raddr_seg * __restrict__ rdma = (struct mlx5_wqe_raddr_seg *)(seg + 16); // seg + 16; // sizeof(*ctrl);
+
+    // rdma->raddr    = htonl64(wr_rdma_remote_addr);
+    // rdma->rkey     = htonl(wr_rdma_rkey);
+    // rdma->reserved = 0;
+
+    post_opt3(wr_sg_addr, seg);
+
+    // *(unsigned int *) (seg+32) = htonl(GLOBAL_REQUEST_SIZE);
+    // *(unsigned int *) (seg+32 + sizeof(unsigned int)) = htonl(gpost_cont.wr_sg_lkey);
+    // *(unsigned long long *) (seg+32 + sizeof(unsigned int) + sizeof(unsigned int)) = htonl64(wr_sg_addr);
+
+
+    // struct mlx5_wqe_data_seg * __restrict__ data = (struct mlx5_wqe_data_seg *) (seg + 32);
+    // data->byte_count = htonl(GLOBAL_REQUEST_SIZE); // htonl(wr_sg_list->length);
+    // data->lkey       = htonl(gpost_cont.wr_sg_lkey); // htonl(wr_sg_list->lkey);
+    // data->addr       = htonl64(wr_sg_addr); // htonl64(wr_sg_list->addr);
+
+    __threadfence_system();
+    *(volatile uint64_t *)rdma_utils_content.bf_reg[qp_index] = *(uint64_t *) seg; // 
+	
+}
+
+// __device__
+// void ()
+
+__device__ 
+void post_opt1_2nic(int cur_post, int qp_index, void *seg, int qp_num)
+{
+
+    
+    // *(unsigned int *) seg = htonl(((uint16_t) cur_post * 256) | 16);
+    // *(unsigned int *) (seg + sizeof(unsigned int)) = htonl(3 | ((qp_num + qp_index) *256));
+    // *(uint8_t *) (seg + 2*sizeof(unsigned int)) = 0;
+    // *(unsigned short *) (seg + sizeof(__be16) + 2*sizeof(unsigned int) + sizeof(uint8_t)) = 8;
+
+    struct mlx5_wqe_ctrl_seg * ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+    ctrl->opmod_idx_opcode = htonl(((uint16_t) cur_post * 256) | 16);
+    ctrl->qpn_ds = htonl(3 | ((qp_num + qp_index) *256));
+    ctrl->signature = 0;
+    ctrl->fm_ce_se = 8; // MLX5_WQE_CTRL_CQ_UPDATE;
+    ctrl->imm = 0; // 
+  
+ 
+}
+
+__device__ void post_opt3_2nic(uint64_t wr_sg_addr, void *seg, int warpId)
+{
+    // seg = seg+32;
+    *(unsigned int *) (seg+32) = htonl(GLOBAL_REQUEST_SIZE);
+    *(unsigned int *) (seg+32 + sizeof(unsigned int)) = htonl(gpu_mrs_lkey_rdma_utils[warpId]);
+    *(unsigned long long *) (seg+32 + sizeof(unsigned int) + sizeof(unsigned int)) = htonl64(wr_sg_addr);
+}
+
+
+__device__ 
+void post_opt_2nic(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+                        uint64_t wr_sg_addr,
+                        int cur_post,
+                        int qp_index, int warpId)
+{
+
+	// unsigned int idx = cur_post & 63;
+
+    // printf("gpost_cont.qp_num: %d gpost_cont.wr_sg_lkey: %d GLOBAL_REQUEST_SIZE: %d gpost_cont.qp_buf: %p wr_rdma_rkey: %d wr_rdma_remote_addr: p\n", 
+    //         gpost_cont.qp_num, gpost_cont.wr_sg_lkey, GLOBAL_REQUEST_SIZE, gpost_cont.qp_buf, wr_rdma_rkey, wr_rdma_remote_addr);
+
+    void * __restrict__ seg = ((void *) gpu_qp_bufs_rdma_utils[warpId] + 8192*qp_index + 256 + ((cur_post & 63) * 64)); // mlx5_get_send_wqe(qp, idx);
+    post_opt1_2nic(cur_post, qp_index, seg, gpu_qp_num_rdma_utils[warpId]);
+    // struct mlx5_wqe_ctrl_seg *ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+    // ctrl->opmod_idx_opcode = htonl(((uint16_t) cur_post * 256) | 16);
+    // ctrl->qpn_ds = htonl(3 | ((gpost_cont.qp_num + qp_index) *256));
+    // ctrl->signature = 0;
+    // ctrl->fm_ce_se = 8; // MLX5_WQE_CTRL_CQ_UPDATE;
+    // ctrl->imm = 0; // 
+
+    post_opt2(wr_rdma_remote_addr, wr_rdma_rkey, seg);
+
+    // struct mlx5_wqe_raddr_seg * __restrict__ rdma = (struct mlx5_wqe_raddr_seg *)(seg + 16); // seg + 16; // sizeof(*ctrl);
+
+    // rdma->raddr    = htonl64(wr_rdma_remote_addr);
+    // rdma->rkey     = htonl(wr_rdma_rkey);
+    // rdma->reserved = 0;
+
+    post_opt3_2nic(wr_sg_addr, seg, warpId);
+
+    // *(unsigned int *) (seg+32) = htonl(GLOBAL_REQUEST_SIZE);
+    // *(unsigned int *) (seg+32 + sizeof(unsigned int)) = htonl(gpost_cont.wr_sg_lkey);
+    // *(unsigned long long *) (seg+32 + sizeof(unsigned int) + sizeof(unsigned int)) = htonl64(wr_sg_addr);
+
+
+    // struct mlx5_wqe_data_seg * __restrict__ data = (struct mlx5_wqe_data_seg *) (seg + 32);
+    // data->byte_count = htonl(GLOBAL_REQUEST_SIZE); // htonl(wr_sg_list->length);
+    // data->lkey       = htonl(gpost_cont.wr_sg_lkey); // htonl(wr_sg_list->lkey);
+    // data->addr       = htonl64(wr_sg_addr); // htonl64(wr_sg_list->addr);
+
+    __threadfence_system();
+    *(volatile uint64_t *)rdma_utils_content.bf_reg[qp_index+84*warpId] = *(uint64_t *) seg; // 
+	
 }
 
 __device__ int post_write(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            

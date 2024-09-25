@@ -16,10 +16,10 @@ struct Graph {
     std::vector<uint> edgesOffset; // offset to adjacencyList for every vertex
     std::vector<uint> edgesSize; //number of edges for every vertex
     uint64_t *adjacencyList_r; // all edges
-    uint *edgesOffset_r; // offset to adjacencyList for every vertex
+    uint64_t *edgesOffset_r; // offset to adjacencyList for every vertex
     uint *edgesSize_r; //number of edges for every vertex
-    unsigned int numVertices = 0;
-    unsigned int numEdges = 0;
+    uint64_t numVertices = 0;
+    uint64_t numEdges = 0;
 };
 
 struct Graph_m {

@@ -19,7 +19,7 @@ void printPreNode(uint* preNode, uint size) {
     }
 }
 
-void compareResult(uint* dist1, uint* dist2, uint numNodes) {
+void compareResult(WeightT* dist1, WeightT* dist2, uint numNodes) {
     uint diffCount = 0;
     vector<int> nodesId;
     

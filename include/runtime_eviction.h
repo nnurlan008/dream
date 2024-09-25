@@ -60,6 +60,7 @@ uint64_t allowed_size;
 // __device__ uint64_t Global_Dev_address;
 // device - info about QPs
 __device__ struct post_content gpost_cont;
+extern __device__ struct post_content rdma_utils_content;
 __device__ struct batch gbatch;
 __device__ struct post_content2 gpost_cont2;
 __device__ struct poll_content gpoll_cont;
@@ -70,7 +71,7 @@ __device__ int activeThreads[128]; // = 0;
 
 // host - info about QPs
 struct post_content hpost_cont;
-struct post_content2 hpost_cont2;
+struct post_content2 hpost_cont2; 
 struct poll_content hpoll_cont;
 struct host_keys keys_for_host;
 
@@ -89,6 +90,7 @@ extern struct rdma_content main_content;
 // request size
 
 #define REQUEST_SIZE 8*1024 // bytes
+extern __device__ int GLOBAL_REQUEST_SIZE;
 
 // define globale vaiable to save the number of post requests
 // and compare them to max_post
@@ -127,7 +129,7 @@ __device__ void sleep_nanoseconds(int nanoseconds) {
 }
 
 #define oversubs_ratio_macro  1
-#define rest_memory 16*1024*1024*1024llu // restricted memory
+#define rest_memory 5*1024*1024*1024llu // restricted memory
 
 unsigned long long closestUpperDivisible(unsigned long long num, unsigned long long divisor) {
     return ((num + divisor - 1) / divisor) * divisor;
@@ -143,9 +145,9 @@ void start_page_queue(const size_t size, const size_t page_size){
     R_cursor = 0;
     E_cursor = 0;
     // page_size = REQUEST_SIZE;
-    size_t aligned_size = size/oversubs_ratio_macro;
+    size_t aligned_size = (rest_memory)/(oversubs_ratio_macro);
     aligned_size = dev_closestUpperDivisible(aligned_size , page_size);
-    num_pages = aligned_size/page_size; // size/page_size;
+    num_pages = aligned_size/(REQUEST_SIZE); // size/page_size;
     printf("num_pages: %llu\n", (unsigned long long) num_pages);
     printf("page_size: %llu\n", (unsigned long long) page_size);
 }
@@ -198,6 +200,9 @@ __global__ void alloc_global_content(struct post_content *post_cont, struct poll
         // QP_count.queue_count[i].store(0, simt::memory_order_relaxed);
 
     }
+
+    GLOBAL_REQUEST_SIZE = REQUEST_SIZE;
+    rdma_utils_content = gpost_cont;
      
 }
 
@@ -610,6 +615,13 @@ struct rdma_buf {
             return *this;
         }
 
+        void reset(){
+            if(update_device_tlb() == -1){
+                printf("error on reset, file: %s, line: %d\n", __FILE__, __LINE__);
+                exit(-1);
+            }
+        }
+
         // constructor for pointer declaration:
         void start(size_t user_size){
             uint64_t offset = (uint64_t) Address_Offset;
@@ -686,10 +698,10 @@ struct rdma_buf {
             if(cudaSuccess != cudaMemset(page_lock, 0, tlb_size*sizeof(unsigned int)))
                 return -1;
 
-            size_t restricted_gpu_mem = rest_memory; 
+            // size_t restricted_gpu_mem_ = rest_memory; 
             const size_t page_size = REQUEST_SIZE; 
 
-            size_t aligned_size = restricted_gpu_mem/oversubs_ratio_macro;
+            size_t aligned_size = (rest_memory)/(oversubs_ratio_macro);
             aligned_size = closestUpperDivisible(aligned_size , page_size);
             numPages = aligned_size/page_size;
 
@@ -730,6 +742,11 @@ struct rdma_buf {
                 // printf("host_TLB[%d].device_address: %p\n", i, host_TLB[i].device_address);
                 if(i == tlb_size-1) printf("host_address + %llu*REQUEST_SIZE: %p\n", i, host_address + i*REQUEST_SIZE);
             }
+            for (size_t i = 0; i < num_pages; i++)
+            {
+                
+            }
+            
             printf("line: %d\n", __LINE__);
             h_page_map = (int *) malloc(numPages*sizeof(int));
             for (size_t i = 0; i < numPages; i++)
@@ -740,8 +757,8 @@ struct rdma_buf {
             printf("line: %d\n", __LINE__);
             
             if(update_device_tlb() == -1) return -1;
-            free(h_page_number);
-            free(h_page_map);
+            // free(h_page_number);
+            // free(h_page_map);
             // printf("tlb_buffer: %p\n", tlb_buffer);
             return 0;
         }
@@ -755,7 +772,7 @@ struct rdma_buf {
             if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(tlb_entry), cudaMemcpyHostToDevice))
                 return -1;
             printf("line: %d\n", __LINE__);
-            if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(tlb_entry), cudaMemcpyHostToDevice))
+            if(cudaSuccess != cudaMemcpy(d_tlb, h_tlb, tlb_size*sizeof(unsigned int), cudaMemcpyHostToDevice))
                 return -1;
             printf("line: %d\n", __LINE__);
             if(cudaSuccess != cudaMemcpy(page_number, h_page_number, tlb_size*sizeof(int), cudaMemcpyHostToDevice))
@@ -1484,9 +1501,12 @@ struct rdma_buf {
             /*page_number[che] = (long long int) */atomicAdd((unsigned long long int *)&g_qp_index, (unsigned long long int) 1);
             // get_page_number(che); //page_number_list[che]; // d_TLB[che].page_number;
 
-            post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + pageNumber*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
-                    cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+            // post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + pageNumber*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
+            //         cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
             
+            post_opt(rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index],            
+                    dev_addr + pageNumber*request_size*sizeof(T),
+                    cur_post, qp_index);
             
             // unsigned long long end = clock64();
             // unsigned long long elapsed = end - start;
@@ -1731,13 +1751,16 @@ struct rdma_buf {
                     //     atomicCAS(&d_tlb[che], 0, 2);
                     // }
                 }
+                __threadfence();
                 __syncwarp(mask1);
                 // volatile int *che_entry = (volatile int *) &page_number[che];
-                __threadfence(); // _system();
+                 // _system();
                 T *tmp_array = (T *) (dev_addr + /*atomicAdd((int *)che_entry, 0)*/ page_number[che]*request_size*sizeof(T)); // (T *) d_TLB[che].device_address;
                 // if(page_number[che] < 0) printf("page_number[che]: %d d_tlb[che]: %d\n", page_number[che], (int) d_tlb[che]);
                 // return_val = page_number[che] < 0 ? 0: tmp_array[index%request_size];
-                return_val = tmp_array[index%request_size];
+                // if(page_number[che] < 0 || page_number[che] >= num_pages)
+                //     printf("tmp_array: %p page_number[che]: %d\n", tmp_array, page_number[che]);
+                return_val = tmp_array[index&(request_size-1)];
                 // dev_buffer[index];
                 __syncwarp(mask1);
                 // __syncthreads();

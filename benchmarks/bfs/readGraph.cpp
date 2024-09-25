@@ -10,8 +10,8 @@ using namespace std;
 void readfile(Graph &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset, \
               uint *u_edgesSize, uint *u_adjacencyList) {
 
-    unsigned int n;
-    unsigned int m;
+    uint64_t n;
+    uint64_t m;
 
     //If no arguments then read graph from stdin
     printf("argc: %d file: %s\n", argc, argv[8]);
@@ -37,8 +37,8 @@ void readfile(Graph &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset
     // }
 
     // FILE *fp;
-    uint num_nodes;
-    uint num_edges;
+    uint64_t num_nodes;
+    uint64_t num_edges;
     int read_from_file = 0;
     std::ifstream infile (argv[8], ios::in | ios::binary);
     if(argc == 5){
@@ -76,8 +76,8 @@ void readfile(Graph &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset
         printf("read_from_file: %d max: %lld\n", read_from_file, max);
         std::cout << "Opening file: " << argv[8] << endl;
         
-        infile.read ((char*)&num_nodes, sizeof(uint));
-		infile.read ((char*)&num_edges, sizeof(uint));
+        infile.read ((char*)&num_nodes, sizeof(uint64_t));
+		infile.read ((char*)&num_edges, sizeof(uint64_t));
 
         printf("num_nodes: %llu, num_edges: %llu\n", num_nodes, num_edges);
 
@@ -86,7 +86,7 @@ void readfile(Graph &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset
         G.numVertices = n;
         G.numEdges = m;
 
-        G.edgesOffset_r = new uint[G.numVertices+1];
+        G.edgesOffset_r = new uint64_t[G.numVertices+1];
         // G.edgesSize_r = new uint[G.numVertices];
         G.adjacencyList_r = new uint64_t[G.numEdges];
 
@@ -129,7 +129,7 @@ void readfile(Graph &G, Graph_m &G_m, int argc, char **argv, uint *u_edgesOffset
         double t_mem = (double) total_mem/(1024*1024*1024); 
         printf("t_mem: %f\n", t_mem);
 
-		infile.read ((char*)G.edgesOffset_r, sizeof(uint)*(num_nodes+1));
+		infile.read ((char*)G.edgesOffset_r, sizeof(uint64_t)*(num_nodes+1));
 		// infile.read ((char*)G.edgesSize_r, sizeof(uint)*num_nodes);
         
 		// G_m.nodePointer[num_nodes] = num_edges;

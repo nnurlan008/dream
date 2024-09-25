@@ -39,14 +39,12 @@ __global__ void pointerChaseRead(dataType* p,
                                  dummyType* dumy)
 {
     long long int start, end;
-    
     //printf("Hello\n");
     dataType tempDummy = 0;
     dummyType dummysum=0;
     
     int i=0;
-    //printf("tempDummy: %lld\n",tempDummy);
-    //printf("p[tempDummy]: %d\n",p[tempDummy]);
+    
     while(tempDummy != (dataType)-1)
     {
         start = clock();
@@ -55,13 +53,11 @@ __global__ void pointerChaseRead(dataType* p,
         dummysum = dummysum + tempDummy + start;
         end = clock();
         times[i] = end - start;
-        printf("end-start: %lld\n",end -start);
+        // printf("end-start: %lld\n",end -start);
         i++;
     }
 
-    *dumy = (dummyType) dummysum;
-    
-    
+    *dumy = (dummyType) dummysum; 
 }
 
 
@@ -159,7 +155,7 @@ int main()
     for(int i=0; i<(EvictionBufferSize)/(stride) ;i++)
     {
         sprintf(line,"%lld\n",times_host[i]);
-        fputs(line, fptr);
+        // fputs(line, fptr);
     }
     fclose(fptr);
     

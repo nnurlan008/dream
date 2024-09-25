@@ -60,6 +60,7 @@ uint64_t allowed_size;
 // __device__ uint64_t Global_Dev_address;
 // device - info about QPs
 __device__ struct post_content gpost_cont;
+extern __device__ struct post_content rdma_utils_content;
 __device__ struct batch gbatch;
 __device__ struct post_content2 gpost_cont2;
 __device__ struct poll_content gpoll_cont;
@@ -90,6 +91,7 @@ extern struct rdma_content main_content;
 // request size
 
 #define REQUEST_SIZE 8*1024 // bytes
+extern __device__ int GLOBAL_REQUEST_SIZE;
 
 // define globale vaiable to save the number of post requests
 // and compare them to max_post
@@ -185,6 +187,8 @@ __global__ void alloc_global_content(struct post_content *post_cont, struct poll
         // QP_count.queue_count[i].store(0, simt::memory_order_relaxed);
 
     }
+    GLOBAL_REQUEST_SIZE = REQUEST_SIZE;
+    rdma_utils_content = gpost_cont;
      
 }
 
@@ -345,8 +349,8 @@ __global__ void memcpyDtoH_global(tlb_entry *d_TLB, size_t size, size_t tlb_size
                                 // post_m(d_TLB[che].host_address, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address, 4, gpost_cont.qp_num + qp_index, 
                                 //         cur_post, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
 
-                                post_write(d_TLB[che].host_address, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address, 0, gpost_cont.qp_num + qp_index, 
-                                        cur_post, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
+                                // post_write(d_TLB[che].host_address, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, d_TLB[che].device_address, 0, gpost_cont.qp_num + qp_index, 
+                                //         cur_post, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], id);
                                 
                                 
                                 while(/*cqe64->op_own == 240*/*op_flag == 240){
@@ -597,6 +601,19 @@ struct rdma_buf {
             return *this;
         }
 
+        void free(){
+            if(d_TLB != NULL) cudaFree(d_TLB);
+            if(d_tlb != NULL) cudaFree(d_tlb);
+            Address_Offset -= size;
+        }
+
+        void reset(){
+            if(update_device_tlb() == -1){
+                printf("error on reset, file: %s, line: %d\n", __FILE__, __LINE__);
+                exit(-1);
+            }
+        }
+
         // constructor for pointer declaration:
         void start(size_t user_size){
             uint64_t offset = (uint64_t) Address_Offset;
@@ -654,7 +671,7 @@ struct rdma_buf {
         
         int alloc_tlb(){
             int req_size = REQUEST_SIZE;
-            tlb_size = ceil((double)size/req_size);
+            tlb_size = ceil((double)size/req_size)+1;
             
             // if(cudaSuccess != cudaMalloc(&tlb_buffer, tlb_size*sizeof(unsigned int)))
             //     return -1;
@@ -722,6 +739,8 @@ struct rdma_buf {
             printf("line: %d\n", __LINE__);
             
             if(update_device_tlb() == -1) return -1;
+            
+            
             // free(h_page_number);
             // free(h_page_map);
             // printf("tlb_buffer: %p\n", tlb_buffer);
@@ -737,7 +756,7 @@ struct rdma_buf {
             if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(tlb_entry), cudaMemcpyHostToDevice))
                 return -1;
             printf("line: %d\n", __LINE__);
-            if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(tlb_entry), cudaMemcpyHostToDevice))
+            if(cudaSuccess != cudaMemcpy(d_tlb, h_tlb, tlb_size*sizeof(unsigned int), cudaMemcpyHostToDevice))
                 return -1;
             printf("line: %d\n", __LINE__);
             // if(cudaSuccess != cudaMemcpy(page_number, h_page_number, tlb_size*sizeof(int), cudaMemcpyHostToDevice))
@@ -1380,13 +1399,16 @@ struct rdma_buf {
         //     return pageNumber;
         // }
 
+
+
         __forceinline__
         __device__
         void read(uint64_t che){
-
-            int qp_index = get_smid()%128; // che%8; // (); // warp_id() % 256; // ;
+            long long int start, end;
+            
+            int qp_index = get_smid()%84; // che%8; // (); // warp_id() % 256; // ;
             // atomicAdd((unsigned long long int *)&g_qp_index, 1)
-            // unsigned int mask = __match_any_sync(__activemask(), qp_index);
+            // unsigned int mask = _match_any_sync(_activemask(), qp_index);
             // unsigned int leader = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
 
 
@@ -1424,10 +1446,16 @@ struct rdma_buf {
             atomicAdd((unsigned long long int *)&g_qp_index, (unsigned long long int) 1);
             
 
-            post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
-                    cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+            // post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
+            //         cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
             
-            
+            post_opt(rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index],            
+                    dev_addr + che*request_size*sizeof(T),
+                    cur_post, qp_index);
+
+            // if(cur_post > 0 && cur_post%64 == 0)
+            //     update_db(&value_ctrl, gpost_cont.bf_reg[qp_index]);
+            // start = clock();
             volatile uint8_t *op_flag = &cqe64->op_own;
             retries = 0;
             while(*op_flag == 240){
@@ -1448,8 +1476,94 @@ struct rdma_buf {
             // if(lane_id() == leader){  
             // __threadfence_system();
             *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post + 1) & 0xffffff);
-            *cq_lock = 0;  
+            *cq_lock = 0; 
+            // end = clock();
+            // printf("read time diff: %lld\n", end - start); 
         }
+
+
+
+        // __forceinline__
+        // __device__
+        // void read(uint64_t che){
+
+        //     int qp_index = get_smid()%128; // che%8; // (); // warp_id() % 256; // ;
+        //     // atomicAdd((unsigned long long int *)&g_qp_index, 1)
+        //     // unsigned int mask = __match_any_sync(__activemask(), qp_index);
+        //     // unsigned int leader = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
+
+
+        //     unsigned long long int data_size = request_size*sizeof(T);
+        //     void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
+            
+        //     // bool isSet = false;
+        //     volatile size_t *p_index = &gpost_cont.n_post[qp_index];
+        //     unsigned int cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+
+        //     volatile uint *cq_lock = &gpost_cont.cq_lock[qp_index*64+cur_post%64];
+
+        //     int retries = 1;
+
+        //     while(atomicCAS((unsigned int *)cq_lock, 0, 1) != 0){
+                
+        //         // if(retries >= 100000){
+        //         //     // qp_index = atomicAdd((unsigned long long int *)&g_qp_index, 1)%128;
+        //         //     // cq_lock = &gpost_cont.cq_lock[qp_index];
+        //         //     printf("qp_index: %d retries: %d stuck in lock cq\n", qp_index, retries);
+        //         //     retries = -1;
+        //         // }
+        //         // retries++;
+        //     }
+        //     // printf("qp_index: %d retries: %d\n", qp_index, retries);
+        //     p_index = &gpost_cont.queue_count[qp_index];
+        //     cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+            
+        //     void *cqe = gpoll_cont.cq_buf + 2*4096*qp_index + (cur_post & 63) * 64;
+        //     struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
+            
+        //     uint64_t rem_addr = host_address + che*request_size*sizeof(T);
+        //     int rkey_index = (/*d_TLB[che].host_address*/ rem_addr - d_remote_address/*gpost_cont.wr_rdma_remote_addr*/)/(8*1024*1024*1024llu);
+        //     // uint64_t value_ctrl;
+        //     atomicAdd((unsigned long long int *)&g_qp_index, (unsigned long long int) 1);
+            
+
+        //     // post_m(/*d_TLB[che].host_address*/ rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index], data_size, gpost_cont.wr_sg_lkey, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpost_cont.qp_num + qp_index, 
+        //     //         cur_post, &value_ctrl, gpost_cont.qp_buf + 8192*qp_index, (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+            
+        //     post_opt(rem_addr, gpost_cont2.wr_rdma_rkey[rkey_index],            
+        //                 dev_addr + che*request_size*sizeof(T),
+        //                 cur_post, qp_index);
+
+        //     // printf("posted db qp_index: %d curpost&63: %d cur_post&63 == 1: %d\n", qp_index, cur_post&63, (cur_post&63) == 1);
+        //     if(((cur_post+1)&63)%32 == 0){
+        //         // printf("ringing db qp_index: %d curpost: %d\n", qp_index, (int) cur_post);
+        //         // update_db_spec(gpost_cont.bf_reg[qp_index], gpost_cont.qp_buf + 8192*qp_index, cur_post);
+        //         // update_db(&value_ctrl, gpost_cont.bf_reg[qp_index]);
+        //         update_db_index_opt(cur_post, qp_index);
+        //     }
+            
+        //     volatile uint8_t *op_flag = &cqe64->op_own;
+        //     retries = 0;
+        //     while(*op_flag == 240){
+                    
+        //         // retries++;
+        //         // if(retries>1000000 && qp_index == 10) {
+        //         //     printf("stuck in completio qp_index: %d curpost: %d\n", qp_index, (int) cur_post);
+        //         //     retries=-1;
+        //         // }
+                    
+        //     }
+            
+
+        //     // atomicAdd((unsigned long long int *)&cq_wait[qp_index], (unsigned long long int) retries);
+        //     // __syncwarp(mask);
+        //     // __threadfence_system();
+        //     *op_flag = 240;
+        //     // if(lane_id() == leader){  
+        //     // __threadfence_system();
+        //     *(uint32_t *) cq_dbrec = (uint32_t) htonl((cur_post + 1) & 0xffffff);
+        //     *cq_lock = 0;  
+        // }
 
 
         // // check TLB
@@ -1533,19 +1647,20 @@ struct rdma_buf {
                 uint64_t che;
                 uint64_t id = blockDim.x * blockIdx.x + threadIdx.x; 
                 che = index/request_size;
-
+                long long int start, end;
                 // floor((double)index/request_size); //getTLBindex(index, request_size);
                 // select which qp and cq to use:xs
                 // TODO: for oversubscription, first check if gpu has enough free memory
                 // volatile uint8_t *page_entry = &d_tlb[che];
-                    if(/*d_TLB[che].state == 2*/d_tlb[che] == 2){ // page completely on gpu or dirty on gpu
-                        // T *tmp_array =  (T *) d_TLB[che].device_address;
-                        // // LRU is incremented
-                        // // printf(" tlb: 2 ");
-                        // return tmp_array[index%request_size];
+                    // if(/*d_TLB[che].state == 2*/d_tlb[che] == 2){ // page completely on gpu or dirty on gpu
+                    //     // T *tmp_array =  (T *) d_TLB[che].device_address;
+                    //     // // LRU is incremented
+                    //     // // printf(" tlb: 2 ");
+                    //     // return tmp_array[index%request_size];
                         
-                        return dev_buffer[index];
-                    }
+                    //     return dev_buffer[index];
+                    // }
+                    // start = clock();
                     if(/*d_TLB[che].state == 0 || d_TLB[che].state == 5*/d_tlb[che] == 0){ // page completely on cpu or dirty on cpu
                     
                         // unsigned int mask1 = __activemask(); // __match_any_sync(__activemask(), (unsigned long long)qp_index);
@@ -1595,6 +1710,8 @@ struct rdma_buf {
                        
                         
                     }
+                    // end = clock();
+                    // printf("[] time difference: %lld\n", end - start);
                     // __syncthreads();
                     return dev_buffer[index];
                     // return T();
