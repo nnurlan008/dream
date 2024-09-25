@@ -380,6 +380,24 @@ struct __attribute__((__packed__)) wqe_segment_ctrl {
     uint32_t    imm;
 };
 
+struct cpu_benchmark_content{
+  struct ibv_cq *cpu_cq; 
+  int num_entries; 
+  // struct ibv_wc *wc;
+  struct ibv_qp *cpu_qp; 
+  // struct ibv_send_wr *wr;
+  void *rem_addr;
+  // struct ibv_send_wr **bad_wr; 
+  void *gpu_addr;
+  uint32_t rkey;
+  uint32_t lkey;
+  int num_packets; 
+  int mesg_size; 
+  float *bandwidth;
+  int thread_num;
+
+};
+
 struct benchmark_content{
   struct ibv_cq *cq_ptr; 
   int num_entries; 
@@ -429,16 +447,31 @@ __device__ int update_db(uint64_t *ctrl, void *bf_reg);
 
 __device__ int update_db_spec(void *bf_reg, void *qp_buf, unsigned int cur_post);
 
+__device__ int update_db_index_opt(unsigned int cur_post, int qp_index);
+
 __device__ int post_m(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
                     uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr, 
                     int wr_opcode, uint32_t qp_num, int cur_post, uint64_t *value_ctrl, 
                     void *qp_buf, void *bf_reg, unsigned int *qp_db, void *dev_qp_sq, int id);
+
+__device__ void post_opt(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+                        uint64_t wr_sg_addr,
+                        int cur_post, int qp_index);
+
+__device__ 
+void post_opt_2nic(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+                        uint64_t wr_sg_addr,
+                        int cur_post,
+                        int qp_index, int warpId);
 
 __device__ int post_write(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
                       uint32_t wr_sg_length, uint32_t wr_sg_lkey, uint64_t wr_sg_addr,
                       int wr_opcode, uint32_t qp_num, int cur_post, void *qp_buf, void *bf_reg, unsigned int *qp_db, void *dev_qp_sq, int id);
 
 int benchmark(struct context *s_ctx, int num_msg, int mesg_size, float *bandwidth);
+void *cpu_benchmark(void *param1);
+
+int local_connect_cpu_benchmark(const char *mlx_name, struct context *s_ctx, int mesg_size, int u_iter);
 
 int cpu_benchmark_whole(struct ibv_cq *cq_ptr, int num_entries, struct ibv_wc *wc,
                    struct ibv_qp *ibqp, struct ibv_send_wr *wr,

@@ -30,7 +30,7 @@ using namespace std;
 
 #define BLOCK_SIZE 1024
 #define WARP_SHIFT 5
-#define WARP_SIZE 32
+#define WARP_SIZE (1 << WARP_SHIFT)
 
 #define MEM_ALIGN_64 (~(0xfULL))
 #define MEM_ALIGN MEM_ALIGN_64
@@ -56,8 +56,8 @@ __global__
 void simpleBfs_uvm(size_t n, unsigned int level, unsigned int *d_adjacencyList, unsigned int *d_edgesOffset,
                     unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed);
 
-__global__
-void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+__global__ // __launch_bounds__(1024,2)
+void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, uint64_t *d_edgesOffset,
                     unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed);
 
 __global__
@@ -100,8 +100,12 @@ void simpleBfs_rdma_optimized_warp2(size_t n, unsigned int level, rdma_buf<unsig
                                    unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed);
 
 __global__
-void simpleBfs_modVertexList(size_t n, unsigned int level, unsigned int *d_adjacencyList,
-                    unsigned int *vertex_list, unsigned int *d_distance, unsigned int *changed);
+void simpleBfs_csr(size_t n, unsigned int level, unsigned int *d_adjacencyList,
+                    uint64_t *vertex_list, unsigned int *d_distance, unsigned int *changed);
+
+__global__
+void simpleBfs_csr_warp_opt(size_t n, size_t numVertices, unsigned int level, unsigned int *d_adjacencyList, unsigned int *d_edgesOffset,
+                    unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed);
 
 __global__
 void simpleBfs_modVertexList_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList,
@@ -121,16 +125,16 @@ kernel_baseline(uint32_t *label, const uint32_t level, const uint64_t vertex_cou
 __global__ void kernel_coalesce(uint32_t *label, const uint32_t level, const uint64_t vertex_count, 
                                 const uint64_t *vertexList, const uint64_t *edgeList, bool *changed);
 
-__global__ void 
-kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t numVertex, const uint64_t new_size, unsigned int *d_distance, 
-                    unsigned int *new_offset, unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, unsigned int *changed);
+__global__ // __launch_bounds__(1024, 512)  
+void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t numVertex, const uint64_t new_size, unsigned int *d_distance, 
+                    uint64_t *new_offset, unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, unsigned int *changed);
 
 __global__ void 
 kernel_coalesce_new_repr(uint level, size_t n, size_t numVertex, const uint64_t new_size, unsigned int *d_distance, 
-                        unsigned int *new_offset, unsigned int *new_vertex_list, unsigned int *edgeList, unsigned int *changed);
+                        uint64_t *new_offset, unsigned int *new_vertex_list, unsigned int *edgeList, unsigned int *changed);
 
 __global__ void 
-bfs_kernel_coalesce_chunk(unsigned int *label, unsigned int level, const uint64_t vertex_count, unsigned int *vertexList, unsigned int *edgeList, unsigned int *changed);
+bfs_kernel_coalesce_chunk(unsigned int *label, unsigned int level, const uint64_t vertex_count, uint64_t *vertexList, unsigned int *edgeList, unsigned int *changed);
 
 __global__ void 
 check_edgeList(rdma_buf<unsigned int> *a, unsigned int *b, size_t size);
@@ -190,7 +194,7 @@ __global__ void add_vectors_uvm(int *a, int *b, int *c, int size)
                    (((uint32_t)(x) & 0x0000ff00) <<  8) |\
                    (((uint32_t)(x) & 0x000000ff) << 24))
 
-#define WARP_SIZE 32
+
 
 void delay(int number_of_seconds)
 {
@@ -259,7 +263,7 @@ rdma_buf<unsigned int> *rdma_adjacencyList;
 // rdma_buf<unsigned int> *u_distance;
 unsigned int *u_adjacencyList;
 unsigned int *uvm_adjacencyList;
-unsigned int *u_edgesOffset;
+uint64_t *u_edgesOffset;
 unsigned int *u_edgesSize;
 unsigned int *u_distance;
 unsigned int *u_startVertices;
@@ -283,7 +287,7 @@ uint *incrDegrees;
 void initCuda(Graph &G) {
 
     checkError(cudaMallocManaged(&rdma_adjacencyList, sizeof(rdma_buf<unsigned int>)));
-    checkError(cudaMallocManaged(&uvm_adjacencyList, G.numEdges*sizeof(unsigned int)));
+    // checkError(cudaMallocManaged(&uvm_adjacencyList, G.numEdges*sizeof(unsigned int)));
     
     auto start = std::chrono::steady_clock::now();
     // checkError(cudaMallocHost(&u_adjacencyList, G.numEdges*sizeof(unsigned int)));
@@ -301,7 +305,7 @@ void initCuda(Graph &G) {
     
     // checkError(cudaMallocHost(&u_startVertices, G.numEdges*sizeof(unsigned int)));
     checkError(cudaMallocHost(&u_distance, G.numVertices*sizeof(unsigned int)));
-    checkError(cudaMallocHost(&u_edgesOffset, (G.numVertices+1)*sizeof(unsigned int)));
+    checkError(cudaMallocHost(&u_edgesOffset, (G.numVertices+1)*sizeof(uint64_t)));
     checkError(cudaMallocHost(&u_edgesSize, G.numVertices*sizeof(unsigned int)));
 
     // rdma_adjacencyList->start(G.numEdges *sizeof(unsigned int));
@@ -916,6 +920,17 @@ print_retires(void){
     // g_qp_index = 0;
 }
 
+__global__ void
+copy_page_fault_number(size_t *pf_min, uint *node, uint startVertex){
+    
+    if(*pf_min > g_qp_index){
+        *pf_min = g_qp_index;
+        *node = startVertex;
+    }
+    printf("page fault min: %llu startVertex: %d\n", *pf_min, *node);    
+    g_qp_index = 0;
+}
+
 void runCudaSimpleBfs_optimized(int startVertex, Graph &G, std::vector<int> &distance,
                       std::vector<int> &parent, bool rdma, bool uvm) 
 {
@@ -1056,7 +1071,7 @@ void runCudaSimpleBfs_optimized(int startVertex, Graph &G, std::vector<int> &dis
             // simpleBfs_normal<<< G.numVertices / 1024 + 1, 1024 >>>(G.numEdges, G.numVertices, level, uvm_adjacencyList /* d_adjacencyList u_adjacencyList */, d_startVertices, d_distance, changed);
             // simpleBfs_uvm<<<G.numVertices / 1024 + 1, 1024>>>(G.numVertices, level, d_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, changed); 
             
-            simpleBfs_modVertexList<<<G.numVertices / 1024 + 1, 1024>>>(G.numVertices, level, d_adjacencyList, d_edgesOffset, d_distance, d_changed); 
+            // simpleBfs_csr<<<G.numVertices / 1024 + 1, 1024>>>(G.numVertices, level, d_adjacencyList, d_edgesOffset, d_distance, d_changed); 
             // kernel_coalesce_chunk<<<blockDim, numthreads>>>(d_distance, level, G.numVertices, d_edgesOffset,
             //                       d_adjacencyList, d_changed);
             
@@ -1209,37 +1224,43 @@ void print_transferTime(void) {
     printf("transfer time: %llu \n", transfer_time);
 }
 
-uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_list, unsigned int *new_offset, unsigned int new_size,
-             unsigned int *u_adjacencyList, unsigned int *u_edgesOffset, int u_case) 
+float time_total = 0;
+float time_readmostly_total = 0;
+
+uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_list, uint64_t *new_offset, unsigned int new_size,
+             unsigned int *u_adjacencyList, uint64_t *u_edgesOffset, int u_case) 
 {
     printf("fuction: %s, line: %d\n", __func__, __LINE__);
     // u_case: 0: direct transfer; 1: rdma edgelist rep.; 2: new rep.
 
-    unsigned int *d_distance, *d_edgesSize, *d_edgesOffset, *d_adjacencyList, *d_startVertices, *d_vertexList;
-    unsigned int *d_new_vertexList, *d_new_offset;
+    unsigned int *d_distance, *d_edgesSize, *d_adjacencyList, *d_startVertices, *d_vertexList;
+    uint64_t *d_edgesOffset, *d_new_offset;
+    unsigned int *d_new_vertexList;
     unsigned int *return_distance;
     // checkError(cudaMemcpy(d_adjacencyList, u_adjacencyList, sizeof(rdma_buf<unsigned int>), cudaMemcpyHostToDevice));
 
     return_distance = new uint[G.numVertices];
     checkError(cudaMalloc((void **) &d_distance, G.numVertices*sizeof(unsigned int)));
     uint *h_distance = new uint[G.numVertices];
+    
     for (size_t i = 0; i < G.numVertices; i++)
     {
         h_distance[i] = 100000;
     }
+
     h_distance[startVertex] = 0;
     checkError(cudaMemcpy(d_distance, h_distance, G.numVertices*sizeof(unsigned int), cudaMemcpyHostToDevice));
     free(h_distance);
     checkError(cudaMalloc((void **) &d_edgesSize, G.numVertices*sizeof(unsigned int)));
-    checkError(cudaMalloc((void **) &d_edgesOffset, (G.numVertices+1)*sizeof(unsigned int)));
-    checkError(cudaMemcpy(d_edgesOffset, u_edgesOffset, (G.numVertices+1)*sizeof(unsigned int), cudaMemcpyHostToDevice));
+    checkError(cudaMalloc((void **) &d_edgesOffset, (G.numVertices+1)*sizeof(uint64_t)));
+    checkError(cudaMemcpy(d_edgesOffset, u_edgesOffset, (G.numVertices+1)*sizeof(uint64_t), cudaMemcpyHostToDevice));
 
     if(u_case == 2 || u_case == 3 || u_case == 4){
         checkError(cudaMalloc((void **) &d_new_vertexList, new_size*sizeof(unsigned int)));
         checkError(cudaMemcpy(d_new_vertexList, new_vertex_list, new_size*sizeof(unsigned int), cudaMemcpyHostToDevice));
 
-        checkError(cudaMalloc((void **) &d_new_offset, (new_size+1)*sizeof(unsigned int)));
-        checkError(cudaMemcpy(d_new_offset, new_offset, (new_size+1)*sizeof(unsigned int), cudaMemcpyHostToDevice));
+        checkError(cudaMalloc((void **) &d_new_offset, (new_size+1)*sizeof(uint64_t)));
+        checkError(cudaMemcpy(d_new_offset, new_offset, (new_size+1)*sizeof(uint64_t), cudaMemcpyHostToDevice));
     }
     
     unsigned int changed_h, *d_changed;
@@ -1299,6 +1320,28 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
 
     
     if(u_case == 6){
+        if(!uvm_adjacencyList)
+            checkError(cudaMallocManaged(&uvm_adjacencyList, G.numEdges*sizeof(unsigned int)));
+
+        for(size_t i = 0; i < G.numEdges; i++){
+            uvm_adjacencyList[i] = u_adjacencyList[i];
+        }
+        ret1 = cudaDeviceSynchronize();
+        auto start1 = std::chrono::steady_clock::now();
+        cudaEventRecord(event1, (cudaStream_t)1);
+        // checkError(cudaMemAdvise(uvm_adjacencyList, G.numEdges*sizeof(unsigned int), cudaMemAdviseSetReadMostly, 0));
+        ret1 = cudaDeviceSynchronize();
+        cudaEventRecord(event2, (cudaStream_t) 1);
+        cudaEventSynchronize(event1); //optional
+        cudaEventSynchronize(event2); //wait for the event to be executed!
+        // calculate time
+        float dt_ms;
+        cudaEventElapsedTime(&dt_ms, event1, event2);
+        printf("Elapsed time for cudaMemAdviseSetReadMostly with cudaEvent: %f startVertex: %d\n", dt_ms, startVertex);
+        auto end1 = std::chrono::steady_clock::now();
+        long duration1 = std::chrono::duration_cast<std::chrono::milliseconds>(end1 - start1).count();
+        printf("Elapsed time for cudaMemAdviseSetReadMostly in milliseconds : %li ms.\n\n", duration1);
+        time_readmostly_total += dt_ms;
         cudaDeviceProp devProp;
         cudaGetDeviceProperties(&devProp, 0);
         // Calculate memory utilization
@@ -1346,10 +1389,38 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
     auto start = std::chrono::steady_clock::now();
     changed_h = 1;
     ret1 = cudaDeviceSynchronize();
-    cudaEventRecord(event1, (cudaStream_t)1);
-
     
+
+    printf("2. Cuda device clock rate = %d\n", devProp.clockRate);
         
+     switch (u_case)
+        {
+        case 0:
+            printf("direct transfer\n");
+            break;
+        case 1:
+            printf("rdma csr edgelist representation\n");
+            break;
+        case 2: 
+            printf("rdma new representation\n");
+            break;
+        case 3:
+            printf("direct new representation\n");
+            break;
+        case 4: 
+            printf("uvm new representation\n");
+            break;
+        case 5:
+            printf("uvm transfer edge list\n");
+            break;
+        case 6:
+            printf("uvm transfer\n");
+            break;
+        default:
+            break;
+        }
+
+    cudaEventRecord(event1, (cudaStream_t)1);
 
     while (changed_h) {
         changed_h = 0;
@@ -1359,31 +1430,41 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         {
 
         case 0:{
-            printf("direct transfer\n");
-            simpleBfs_modVertexList<<<G.numVertices / 1024 + 1, 1024>>>
+            // printf("direct transfer\n");
+            simpleBfs_csr<<<G.numVertices / 1024 + 1, 1024>>>
             (G.numVertices, level, d_adjacencyList, d_edgesOffset, d_distance, d_changed); 
             ret1 = cudaDeviceSynchronize();
             break;
         }
         case 1:{
-            printf("rdma edgelist representation\n");
-            size_t n_pages = G.numVertices*sizeof(unsigned int)/(4*1024)+1;
-            simpleBfs_rdma_optimized_warp<<</*G.numVertices / 256 + 1, 256*/(n_pages*32)/384 + 1, 384>>>(
-                        n_pages, G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, d_changed); 
+            // printf("rdma csr edgelist representation\n");
+            size_t n_pages = G.numVertices*sizeof(unsigned int)/(8*1024);
+            // __launch_bounds__(1024,2)
+            numthreads = BLOCK_SIZE;
+            numblocks = ((G.numVertices * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
+            dim3 blockDim(numthreads, (numblocks+numthreads)/numthreads);
+            simpleBfs_rdma<<< blockDim, numthreads /*(G.numVertices / numthreads)*(1 << WARP_SHIFT) + 1, numthreads */>>>(G.numVertices, level, rdma_adjacencyList, d_edgesOffset,
+                    d_edgesSize, d_distance, d_changed);
+
+            // simpleBfs_rdma_optimized_warp<<</*G.numVertices / 256 + 1, 256*/(n_pages*32)/512 + 1, 512>>>(
+            //             n_pages, G.numVertices, level, rdma_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, d_changed); 
             ret1 = cudaDeviceSynchronize();
             break;
         }
         case 2: {// new representation{
-            printf("new representation\n");
-            size_t n_pages = new_size*sizeof(unsigned int)/(64*1024)+1;
-            kernel_coalesce_new_repr_rdma<<<(n_pages*32)/384 + 1, 384>>>
+            // printf("rdma new representation\n");
+            numthreads = 512;
+            numblocks = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
+            dim3 blockDim(numthreads, (numblocks+numthreads)/numthreads);
+            size_t n_pages = new_size*sizeof(uint64_t)/(8*1024);
+            kernel_coalesce_new_repr_rdma<<< /*blockDim, numthreads*/ (n_pages*32)/numthreads + 1, numthreads >>>
             (level, n_pages, G.numVertices, new_size, d_distance, d_new_offset, d_new_vertexList, rdma_adjacencyList,
             d_changed);
-            ret1 = cudaDeviceSynchronize();
+            ret1 = cudaDeviceSynchronize(); 
             break;
         }
         case 3:{
-            printf("direct new representation\n");
+            // printf("direct new representation\n");
             size_t n_pages = new_size*sizeof(unsigned int)/(4*1024)+1;
             kernel_coalesce_new_repr<<<(n_pages*32)/512 + 1, 512>>>
             (level, n_pages, G.numVertices, new_size, d_distance, d_new_offset, d_new_vertexList, d_adjacencyList,
@@ -1392,7 +1473,7 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
             break;
         }
         case 4: {
-            printf("uvm new representation\n");
+            // printf("uvm new representation\n");
             size_t n_pages = new_size*sizeof(unsigned int)/(4*1024)+1;
             kernel_coalesce_new_repr<<<(n_pages*32)/512 + 1, 512>>>
             (level, n_pages, G.numVertices, new_size, d_distance, d_new_offset, d_new_vertexList, uvm_adjacencyList,
@@ -1401,8 +1482,8 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
             break;
         }
         case 5:{
-            printf("uvm transfer edge list\n");
-            // simpleBfs_modVertexList<<<G.numVertices / 1024 + 1, 1024>>>
+            // printf("uvm transfer edge list\n");
+            // simpleBfs_csr<<<G.numVertices / 1024 + 1, 1024>>>
             // (G.numVertices, level, uvm_adjacencyList, d_edgesOffset, d_distance, d_changed); 
             numthreads = BLOCK_SIZE;
             numblocks = ((G.numVertices * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
@@ -1413,9 +1494,16 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
             break;
         }
         case 6:{
-            printf("direct transfer\n");
-            simpleBfs_modVertexList<<<G.numVertices / 1024 + 1, 1024>>>
+            // printf("uvm transfer\n");
+            size_t n_pages = G.numVertices*sizeof(unsigned int)/(64*1024);
+            numthreads = 1024;
+            numblocks = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
+            dim3 blockDim(numthreads, (numblocks+numthreads)/numthreads);
+            simpleBfs_csr<<<blockDim, numthreads /*(G.numVertices / numthreads)*(1 << 2)/4 + 1, numthreads*/>>>
             (G.numVertices, level, /*d_adjacencyList*/uvm_adjacencyList, d_edgesOffset, d_distance, d_changed); 
+
+            // simpleBfs_csr_warp_opt<<< (n_pages*32)/1024 + 1, 1024>>>
+            //         (n_pages, G.numVertices, level, uvm_adjacencyList, d_edgesOffset, d_edgesSize, d_distance, d_changed); 
             ret1 = cudaDeviceSynchronize();
             break;
         }
@@ -1453,7 +1541,8 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
     // calculate time
     float dt_ms;
     cudaEventElapsedTime(&dt_ms, event1, event2);
-    printf("Elapsed time with cudaEvent: %f\n", dt_ms);
+    printf("Elapsed time with cudaEvent: %f startVertex: %d\n", dt_ms, startVertex);
+    time_total += dt_ms;
 
     auto end = std::chrono::steady_clock::now();
     long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -1477,6 +1566,9 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
     checkError(cudaFree(d_changed));
     checkError(cudaFree(d_edgesOffset));
     checkError(cudaFree(d_edgesSize));
+    checkError(cudaFree(uvm_adjacencyList));
+
+    uvm_adjacencyList = NULL;
 
     return return_distance;
     // finalizeCudaBfs(distance, parent, G);
@@ -1488,7 +1580,8 @@ int main(int argc, char **argv)
     if (argc != 9)
         usage(argv[0]);
 
-    
+    cudaSetDevice(0);
+
     printf("Function: %s line number: %d 1024MB: %d bytes REQUEST_SIZE: %d\n",__func__, __LINE__, MB(1024), REQUEST_SIZE);
     
     // Get the process ID
@@ -1507,17 +1600,18 @@ int main(int argc, char **argv)
 
     // readGraph(G, argc, argv);
     readfile(G, G_m, argc, argv, tmp_edgesOffset, tmp_edgesSize, tmp_adjacencyList);
-
+    printf("reading done\n");
     initCuda(G);
+    printf("initCuda done\n");
 
     for(size_t i = 0; i < G.numEdges; i++){
-        uvm_adjacencyList[i] = G.adjacencyList_r[i];
+        // uvm_adjacencyList[i] = G.adjacencyList_r[i];
         u_adjacencyList[i] = G.adjacencyList_r[i];
     }
     for(size_t i = 0; i < G.numVertices+1; i++){
         u_edgesOffset[i] = G.edgesOffset_r[i];
     }
-
+    printf("copying Gparh structure done, G.numVertices: %llu G.numEdges: %llu\n", G.numVertices, G.numEdges);
     // ------------------- new representation for rdma only: -----------------//
     auto start = std::chrono::steady_clock::now();                
     size_t new_size = 0, treshold = 128;
@@ -1533,10 +1627,12 @@ int main(int argc, char **argv)
             new_size += count;
         }
     }
-    unsigned int *new_vertex_list, *new_offset;
+    printf("new representation being created new_size: %llu\n", new_size);
+    unsigned int *new_vertex_list;
+    uint64_t *new_offset;
     size_t index_zero = 0;
     new_vertex_list = new uint[new_size];
-    new_offset = new uint[new_size+1];
+    new_offset = new uint64_t[new_size+1];
     new_offset[0] = 0;
     for (size_t i = 0; i < G.numVertices; i++)
     {
@@ -1566,8 +1662,25 @@ int main(int argc, char **argv)
     /***********************************************************/
 
     uint *direct_distance;
-    //  = runRDMA(startVertex, G, false, new_vertex_list, new_offset, new_size,
-    //          u_adjacencyList, u_edgesOffset, 6);
+    direct_distance  = runRDMA(startVertex, G, false, new_vertex_list, new_offset, new_size,
+             u_adjacencyList, u_edgesOffset, 6);
+
+    int number_of_vertices = 0;
+    int active_vertices = 0;
+    time_total = 0;
+    for (size_t i = 0; i < number_of_vertices; i++)
+    {
+        startVertex = i;
+        printf("vertex %d has degree of %d\n", startVertex, u_edgesOffset[i+1] - u_edgesOffset[i]);
+        if(u_edgesOffset[i+1] - u_edgesOffset[i] == 0)
+            continue;
+        active_vertices++;
+        direct_distance  = runRDMA(startVertex, G, false, new_vertex_list, new_offset, new_size,
+             u_adjacencyList, u_edgesOffset, 6);
+
+        printf("average time: %.2f pinning time: %.2f active_vertices: %d\n", time_total/active_vertices, time_readmostly_total/active_vertices, active_vertices);
+    }
+    printf("average time: %.2f pinning time: %.2f\n", time_total/active_vertices, time_readmostly_total/active_vertices);
 
     bool rdma_flag = true;
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
@@ -1587,7 +1700,7 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
-        s_ctx->gpu_buf_size = 16*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
@@ -1616,7 +1729,7 @@ int main(int argc, char **argv)
             return -1;
         }
 
-        size_t restricted_gpu_mem = 3612134270*sizeof(uint)/12; // 18*1024*1024*1024llu; // sizeof(unsigned int)*G.numEdges;
+        size_t restricted_gpu_mem = 16*1024*1024*1024; // 18*1024*1024*1024llu; // sizeof(unsigned int)*G.numEdges;
         // restricted_gpu_mem = restricted_gpu_mem / 3;
         const size_t page_size = REQUEST_SIZE;
         const size_t numPages = restricted_gpu_mem/page_size;
@@ -1647,6 +1760,9 @@ int main(int argc, char **argv)
     }
 
     printf("Number of vertices %lld tmp_edgesOffset[10]: %d\n", G.numVertices, G.edgesOffset_r[10]);
+
+    free(G.adjacencyList_r);
+    free(G.edgesOffset_r);
     printf("Number of edges %lld\n\n", G.numEdges);
 
     std::vector<int> distance(G.numVertices, 100000 /*std::numeric_limits<int>::max()*/);
@@ -1660,9 +1776,8 @@ int main(int argc, char **argv)
         rdma_adjacencyList->start(G.numEdges *sizeof(unsigned int));
 
         for(size_t i = 0; i < G.numEdges; i++){
-            rdma_adjacencyList->local_buffer[i] = G.adjacencyList_r[i];
+            rdma_adjacencyList->local_buffer[i] = u_adjacencyList[i];
         }
-
     }
 
     printf("function: %s line: %d\n", __FILE__, __LINE__);
@@ -1678,27 +1793,60 @@ int main(int argc, char **argv)
             max_node = i;
         }
     }
+
     avg = avg / G.numVertices;
     printf("avg: %f max: %llu, node: %llu\n", avg, max, max_node);
 
-    free(G.adjacencyList_r);
-    free(G.edgesOffset_r);
     
     printf("function: %s line: %d\n", __FILE__, __LINE__);
 
     std::vector<int> expectedDistance(distance);
     std::vector<int> expectedParent(parent);
-    start = std::chrono::steady_clock::now();
+    start = std::chrono::steady_clock::now(); 
     
     int u_case = 2;
     
     uint *rdma_distance; //, *direct_distance;
+    number_of_vertices = 200;
+    active_vertices = 0;
+    time_total = 0;
+    size_t min_page_fault = 10000000, *d_pf;
+    unsigned int *min_source, h_min_source = 0;
+    checkError(cudaMalloc((void **) &d_pf, sizeof(size_t)));
+    checkError(cudaMalloc((void **) &min_source, sizeof(uint)));
+    checkError(cudaMemset(d_pf, 10000000, sizeof(size_t)));
+    checkError(cudaMemset(min_source, 0, sizeof(uint)));
     if(rdma_flag){
-        rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
+        // rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
+        //         u_adjacencyList, u_edgesOffset, u_case);
+
+        for (size_t i = 0; i < number_of_vertices; i++)
+        {
+            startVertex = i;
+            printf("vertex %d has degree of %d\n", startVertex, u_edgesOffset[i+1] - u_edgesOffset[i]);
+            if(u_edgesOffset[i+1] - u_edgesOffset[i] == 0)
+                continue;
+            active_vertices++;
+            rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
                 u_adjacencyList, u_edgesOffset, u_case);
+        
+            rdma_adjacencyList->reset();
+            checkError(cudaMemcpy(d_pf, &min_page_fault, sizeof(size_t), cudaMemcpyHostToDevice));
+            // checkError(cudaMemcpy(min_source, &startVertex, sizeof(uint), cudaMemcpyHostToDevice));
+            checkError(cudaDeviceSynchronize());
+            copy_page_fault_number<<< 1,1 >>>(d_pf, min_source, startVertex);
+            checkError(cudaMemcpy(&min_page_fault, d_pf, sizeof(size_t), cudaMemcpyDeviceToHost));
+            checkError(cudaMemcpy(&h_min_source, min_source, sizeof(uint), cudaMemcpyDeviceToHost));
+            printf("average time: %.2f active_vertices: %d\n", time_total/active_vertices, active_vertices);
+        }
+        
+        printf("average time: %.2f min_source: %d pf: %llu\n", time_total/active_vertices, h_min_source, min_page_fault);
+        
 
         cudaFree(s_ctx->gpu_buffer);
     }
+
+    printf("file: %s\n", argv[8]);
 
     // direct_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
     //          u_adjacencyList, u_edgesOffset, 3);
@@ -1739,10 +1887,11 @@ int main(int argc, char **argv)
     // // //run CUDA scan parallel bfs
     // runCudaScanBfs(startVertex, G, distance, parent);
     // checkOutput(distance, expectedDistance, G);
-    finalizeCuda();
+    // finalizeCuda();
     
     duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     printf("Overall Elapsed time in milliseconds : %li ms. startVertex: %d\n", duration, startVertex);
+    printf("oversubscription: %d\n", oversubs_ratio_macro-1);
 
     
 
@@ -1788,7 +1937,7 @@ int main(int argc, char **argv)
 // void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, rdma_buf<unsigned int> *d_edgesOffset,
 //                rdma_buf<unsigned int> *d_edgesSize, unsigned int *d_distance, unsigned int *changed)
 
-__global__ void bfs_kernel_coalesce_chunk(unsigned int *label, unsigned int level, const uint64_t vertex_count, unsigned int *vertexList, unsigned int *edgeList, unsigned int *changed) {
+__global__ void bfs_kernel_coalesce_chunk(unsigned int *label, unsigned int level, const uint64_t vertex_count, uint64_t *vertexList, unsigned int *edgeList, unsigned int *changed) {
     const uint64_t tid = blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
     const uint64_t warpIdx = tid >> WARP_SHIFT;
     const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
@@ -1824,25 +1973,150 @@ __global__ void bfs_kernel_coalesce_chunk(unsigned int *label, unsigned int leve
 }
 
 __global__
-void simpleBfs_modVertexList(size_t n, unsigned int level, unsigned int *d_adjacencyList,
-                    unsigned int *vertex_list, unsigned int *d_distance, unsigned int *changed) {
+void simpleBfs_csr(size_t n, unsigned int level, unsigned int *d_adjacencyList,
+                    uint64_t *vertex_list, unsigned int *d_distance, unsigned int *changed) {
 
-    size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
-    int valueChange = 0;
-    unsigned int k = d_distance[thid];
-    if(thid < n && k == level) {
-        for (size_t i = vertex_list[thid]; i < vertex_list[thid+1]; i += 1) {
-            unsigned int v = d_adjacencyList[i];
-            unsigned int dist = d_distance[v];
-            if (level + 1 < dist) {
-                d_distance[v] = level + 1; /*(int) level + 1*/
-                valueChange = 1;
+    // size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
+    // const uint64_t laneIdx = thid & ((1 << 2) - 1);
+
+    // // Warp ID within the block
+    // size_t warpId = thid / (1 << 2);
+    
+    // if(warpId * 4 < n){ // Each warp now processes two vertices
+        
+    //     for (int vertexOffset = 0; vertexOffset < 4; vertexOffset++) {
+    //         size_t currentVertex = warpId * 4 + vertexOffset;
+            
+    //         if (currentVertex < n) {
+    //             size_t k = d_distance[currentVertex];
+                
+    //             if (k == level) {
+    //                 for (size_t i = vertex_list[currentVertex] + laneIdx; 
+    //                      i < vertex_list[currentVertex + 1]; 
+    //                      i += (1 << 2)) {
+                             
+    //                     unsigned int v = d_adjacencyList[i];
+    //                     uint64_t dist = d_distance[v];
+                        
+    //                     if (level + 1 < dist) {
+    //                         d_distance[v] = level + 1;
+    //                         *changed = 1;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+
+    const uint64_t tid = blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    const uint64_t warpIdx = tid >> WARP_SHIFT;
+    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+    const uint64_t chunkIdx = warpIdx * CHUNK_SIZE;
+    uint64_t chunk_size = CHUNK_SIZE;
+
+    if((chunkIdx + CHUNK_SIZE) > n) {
+        if ( n > chunkIdx )
+            chunk_size = n - chunkIdx;
+        else
+            return;
+    }
+
+    for(uint32_t i = chunkIdx; i < chunk_size + chunkIdx; i++) {
+        if(d_distance[i] == level) {
+            const uint64_t start = vertex_list[i];
+            const uint64_t shift_start = start & MEM_ALIGN;
+            const uint64_t end = vertex_list[i+1];
+
+            for(uint64_t j = shift_start + laneIdx; j < end; j += WARP_SIZE) {
+                if (j >= start) {
+                    const uint next = d_adjacencyList[j];
+
+                    // if(label[next] == MYINFINITY) {
+                    if(d_distance[next] > level + 1) {
+                        d_distance[next] = level + 1;
+                        *changed = 1;
+                    }
+                }
             }
         }
     }
-    // __syncthreads();
-    if (valueChange) {
-        *changed = 1;
+}
+
+// __global__
+// void simpleBfs_csr(size_t n, unsigned int level, unsigned int *d_adjacencyList,
+//                     unsigned int *vertex_list, unsigned int *d_distance, unsigned int *changed) {
+
+//     size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
+//     const uint64_t laneIdx = thid & ((1 << WARP_SHIFT) - 1);
+
+//     // // Warp ID within the block
+//     size_t warpId = thid / (1 << WARP_SHIFT);
+    
+//     // size_t iterations = 0;
+//     if(warpId < n /*d_distance->size/sizeof(uint)*/){
+//         unsigned int k = d_distance[warpId];
+//         if (k == level) {
+           
+//             for (size_t i = vertex_list[warpId] + laneIdx; i < vertex_list[warpId+1]; i += (1 << WARP_SHIFT)) {
+//                 unsigned int v;
+               
+//                 v = d_adjacencyList[i];
+//                 unsigned int dist = d_distance[v];
+//                 if (level + 1 < dist) {
+                    
+//                     d_distance[v] = level + 1; /*(int) level + 1*/
+//                     *changed = 1;
+//                     // valueChange = 1;
+//                 }
+//             }
+//         }
+//     }
+// }
+
+__global__
+void simpleBfs_csr_warp_opt(size_t n, size_t numVertices, unsigned int level, unsigned int *d_adjacencyList, unsigned int *d_edgesOffset,
+                    unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed) {
+    // Page size in elements (64KB / 4 bytes per unsigned int)
+    const size_t pageSize = 64*1024 / sizeof(unsigned int);
+    // Elements per warp
+    const size_t elementsPerWarp = pageSize / warpSize;
+
+    // Global thread ID
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Warp ID within the block
+    size_t warpId = tid / warpSize;
+
+    // Thread lane within the warp
+    size_t lane = threadIdx.x % warpSize;
+
+    // Determine which page this warp will process
+    size_t pageStart = warpId * pageSize;
+
+    // Ensure we don't process out-of-bounds pages
+    if (pageStart < n * pageSize) {
+        bool localChanged = false;
+        
+        // Process elements within the page
+        for (size_t i = 0; i < elementsPerWarp; ++i) {
+            size_t elementIdx = pageStart + lane + i*warpSize;
+            if (elementIdx < numVertices) {
+                unsigned int k = d_distance[elementIdx];
+                if (k == level) {
+                    // printf("d_edgesOffset[%llu]: %u, d_distance[%llu]: %u\n", 
+                    //         (long long int) elementIdx, d_edgesOffset[elementIdx], (long long int) elementIdx, d_distance[elementIdx]);
+                    for(size_t j = d_edgesOffset[elementIdx]; j < d_edgesOffset[elementIdx+1] /*+ d_edgesSize[elementIdx]*/; j += 1) {
+                        int v = d_adjacencyList[j];
+                        unsigned int dist = d_distance[v];
+
+                        if (level + 1 < dist) {
+                            d_distance[v] = level + 1;
+                            *changed = 1;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2008,32 +2282,99 @@ void simpleBfs_normal(size_t n, size_t vertexCount, unsigned int level, unsigned
     }
 }
 
-__global__
-void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
+__global__ __launch_bounds__(1024,2)
+void simpleBfs_rdma(size_t n, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, uint64_t *d_edgesOffset,
                     unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed) {
-    size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
-    int valueChange = 0;
-    // size_t iterations = 0;
-    if(thid < n /*d_distance->size/sizeof(uint)*/){
-        unsigned int k = d_distance[thid];
-        if (k == level) {
-           
-            for (size_t i = d_edgesOffset[thid]; i < d_edgesOffset[thid+1]; i++) {
-                unsigned int v;
+
+    // size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
+    // const uint64_t laneIdx = thid & ((1 << WARP_SHIFT) - 1);
+
+    // // Warp ID within the block
+    // size_t warpId = thid / (1 << WARP_SHIFT);
+    
+    // if(warpId * 4 < n){ // Each warp now processes two vertices
+        
+    //     for (int vertexOffset = 0; vertexOffset < 4; vertexOffset++) {
+    //         unsigned int currentVertex = warpId * 4 + vertexOffset;
+            
+    //         if (currentVertex < n) {
+    //             unsigned int k = d_distance[currentVertex];
+                
+    //             if (k == level) {
+    //                 for (size_t i = d_edgesOffset[currentVertex] + laneIdx; 
+    //                      i < d_edgesOffset[currentVertex + 1]; 
+    //                      i += (1 << WARP_SHIFT)) {
+                             
+    //                     unsigned int v = (*d_adjacencyList)[i];
+    //                     unsigned int dist = d_distance[v];
+                        
+    //                     if (level + 1 < dist) {
+    //                         d_distance[v] = level + 1;
+    //                         *changed = 1;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+
+
+    // size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
+    // const uint64_t laneIdx = thid & ((1 << WARP_SHIFT) - 1);
+
+    // // // Warp ID within the block
+    // size_t warpId = thid / (1 << WARP_SHIFT);
+    
+    // // size_t iterations = 0;
+    // if(warpId < n /*d_distance->size/sizeof(uint)*/){
+    //     unsigned int k = d_distance[warpId];
+    //     if (k == level) {
+    //         for (size_t i = d_edgesOffset[warpId] + laneIdx; i < d_edgesOffset[warpId+1]; i += (1 << WARP_SHIFT)) {
+    //             unsigned int v;
                
-                v = (*d_adjacencyList)[i];
-                unsigned int dist = d_distance[v];
-                if (level + 1 < dist) {
+    //             v = (*d_adjacencyList)[i];
+    //             unsigned int dist = d_distance[v];
+    //             if (level + 1 < dist) {
                     
-                        d_distance[v] = level + 1; /*(int) level + 1*/
-                    
-                    valueChange = 1;
+    //                 d_distance[v] = level + 1; /*(int) level + 1*/
+    //                 *changed = 1;
+    //                 // valueChange = 1;
+    //             }
+    //         }
+    //     }
+    // }
+
+
+    const uint64_t tid = blockDim.x * 1024 * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    const uint64_t warpIdx = tid >> WARP_SHIFT;
+    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+    const uint64_t chunkIdx = warpIdx * CHUNK_SIZE;
+    uint64_t chunk_size = CHUNK_SIZE;
+
+    if((chunkIdx + CHUNK_SIZE) > n) {
+        if ( n > chunkIdx )
+            chunk_size = n - chunkIdx;
+        else
+            return;
+    }
+
+    for(uint32_t i = chunkIdx; i < chunk_size + chunkIdx; i++) {
+        if(d_distance[i] == level) {
+            const uint64_t start = d_edgesOffset[i];
+            const uint64_t shift_start = start & MEM_ALIGN;
+            const uint64_t end = d_edgesOffset[i+1];
+
+            for(uint64_t j = shift_start + laneIdx; j < end; j += WARP_SIZE) {
+                if (j >= start) {
+                    const uint next = (*d_adjacencyList)[j];
+
+                    // if(label[next] == MYINFINITY) {
+                    if(d_distance[next] > level + 1) {
+                        d_distance[next] = level + 1;
+                        *changed = 1;
+                    }
                 }
             }
-        }
-        
-        if (valueChange) {
-            *changed = valueChange;
         }
     }
 }
@@ -2389,7 +2730,7 @@ void check_edgeList(rdma_buf<unsigned int> *a, unsigned int *b, size_t size){
 
 __global__ void 
 kernel_coalesce_new_repr(uint level, size_t n, size_t numVertex, const uint64_t new_size, unsigned int *d_distance, 
-                        unsigned int *new_offset, unsigned int *new_vertex_list, unsigned int *edgeList, unsigned int *changed) {
+                        uint64_t *new_offset, unsigned int *new_vertex_list, unsigned int *edgeList, unsigned int *changed) {
 
 
     // Page size in elements (64KB / 4 bytes per unsigned int)
@@ -2439,12 +2780,73 @@ kernel_coalesce_new_repr(uint level, size_t n, size_t numVertex, const uint64_t 
 
 }
 
-__global__ void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t numVertex, const uint64_t new_size, unsigned int *d_distance, 
-                                unsigned int *new_offset, unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, unsigned int *changed) {
+__global__ // __launch_bounds__(1024,2)
+void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t numVertex, const uint64_t new_size, unsigned int *d_distance, 
+                                uint64_t *new_offset, unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, unsigned int *changed) {
+
+    // const uint64_t tid = blockDim.x * 512 * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    // const uint64_t warpIdx = tid >> WARP_SHIFT;
+    // const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+    // const uint64_t chunkIdx = warpIdx * CHUNK_SIZE;
+    // uint64_t chunk_size = CHUNK_SIZE;
+
+    // if((chunkIdx + CHUNK_SIZE) > new_size) {
+    //     if ( new_size > chunkIdx )
+    //         chunk_size = new_size - chunkIdx;
+    //     else
+    //         return;
+    // }
+
+    // for(uint32_t i = chunkIdx; i < chunk_size + chunkIdx; i++) {
+    //     uint startVertex = new_vertex_list[i];
+    //     if(d_distance[startVertex] == level) {
+    //         const uint64_t start = new_offset[i];
+    //         const uint64_t shift_start = start & MEM_ALIGN;
+    //         const uint64_t end = new_offset[i+1];
+
+    //         for(uint64_t j = shift_start + laneIdx; j < end; j += WARP_SIZE) {
+    //             if (j >= start) {
+    //                 const uint next = (*edgeList)[j];
+
+    //                 // if(label[next] == MYINFINITY) {
+    //                 if(d_distance[next] > level + 1) {
+    //                     d_distance[next] = level + 1;
+    //                     *changed = 1;
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+
+    // size_t thid = blockIdx.x * blockDim.x + threadIdx.x;
+    // const uint64_t laneIdx = thid & ((1 << WARP_SHIFT) - 1);
+
+    // // // Warp ID within the block
+    // size_t warpId = thid / (1 << WARP_SHIFT);
+    
+    // // size_t iterations = 0;
+    // if(warpId < new_size /*d_distance->size/sizeof(uint)*/){
+    //     uint startVertex = new_vertex_list[warpId];
+    //     unsigned int k = d_distance[startVertex];
+    //     if (k == level) {
+    //         for (size_t i = new_offset[warpId] + laneIdx; i < new_offset[warpId+1]; i += (1 << WARP_SHIFT)) {
+    //             unsigned int v;
+               
+    //             v = (*edgeList)[i];
+    //             unsigned int dist = d_distance[v];
+    //             if (level + 1 < dist) {
+                    
+    //                 d_distance[v] = level + 1; /*(int) level + 1*/
+    //                 *changed = 1;
+    //                 // valueChange = 1;
+    //             }
+    //         }
+    //     }
+    // }
 
 
     // Page size in elements (64KB / 4 bytes per unsigned int)
-    const size_t pageSize = 64*1024 / sizeof(unsigned int);
+    const size_t pageSize = 8*1024 / sizeof(uint64_t);
     // Elements per warp
     const size_t elementsPerWarp = pageSize / warpSize;
 
@@ -2494,7 +2896,7 @@ __global__
 void simpleBfs_rdma_optimized_warp(size_t n, size_t numVertices, unsigned int level, rdma_buf<unsigned int> *d_adjacencyList, unsigned int *d_edgesOffset,
                     unsigned int *d_edgesSize, unsigned int *d_distance, unsigned int *changed) {
     // Page size in elements (64KB / 4 bytes per unsigned int)
-    const size_t pageSize = 4*1024 / sizeof(unsigned int);
+    const size_t pageSize = 8*1024 / sizeof(unsigned int);
     // Elements per warp
     const size_t elementsPerWarp = pageSize / warpSize;
 
@@ -2530,17 +2932,11 @@ void simpleBfs_rdma_optimized_warp(size_t n, size_t numVertices, unsigned int le
                         unsigned int dist = d_distance[v];
                         if (level + 1 < dist) {
                             d_distance[v] = level + 1;
-                            localChanged = true;
+                            *changed = 1;
                         }
                     }
                 }
             }
-        }
-
-        // Use atomic operation to set the changed flag if needed
-        if (localChanged) {
-            // atomicOr(changed, 1);
-            *changed = 1;
         }
     }
 }
@@ -2745,68 +3141,6 @@ kernel_baseline(uint32_t *label, const uint32_t level, const uint64_t vertex_cou
             if(label[next] > level + 1) {
                 label[next] = level + 1;
                 *changed = true;
-            }
-        }
-    }
-}
-
-__global__ void kernel_coalesce(uint32_t *label, const uint32_t level, const uint64_t vertex_count, 
-                                const uint64_t *vertexList, const uint64_t *edgeList, bool *changed) {
-    const uint64_t tid = blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
-    const uint64_t warpIdx = tid >> WARP_SHIFT;
-    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
-
-    if(warpIdx < vertex_count && label[warpIdx] == level) {
-        const uint64_t start = vertexList[warpIdx];
-        const uint64_t shift_start = start & MEM_ALIGN;
-        const uint64_t end = vertexList[warpIdx+1];
-
-        for(uint64_t i = shift_start + laneIdx; i < end; i += WARP_SIZE) {
-            if (i >= start) {
-                const uint64_t next = edgeList[i];
-
-                // if(label[next] == MYINFINITY) {
-                if(label[next] > level + 1) {
-                    label[next] = level + 1;
-                    *changed = true;
-                }
-            }
-        }
-    }
-}
-
-
-
-__global__ void kernel_coalesce_chunk_rdma(unsigned int *label, unsigned int level, unsigned int vertex_count, unsigned int *vertexList, rdma_buf<unsigned int> *edgeList, uint *changed) {
-    const uint64_t tid = blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
-    const uint64_t warpIdx = tid >> WARP_SHIFT;
-    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
-    const uint64_t chunkIdx = warpIdx * CHUNK_SIZE;
-    uint64_t chunk_size = CHUNK_SIZE;
-
-    if((chunkIdx + CHUNK_SIZE) > vertex_count) {
-        if ( vertex_count > chunkIdx )
-            chunk_size = vertex_count - chunkIdx;
-        else
-            return;
-    }
-
-    for(uint32_t i = chunkIdx; i < chunk_size + chunkIdx; i++) {
-        if(label[i] == level) {
-            const uint start = vertexList[i];
-            const uint shift_start = start & MEM_ALIGN;
-            const uint end = vertexList[i+1];
-
-            for(uint64_t j = shift_start + laneIdx; j < end; j += WARP_SIZE) {
-                if (j >= start) {
-                    unsigned int next = (*edgeList)[j];
-
-                    // if(label[next] == MYINFINITY) {
-                    if(label[next] > level + 1) {
-                        label[next] = level + 1;
-                        *changed = 1;
-                    }
-                }
             }
         }
     }

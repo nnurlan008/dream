@@ -60,6 +60,7 @@ uint64_t allowed_size;
 // __device__ uint64_t Global_Dev_address;
 // device - info about QPs
 __device__ struct post_content gpost_cont;
+extern __device__ struct post_content rdma_utils_content;
 __device__ struct batch gbatch;
 __device__ struct post_content2 gpost_cont2;
 
@@ -69,6 +70,12 @@ __device__ uint32_t gpu_mrs_lkey[2];
 __device__ uint64_t gpu_qp_bufs[2];
 __device__ uint64_t gpu_qp_num[2];
 __device__ uint64_t gpu_cq_bufs[2];
+
+extern __device__ uint32_t gpu_mrs_lkey_rdma_utils[2];
+extern __device__ uint64_t gpu_qp_bufs_rdma_utils[2];
+extern __device__ uint64_t gpu_qp_num_rdma_utils[2];
+extern __device__ uint64_t gpu_cq_bufs_rdma_utils[2];
+
 __device__ size_t g_qp_index;
 __device__ size_t cq_wait[128];
 
@@ -94,7 +101,8 @@ extern struct rdma_content main_content;
 #define MAX_POST 3 
 // request size
 
-#define REQUEST_SIZE 8*1024 // bytes
+#define REQUEST_SIZE 16*1024 // bytes
+extern __device__ int GLOBAL_REQUEST_SIZE;
 
 // define globale vaiable to save the number of post requests
 // and compare them to max_post
@@ -195,6 +203,18 @@ alloc_global_content(struct post_content *post_cont, struct poll_content *poll_c
     gpu_qp_num[0] = gpu_infos.qp_num_gpu[0];
     gpu_qp_num[1] = gpu_infos.qp_num_gpu[1];
 
+    gpu_mrs_lkey_rdma_utils[0] = gpu_infos.wr_rdma_lkey[0];
+    gpu_mrs_lkey_rdma_utils[1] = gpu_infos.wr_rdma_lkey[1];
+
+    gpu_qp_bufs_rdma_utils[0] = gpu_infos.qp_buf_gpu[0];
+    gpu_qp_bufs_rdma_utils[1] = gpu_infos.qp_buf_gpu[1];
+
+    gpu_cq_bufs_rdma_utils[0] = gpu_infos.cq_buf_gpu[0];
+    gpu_cq_bufs_rdma_utils[1] = gpu_infos.cq_buf_gpu[1];
+
+    gpu_qp_num_rdma_utils[0] = gpu_infos.qp_num_gpu[0];
+    gpu_qp_num_rdma_utils[1] = gpu_infos.qp_num_gpu[1];
+
     printf("qp_num: %d\n", gpost_cont.qp_num);
     for(int i = 0; i < 256; i++)
     {
@@ -211,6 +231,8 @@ alloc_global_content(struct post_content *post_cont, struct poll_content *poll_c
         // QP_count.queue_count[i].store(0, simt::memory_order_relaxed);
 
     }
+    GLOBAL_REQUEST_SIZE = REQUEST_SIZE;
+    rdma_utils_content = gpost_cont;
      
 }
 
@@ -625,6 +647,13 @@ struct rdma_buf {
             return *this;
         }
 
+        void reset(){
+            if(update_device_tlb() == -1){
+                printf("error on reset, file: %s, line: %d\n", __FILE__, __LINE__);
+                exit(-1);
+            }
+        }
+
         // constructor for pointer declaration:
         void start(size_t user_size, int gpu_number, void *shared_host_address){
             gpu = gpu_number;
@@ -748,7 +777,7 @@ struct rdma_buf {
                 return -1;
             printf("line: %d\n", __LINE__);
             cudaSetDevice(gpu);
-            if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(tlb_entry), cudaMemcpyHostToDevice))
+            if(cudaSuccess != cudaMemcpy(d_tlb, h_tlb, tlb_size*sizeof(unsigned int), cudaMemcpyHostToDevice))
                 return -1;
             printf("line: %d\n", __LINE__);
             // if(cudaSuccess != cudaMemcpy(page_number, h_page_number, tlb_size*sizeof(int), cudaMemcpyHostToDevice))
@@ -1088,9 +1117,9 @@ struct rdma_buf {
         __forceinline__
         __device__
         void read(uint64_t che){
-            int warpId; // = warp_id()%2;
-            int qp_index = che%256; // get_smid()%84 + 84*warpId;   // che%8; // (); // warp_id() % 256; // ;
-            warpId = qp_index/128;
+            int warpId = warp_id()%2;
+            int qp_index = get_smid()%84 + 84*warpId; // che%256;   // che%8; // (); // warp_id() % 256; // ;
+            // warpId = qp_index/84; // 128;
             // atomicAdd((unsigned long long int *)&g_qp_index, 1)
             // unsigned int mask = __match_any_sync(__activemask(), qp_index);
             // unsigned int leader = __ffs(mask) - 1; // mask ? 31 - __clz(mask) : 0;    // select a leader
@@ -1100,9 +1129,10 @@ struct rdma_buf {
             void *cq_dbrec = (void *) gpoll_cont.cq_dbrec[qp_index];
             
             // bool isSet = false;
-            volatile uint *cq_lock = &gpost_cont.cq_lock[qp_index];
             volatile size_t *p_index = &gpost_cont.n_post[qp_index];
-            
+            // unsigned int cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
+
+            volatile uint *cq_lock = &gpost_cont.cq_lock[qp_index/**64+cur_post%64*/];
             int retries = 1;
             
             uint64_t rem_addr = host_address + che*request_size*sizeof(T);
@@ -1122,10 +1152,11 @@ struct rdma_buf {
                 // retries++;
             }
             // printf("qp_index: %d retries: %d\n", qp_index, retries);
-            
-            
+            p_index = &gpost_cont.queue_count[qp_index];
+            // cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
             unsigned int cur_post = atomicAdd((unsigned long long int *)p_index, (unsigned long long int ) 1);
-            void *cqe = /*gpoll_cont.cq_buf*/ (void *) gpu_cq_bufs[warpId] + 2*4096*(qp_index-warpId*128) + (cur_post & 63) * 64;
+
+            void *cqe = /*gpoll_cont.cq_buf*/ (void *) gpu_cq_bufs[warpId] + 2*4096*(qp_index-warpId*84) + (cur_post & 63) * 64;
             struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *) cqe;
             
             uint64_t value_ctrl;
@@ -1137,8 +1168,21 @@ struct rdma_buf {
             //     printf("nic: %d gpu_cq_bufs[nic]: %p\n", warpId, gpu_cq_bufs[warpId]);
             // }
             // printf("gpost_cont.bf_reg[%d]: %p\n", (qp_index), gpost_cont.bf_reg[qp_index]);
-            post_m(/*d_TLB[che].host_address*/ rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*5], data_size, lkey /*gpost_cont.wr_sg_lkey*/, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpu_qp_num[warpId] + (qp_index-128*warpId), 
-                    cur_post, &value_ctrl, /*gpost_cont.qp_buf*/ qp_buf + 8192*(qp_index-128*warpId), (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+            // post_m(/*d_TLB[che].host_address*/ rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*5], data_size, lkey /*gpost_cont.wr_sg_lkey*/, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpu_qp_num[warpId] + (qp_index-84*warpId), 
+            //         cur_post, &value_ctrl, /*gpost_cont.qp_buf*/ qp_buf + 8192*(qp_index-84*warpId), (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+            
+            post_opt_2nic(rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*5],            
+                        dev_addr + che*request_size*sizeof(T),
+                        cur_post, qp_index-84*warpId, warpId);
+
+            // printf("posted db qp_index: %d curpost&63: %d cur_post&63 == 1: %d\n", qp_index, cur_post&63, (cur_post&63) == 1);
+            // if(((cur_post+1)&63)%16 == 0){
+            //     // printf("ringing db qp_index: %d curpost: %d\n", qp_index, (int) cur_post);
+            //     update_db_spec(gpost_cont.bf_reg[qp_index], qp_buf + 8192*(qp_index-84*warpId), cur_post);
+
+                
+            // }
+            
             
             
             volatile uint8_t *op_flag = &cqe64->op_own;
@@ -1146,20 +1190,20 @@ struct rdma_buf {
             // bool stop = true;
             while(*op_flag == 240){
                     
-                    retries++;
-                    if(retries > 5){
-                        post_m(/*d_TLB[che].host_address*/ rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*5], data_size, lkey /*gpost_cont.wr_sg_lkey*/, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpu_qp_num[warpId] + (qp_index-128*warpId), 
-                            cur_post, &value_ctrl, /*gpost_cont.qp_buf*/ qp_buf + 8192*(qp_index-128*warpId), (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
-                        retries = -1;
-                    }
-                    if(retries>100000) {
-                        printf("stuck in completion of single gpu and 2 nic\n");
-                        // printf("rkey_index: %d nic: %d d_remote_address[nic]: %p rem_addr: %p qp_index: %d\n", rkey_index, warpId, d_remote_address[warpId], rem_addr, qp_index);
-                        // printf("server_content.wr_rdma_rkey[rkey_index+nic*5]: %d lkey: %d qp_num: %d\n", server_content.wr_rdma_rkey[rkey_index+warpId*5], lkey, gpu_qp_num[warpId]);
-                        // printf("nic: %d gpu_cq_bufs[nic]: %p\n", warpId, gpu_cq_bufs[warpId]);
-                        retries=-1;
-                        // stop = false;
-                    }
+                    // retries++;
+                    // if(retries > 5){
+                    //     post_m(/*d_TLB[che].host_address*/ rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*5], data_size, lkey /*gpost_cont.wr_sg_lkey*/, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpu_qp_num[warpId] + (qp_index-84*warpId), 
+                    //         cur_post, &value_ctrl, /*gpost_cont.qp_buf*/ qp_buf + 8192*(qp_index-84*warpId), (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+                    //     retries = -1;
+                    // }
+                    // if(retries>100000) {
+                    //     printf("stuck in completion of single gpu and 2 nic\n");
+                    //     // printf("rkey_index: %d nic: %d d_remote_address[nic]: %p rem_addr: %p qp_index: %d\n", rkey_index, warpId, d_remote_address[warpId], rem_addr, qp_index);
+                    //     // printf("server_content.wr_rdma_rkey[rkey_index+nic*5]: %d lkey: %d qp_num: %d\n", server_content.wr_rdma_rkey[rkey_index+warpId*5], lkey, gpu_qp_num[warpId]);
+                    //     // printf("nic: %d gpu_cq_bufs[nic]: %p\n", warpId, gpu_cq_bufs[warpId]);
+                    //     retries=-1;
+                    //     // stop = false;
+                    // }
                     
             }
             

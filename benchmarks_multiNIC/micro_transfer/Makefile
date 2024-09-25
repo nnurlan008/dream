@@ -6,10 +6,12 @@ LDLIBS  := ${LDLIBS} -lrdmacm -libverbs -lpthread
 
 # folder_path := /users/Nurlan/gpu_rdma_read_write
 # freest := -I $(folder_path)/freestanding/include 
-mlx5_path := /users/Nurlan/rdma-core-installed_use_this_one
+mlx5_path := # /users/Nurlan/rdma-core-installed_use_this_one
 # nvidia_driver := /home/nurlan/Downloads/NVIDIA-Linux-x86_64-470.223.02
 cuda_memalloc = /usr/lib/x86_64-linux-gnu
 add_flags := -I $(mlx5_path)/providers/mlx5 -I $(mlx5_path)/build/include/ -I $(mlx5_path)/buildlib/sparse-include/ -I$(cuda_memalloc) 
+
+free_standing1 := /users/Nurlan/gpu_rdma_read_write/include/freestanding/include
 
 CXX := /usr/bin/g++
 CC := /usr/bin/gcc
@@ -39,10 +41,10 @@ all: ${APPS}
 # 	$(CXX) -c readGraph.cpp -o readGraph.o $(add_flags) $(CXXFLAGS)
 
 main: main.o  $(SRC_DIR)/rdma_utils.o # readGraph.o
-	$(NVCC) $^ -libverbs -lrdmacm -lcuda -lcudart -o $@ $(add_flags)  $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR)
+	$(NVCC) $^ -libverbs -lrdmacm -lcuda -lcudart -o $@ $(add_flags)  $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
 
 main.o: main.cu # bfsCPU.h  graph.h 
-	$(NVCC) -dc main.cu -o main.o $(CUDA_LIBS) $(add_flags) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR)
+	$(NVCC) --maxrregcount=128 -dc main.cu -o main.o $(CUDA_LIBS) $(add_flags) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
 
 # bfs.o: bfs.cu bfs.cuh
 # 	$(NVCC) -dc bfs.cu -o bfs.o -libverbs -lrdmacm -lcuda -lcudart $(add_flags) $(CUDA_LIBS) 
