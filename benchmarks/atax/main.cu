@@ -605,7 +605,7 @@ int main(int argc, char **argv)
         // int ret = connect(argv[2], s_ctx);
 
         // local connect
-        char *mlx_name = "mlx5_0";
+        char *mlx_name = "mlx5_2";
         int ret = local_connect(mlx_name, s_ctx);
 
         ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont, &post_cont2, \

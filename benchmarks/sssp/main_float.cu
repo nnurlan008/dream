@@ -138,7 +138,7 @@ __device__ void AtomicMin(float * const address, const float value)
 	do {
         assumed = old;
 		if (__int_as_float(assumed) <= value)
-			break;
+			break;               
 
         old = atomicCAS(address_as_i, assumed, __int_as_float(value));
     } while (assumed != old);
@@ -1252,7 +1252,7 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
             //     weightList_d[i] += offset;
             cudaDeviceSynchronize();
             auto start = std::chrono::steady_clock::now();  
-            gpuErrorcheck(cudaMemAdvise(d_edgeList, edge_size, cudaMemAdviseSetReadMostly, 0));
+            // gpuErrorcheck(cudaMemAdvise(d_edgeList, edge_size, cudaMemAdviseSetReadMostly, 0));
             cudaDeviceSynchronize();
             auto end = std::chrono::steady_clock::now();
             long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -2212,17 +2212,6 @@ int main(int argc, char **argv)
     // else
     //     rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
     //                                 new_offset, new_vertex_list, u_weights, 0);
-
-    // if(rdma_flag){
-    //     printf("RDMA Cuda Starts here..\n");
-    //     rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
-    //                                 new_offset, new_vertex_list, u_weights, 1);
-    //     cudaFree(s_ctx->gpu_buffer);
-    // }
-    // else
-    //     rdma_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
-    //                                 new_offset, new_vertex_list, weight_u, 0);
-    
 
 
     printf("Emogi Cuda Starts here..\n");

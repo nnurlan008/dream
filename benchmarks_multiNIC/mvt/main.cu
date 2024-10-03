@@ -16,8 +16,9 @@ using namespace std;
 
 // #include "../../src/rdma_utils.cuh"
 #include <time.h>
-#include "../../include/runtime_prefetching.h"
+// #include "../../include/runtime_prefetching.h"
 // #include "../../include/runtime_eviction.h"
+#include "../../include/runtime_prefetching_2nic.h"
 
 //define the error threshold for the results "not matching"
 #define PERCENT_DIFF_ERROR_THRESHOLD 0.05
@@ -34,6 +35,9 @@ using namespace std;
 #define BLOCK_SIZE 1024
 #define WARP_SHIFT 5
 #define WARP_SIZE 32
+
+
+#define GPU 0
 
 typedef float DATA_TYPE;
 
@@ -165,10 +169,11 @@ __global__ void assign_array(rdma_buf<unsigned int> *adjacencyList){
     printf("D_adjacencyList.d_TLB[0].device_address: %p\n", D_adjacencyList.d_TLB[0].device_address);
 }
 
-int alloc_global_cont(struct post_content *post_cont, struct poll_content *poll_cont, struct post_content2 *post_cont2){
+int alloc_global_cont(struct post_content *post_cont, struct poll_content *poll_cont, struct server_content_2nic *post_cont2, 
+                      struct gpu_memory_info gpu_mem){
     struct post_content *d_post;
     struct poll_content *d_poll;
-    struct post_content2 *d_post2;
+    struct server_content_2nic *d_post2;
 
     cudaError_t ret0 = cudaMalloc((void **)&d_post, sizeof(struct post_content));
     if(ret0 != cudaSuccess){
@@ -192,19 +197,20 @@ int alloc_global_cont(struct post_content *post_cont, struct poll_content *poll_
         return -1;
     }
 
-    ret0 = cudaMalloc((void **)&d_post2, sizeof(struct post_content2));
+    ret0 = cudaMalloc((void **)&d_post2, sizeof(struct server_content_2nic));
     if(ret0 != cudaSuccess){
         printf("Error on allocation post content!\n");
         return -1;
     }
-    ret0 = cudaMemcpy(d_post2, post_cont2, sizeof(struct post_content2), cudaMemcpyHostToDevice);
+    ret0 = cudaMemcpy(d_post2, post_cont2, sizeof(struct server_content_2nic), cudaMemcpyHostToDevice);
     if(ret0 != cudaSuccess){
         printf("Error on poll copy!\n");
         return -1;
     }
 
+    // cudaSetDevice(0);
     alloc_content<<<1,1>>>(d_post, d_poll);
-    alloc_global_content<<<1,1>>>(d_post, d_poll, d_post2);
+    alloc_global_content<<<1,1>>>(d_post, d_poll, d_post2, gpu_mem);
     ret0 = cudaDeviceSynchronize();
     if(ret0 != cudaSuccess){
         printf("Error on alloc_content!\n");
@@ -413,6 +419,8 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
         memcpy(a_gpu, a, sizeof(DATA_TYPE) * N * N);
 
         check_cuda_error(cudaMemAdvise(a_gpu, sizeof(DATA_TYPE) * N * N, cudaMemAdviseSetReadMostly, 0));
+        // check_cuda_error(cudaMemAdvise(a_gpu, sizeof(DATA_TYPE) * N * N, cudaMemAdviseSetAccessedBy, 0));
+
         // oversubs(0.33, sizeof(DATA_TYPE) * N * N);
     }
     else{
@@ -531,7 +539,7 @@ void mvtCuda_rdma(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, 
 
     check_cuda_error(cudaMallocManaged((void **) &rdma_a, sizeof(rdma_buf<unsigned int>)));
     
-    rdma_a->start(N*N*sizeof(DATA_TYPE));
+    rdma_a->start(N*N*sizeof(DATA_TYPE), GPU, NULL);
 
     for(size_t i = 0; i < N*N; i++){
         rdma_a->local_buffer[i] = a[i];
@@ -683,9 +691,14 @@ int main(int argc, char **argv)
 
     bool rdma_flag = true;
     cudaError_t ret1;
-    struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
+    struct context_2nic *s_ctx = (struct context_2nic *)malloc(sizeof(struct context_2nic));
     if(rdma_flag){
-        
+        s_ctx->gpu_cq = NULL;
+        s_ctx->wqbuf = NULL;
+        s_ctx->cqbuf = NULL;
+        s_ctx->gpu_qp = NULL;
+
+
         int num_msg = (unsigned long) atoi(argv[4]);
         int mesg_size = (unsigned long) atoi(argv[5]);
         int num_bufs = (unsigned long) atoi(argv[6]);
@@ -693,30 +706,40 @@ int main(int argc, char **argv)
         
         struct post_content post_cont, *d_post, host_post;
         struct poll_content poll_cont, *d_poll, host_poll;
-        struct post_content2 post_cont2, *d_post2;
+        // struct post_content2 /*post_cont2,*/ *d_post2;
+        struct server_content_2nic post_cont2, *d_post2;
         struct host_keys keys;
+        struct gpu_memory_info gpu_mem;
 
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
-        s_ctx->gpu_buf_size = 29*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        s_ctx->gpu_buf_size = 16*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        s_ctx->gpu_buffer = NULL;
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
 
         // local connect
-        char *mlx_name = "mlx5_3";
-        int ret = local_connect(mlx_name, s_ctx);
+        char *mlx_name = "mlx5_0";
+        // int ret = local_connect(mlx_name, s_ctx);
+        int ret = local_connect_2nic(mlx_name, s_ctx, 0, GPU);
 
-        ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont, &post_cont2, \
-                                        &host_post, &host_poll, &keys);
+        mlx_name = "mlx5_2";
+        // int ret = local_connect(mlx_name, s_ctx);
+        ret = local_connect_2nic(mlx_name, s_ctx, 1, GPU);
+
+        ret = prepare_post_poll_content_2nic(s_ctx, &post_cont, &poll_cont, &post_cont2, \
+                                        &host_post, &host_poll, &keys, &gpu_mem);
         if(ret == -1) {
             printf("Post and poll contect creation failed\n");    
             exit(-1);
         }
 
         printf("alloc synDev ret: %d\n", cudaDeviceSynchronize());
-        alloc_global_cont(&post_cont, &poll_cont, &post_cont2);
+        cudaSetDevice(GPU);
+        alloc_global_cont(&post_cont, &poll_cont, &post_cont2, gpu_mem);
+
         // if(cudaSuccess != ){    
         printf("alloc synDev ret1: %d\n", cudaDeviceSynchronize());
             // return -1;
@@ -734,7 +757,7 @@ int main(int argc, char **argv)
         // const size_t numPages = ceil((double)restricted_gpu_mem/page_size);
 
         printf("function: %s line: %d\n", __FILE__, __LINE__);
-        alloc_global_host_content(host_post, host_poll, keys);
+        alloc_global_host_content(host_post, host_poll, keys, gpu_mem);
         printf("function: %s line: %d\n", __FILE__, __LINE__);
 
         ret1 = cudaDeviceSynchronize();
@@ -750,6 +773,7 @@ int main(int argc, char **argv)
         }
         
         printf("restricted_gpu_mem: %zu\n", restricted_gpu_mem);
+        cudaSetDevice(GPU);
         start_page_queue<<<1, 1>>>(/*s_ctx->gpu_buf_size*/restricted_gpu_mem, page_size);
         ret1 = cudaDeviceSynchronize();
         printf("ret: %d\n", ret1);

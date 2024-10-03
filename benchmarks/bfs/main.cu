@@ -1700,7 +1700,7 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
-        s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        s_ctx->gpu_buf_size = 28*1024*1024*1024llu; // N*sizeof(int)*3llu;
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
@@ -1817,8 +1817,8 @@ int main(int argc, char **argv)
     checkError(cudaMemset(d_pf, 10000000, sizeof(size_t)));
     checkError(cudaMemset(min_source, 0, sizeof(uint)));
     if(rdma_flag){
-        // rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
-        //         u_adjacencyList, u_edgesOffset, u_case);
+        rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
+                u_adjacencyList, u_edgesOffset, u_case);
 
         for (size_t i = 0; i < number_of_vertices; i++)
         {

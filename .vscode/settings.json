@@ -1,5 +1,6 @@
 {
     "files.associations": {
+        "*.cu": "cuda-cpp",
         "server-utils.h": "c",
         "client-utils.h": "c",
         "netdb.h": "c",
@@ -133,7 +134,8 @@
         "hash_set": "cpp",
         "__functional_base_03": "cpp",
         "simd": "cpp",
-        "filesystem": "cpp"
+        "filesystem": "cpp",
+        "__memory": "cpp"
     },
     "cmake.sourceDirectory": "/users/Nurlan/gpu_rdma_read_write/include/freestanding/libcxx"
 }

@@ -4672,6 +4672,43 @@ void post_opt(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
 	
 }
 
+__device__ 
+void post_opt1_write(int cur_post, int qp_index, void *seg)
+{
+
+    struct mlx5_wqe_ctrl_seg * ctrl = (struct mlx5_wqe_ctrl_seg *) seg;
+    ctrl->opmod_idx_opcode = htonl(((uint16_t) cur_post * 256) | 8);
+    ctrl->qpn_ds = htonl(3 | ((rdma_utils_content.qp_num + qp_index) *256));
+    ctrl->signature = 0;
+    ctrl->fm_ce_se = 8; // MLX5_WQE_CTRL_CQ_UPDATE;
+    ctrl->imm = 0; // 
+ 
+}
+
+__device__ 
+void post_opt_write(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+                        uint64_t wr_sg_addr,
+                        int cur_post,
+                        int qp_index)
+{
+
+	// unsigned int idx = cur_post & 63;
+
+    // printf("gpost_cont.qp_num: %d gpost_cont.wr_sg_lkey: %d GLOBAL_REQUEST_SIZE: %d gpost_cont.qp_buf: %p wr_rdma_rkey: %d wr_rdma_remote_addr: p\n", 
+    //         gpost_cont.qp_num, gpost_cont.wr_sg_lkey, GLOBAL_REQUEST_SIZE, gpost_cont.qp_buf, wr_rdma_rkey, wr_rdma_remote_addr);
+
+    void * __restrict__ seg = (rdma_utils_content.qp_buf + 8192*qp_index + 256 + ((cur_post & 63) * 64)); // mlx5_get_send_wqe(qp, idx);
+    post_opt1_write(cur_post, qp_index, seg);
+   
+    post_opt2(wr_rdma_remote_addr, wr_rdma_rkey, seg);
+
+    post_opt3(wr_sg_addr, seg);
+
+    __threadfence_system();
+    *(volatile uint64_t *)rdma_utils_content.bf_reg[qp_index] = *(uint64_t *) seg; // 
+	
+}
+
 // __device__
 // void ()
 

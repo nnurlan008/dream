@@ -5,6 +5,11 @@
 #include <cstring>
 #include <math.h>
 #include <chrono>
+#include <stdlib.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 using namespace std;
 // using namespace std;
@@ -20,6 +25,8 @@ using namespace std;
 // #include "../../include/runtime_eviction.h"
 // #include "../../include/runtime_micro.h"
 
+#define MAX_TRIPS 10000000llu  // Set a maximum number of trips
+#define LINE_LENGTH 512   // Set the maximum line length
 
 //define the error threshold for the results "not matching"
 #define PERCENT_DIFF_ERROR_THRESHOLD 0.05
@@ -100,6 +107,27 @@ void sub_timespec(struct timespec t1, struct timespec t2, struct timespec *td)
         td->tv_sec++;
     }
 }
+
+__device__ float AtomicAdd(float *address, float value) {
+    // Convert address to integer representation (since atomicCAS works on integers)
+    uint32_t *address_as_int = (uint32_t *)address;
+    uint32_t old = *address_as_int, assumed;
+
+    // Loop to perform atomic addition
+    do {
+        assumed = old;
+        // Convert the integer bits back to a float and perform the addition
+        float old_f = __int_as_float(assumed);
+        float new_f = old_f + value;
+
+        // Use atomicCAS to try and set the new value (converted to int)
+        old = atomicCAS(address_as_int, assumed, __float_as_int(new_f));
+    } while (assumed != old);  // Retry if the value changed during the process
+
+    // Return the old value (before the addition)
+    return __int_as_float(old);
+}
+
 
 void usage(const char *argv0)
 {
@@ -219,7 +247,6 @@ print_retires(void){
 __global__ // __launch_bounds__(1024,2) 
 void
 calculate_opt(size_t n, size_t size, rdma_buf<unsigned int> *rdma_array, unsigned int *array) {
-
 
     // Page size in elements (64KB / 4 bytes per unsigned int)
     const size_t pageSize = 8*1024 / sizeof(unsigned int);
@@ -428,23 +455,421 @@ void transfer_benchmark(){
 
 }
 
+// Custom function to convert string to integer
+__device__ int my_atoi(const char *str) {
+    int result = 0;
+    int sign = 1;
+    int i = 0;
+
+    // Handle negative numbers
+    if (str[0] == '-') {
+        sign = -1;
+        i++;
+    }
+
+    for (; str[i] != '\0' && str[i] != '\n'; i++) {
+        result = result * 10 + (str[i] - '0');
+    }
+    return result * sign;
+}
+
+// Custom function to convert string to float
+__forceinline__
+__device__ float my_atof(const char *str) {
+    float result = 0.0f;
+    float divisor = 1.0f;
+    int i = 0;
+    int sign = 1;
+
+    // Handle negative numbers
+    if (str[0] == '-') {
+        sign = -1;
+        i++;
+    }
+
+    // Convert integer part
+    for (; str[i] != '\0' && str[i] != '.' && str[i] != '\n'; i++) {
+        result = result * 10.0f + (str[i] - '0');
+    }
+
+    // Convert decimal part
+    if (str[i] == '.') {
+        i++;
+        for (; str[i] != '\0' && str[i] != '\n'; i++) {
+            result = result * 10.0f + (str[i] - '0');
+            divisor *= 10.0f;  // Increment divisor for each decimal place
+        }
+    }
+
+    return sign * (result / divisor);
+}
+
+__forceinline__
+__device__ void parse_trip(const char *line, float &trip_seconds, float &trip_miles, float &fare_amount, float &tip_amount, float &tolls, float &extra) {
+    // Manually parse the line
+    char buffer[LINE_LENGTH];
+    int index = 0;
+    int field = 0;
+    
+    for (int i = 0; line[i] != '\0' && i < LINE_LENGTH; i++) {
+        if (line[i] == ',' || line[i] == '\n') {
+            buffer[index] = '\0'; // Null-terminate the string
+            switch (field) {
+                // case 0: // VendorID
+                //     *vendorID = my_atoi(buffer);
+                //     break;
+                // case 6: // Pickup latitude
+                //     pickup_latitude = my_atof(buffer);
+                //     break;
+                // case 5: // Pickup longitude
+                //     *pickup_longitude = my_atof(buffer);
+                //     break;
+                case 4: // Trip Distance
+                    trip_seconds = my_atof(buffer);
+                    break;
+                case 5: // Trip Distance
+                    trip_miles = my_atof(buffer);
+                    break;
+                case 10: // fare_amount
+                    fare_amount = my_atof(buffer);
+                    break;
+                case 11: // tip_amount
+                    tip_amount = my_atof(buffer);
+                    break;
+                case 12: // mta_tax
+                    tolls = my_atof(buffer);
+                    break;
+                case 13: // extra
+                    extra = my_atof(buffer);
+                    break;
+            }
+            field++;
+            index = 0; // Reset index for next field
+        } else {
+            buffer[index++] = line[i]; // Collect character into buffer
+        }
+    }
+}
+
+__global__ 
+void process_trips(const char *buffer, int count, float *total_amount, float *total_miles) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < count) {
+        
+        // Declare an array to hold the line
+        char line[LINE_LENGTH];  // Create a character array for one line
+
+        // Copy the line from the buffer into the line array
+        for (int i = 0; i < LINE_LENGTH; ++i) {
+            line[i] = buffer[idx * LINE_LENGTH + i];
+        }
+
+        int vendorID;
+        float trip_seconds;
+        float trip_miles;
+        float fare_amount;
+        float tip_amount;
+        float tolls;
+        float extra;
+        
+        // Parse the trip details
+        if(idx == 0 || idx == 1 || idx == 2) printf("first line: %s\n", line);
+        parse_trip(line, trip_seconds, trip_miles, fare_amount, tip_amount, tolls, extra);
+
+        if(trip_seconds > 1000) {
+            float local_total = fare_amount - extra - tolls + tip_amount;
+            // size_t value = (size_t) local_total;
+            // printf("local_total : %llu\n", value);
+            // *total_amount += 1;
+            // if(trip_distance < 1000){
+                // printf("trip_seconds: %f trip_miles: %f, fare_amount: %f, extra: %f tolls: %f tip_amount: %f\nline: %s\n", 
+                //         trip_seconds, trip_miles, fare_amount, extra, tolls, tip_amount, line);
+            //     // printf("line: %s\n", line);
+                AtomicAdd(total_amount, local_total);
+                AtomicAdd(total_miles, trip_miles);
+            // }
+        }
+
+        // Example operation: Store or print the parsed values (printing from device is not recommended)
+        // printf("Vendor ID: %d, Pickup Latitude: %f, Pickup Longitude: %f\n", vendorID, pickup_latitude, pickup_longitude);
+    }
+}
+
+__global__ __launch_bounds__(1024,2)
+void process_trips_rdma(rdma_buf<char> *buffer, int count, float *total_amount, float *total_miles) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < count) {
+        
+        // Declare an array to hold the line
+        char line[LINE_LENGTH];  // Create a character array for one line
+
+        // Copy the line from the buffer into the line array
+        for (int i = 0; i < LINE_LENGTH; ++i) {
+            line[i] = (*buffer)[idx * LINE_LENGTH + i];
+        }
+
+        int vendorID;
+        float trip_seconds;
+        float trip_miles;
+        float fare_amount;
+        float tip_amount;
+        float tolls;
+        float extra;
+        
+        // Parse the trip details
+        // if(idx == 0 || idx == 1 || idx == 2) printf("first line: %s\n", line);
+        parse_trip(line, trip_seconds, trip_miles, fare_amount, tip_amount, tolls, extra);
+
+        if(trip_seconds > 1000 && trip_miles < 1050) {
+            float local_total = fare_amount - extra - tolls + tip_amount;
+            // size_t value = (size_t) local_total;
+            // printf("local_total : %llu\n", value);
+            // *total_amount += 1;
+            // if(trip_distance < 1000){
+                // printf("trip_seconds: %f trip_miles: %f, fare_amount: %f, extra: %f tolls: %f tip_amount: %f\nline: %s\n", 
+                //         trip_seconds, trip_miles, fare_amount, extra, tolls, tip_amount, line);
+            //     // printf("line: %s\n", line);
+                AtomicAdd(total_amount, local_total);
+                AtomicAdd(total_miles, trip_miles);
+            // }
+        }
+
+        // Example operation: Store or print the parsed values (printing from device is not recommended)
+        // printf("Vendor ID: %d, Pickup Latitude: %f, Pickup Longitude: %f\n", vendorID, pickup_latitude, pickup_longitude);
+    }
+}
+
+// Function to read CSV data into a single buffer
+int read_csv(const char *filename, char *&buffer, size_t *count) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Failed to open file");
+        return -1;
+    }
+
+    fseek(file, 0L, SEEK_END);
+    size_t file_size = ftell(file);
+    fseek(file, 0L, SEEK_SET);  // Reset to beginning of the file
+
+    // Adjust size based on file size if needed
+    size_t max_size = (file_size > (MAX_TRIPS * LINE_LENGTH)) ? file_size : (MAX_TRIPS * LINE_LENGTH);
+    printf("max_size: %llu\n", max_size);
+
+
+    size_t size = MAX_TRIPS * LINE_LENGTH * sizeof(char);
+    printf("size: %llu\n", size);
+    // buffer = (char *)malloc(size);
+    // check_cuda_error(cudaMallocHost(&buffer, size));
+    if (!buffer) {
+        perror("Failed to allocate memory");
+        fclose(file);
+        return -1;
+    }
+    printf("size1: %llu\n", size);
+    *count = 0;
+    while (fgets(buffer + (*count * LINE_LENGTH), LINE_LENGTH, file) && *count < MAX_TRIPS) {
+        (*count)++;
+    }
+    printf("size2: %llu\n", size);
+    fclose(file);
+    return 0;
+}
+
+int rapids_CUDA(char *file){
+    cudaEvent_t event1, event2;
+    cudaEventCreate(&event1);
+    cudaEventCreate(&event2);
+    cudaError_t ret;
+    char *buffer, *d_buffer;
+    size_t count;
+    float *total_amount, *h_total, h_miles, *d_miles;
+    size_t size = MAX_TRIPS * LINE_LENGTH * sizeof(char);
+    h_total = (float *) malloc(sizeof(float));
+    buffer = (char *)malloc(size);
+    // cudaError_t err = cudaMallocHost((void**)&buffer, size);
+    printf("line: %d\n", __LINE__);
+    // buffer[0] = 12;
+    // if (err != cudaSuccess) {
+    //     printf("cudaMallocHost failed: %s\n", cudaGetErrorString(err));
+    //     return -1;
+    // }
+    // Step 1: Read CSV into a single buffer
+    if (read_csv(file, buffer, &count) != 0) {
+        return -1;
+    }
+
+    printf("count: %llu\n", count);
+
+    cudaDeviceSynchronize();
+    auto start = std::chrono::steady_clock::now();                
+    cudaEventRecord(event1, (cudaStream_t)1);
+
+    // Step 2: Allocate device memory
+    check_cuda_error(cudaMalloc((void **)&d_buffer, count * LINE_LENGTH * sizeof(char)));
+    check_cuda_error(cudaMalloc((void **)&total_amount, sizeof(float)));
+    check_cuda_error(cudaMalloc((void **)&d_miles, sizeof(float)));
+    check_cuda_error(cudaMemset(total_amount, 0, sizeof(float)));
+
+    // Step 3: Copy data to device
+    check_cuda_error(cudaMemcpy(d_buffer, buffer, count * LINE_LENGTH * sizeof(char), cudaMemcpyHostToDevice));
+
+    // Step 4: Launch kernel
+    int threadsPerBlock = 1024;
+    int blocksPerGrid = (count + threadsPerBlock - 1) / threadsPerBlock;
+    ret = cudaDeviceSynchronize();
+    printf("ret: %d cudaGetLastError(): %d\n", ret, cudaGetLastError());
+    process_trips<<<blocksPerGrid, threadsPerBlock>>>(d_buffer, count, total_amount, d_miles);
+    ret = cudaDeviceSynchronize();
+    printf("ret: %d cudaGetLastError(): %d\n", ret, cudaGetLastError());
+
+    check_cuda_error(cudaMemcpy(h_total, total_amount, sizeof(float), cudaMemcpyDeviceToHost));
+    check_cuda_error(cudaMemcpy(&h_miles, d_miles, sizeof(float), cudaMemcpyDeviceToHost));
+    cudaDeviceSynchronize();
+
+    cudaEventRecord(event2, (cudaStream_t) 1);
+            
+    cudaEventSynchronize(event1); //optional
+    cudaEventSynchronize(event2); //wait for the event to be executed!
+
+    auto end = std::chrono::steady_clock::now();
+    long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    printf("Elapsed time for direct transfer  ms : %li ms.\n\n", duration);
+    
+    float dt_ms;
+    cudaEventElapsedTime(&dt_ms, event1, event2);
+    printf("The execution time with direct transfer on GPU: %f ms\n", dt_ms);
+
+    printf("h_total: %f\n", *h_total);
+    printf("h_miles: %f\n", h_miles);
+
+    // Step 5: Free memory
+    free(buffer);
+    free(h_total);
+    cudaFree(d_buffer);
+    cudaFree(total_amount);
+
+    return 0;
+}
+
+int rapids_RDMA(char *filename){
+
+    rdma_buf<char> *rdma_buffer;
+    size_t count;
+    check_cuda_error(cudaMallocManaged((void **)&rdma_buffer, sizeof(rdma_buf<char>)));
+    
+    // char *buffer;
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Failed to open file");
+        return -1;
+    }
+    size_t size = MAX_TRIPS * LINE_LENGTH * sizeof(char);
+    printf("size: %llu\n", size);
+    rdma_buffer->start(size);
+    printf("size0: %llu\n", size);
+    // buffer = (char *) malloc(size);
+    // if (!buffer) {
+    //     perror("Failed to allocate memory");
+    //     fclose(file);
+    //     return -1;
+    // }
+    
+    printf("size1: %llu\n", size);
+
+    count = 0;
+    while(fgets(rdma_buffer->local_buffer + (count * LINE_LENGTH), LINE_LENGTH, file) && count < MAX_TRIPS) {
+        (count)++;
+    }
+    printf("size2: %llu\n", size);
+    fclose(file);
+    // return 0;
+
+
+
+
+    cudaEvent_t event1, event2;
+    cudaEventCreate(&event1);
+    cudaEventCreate(&event2);
+    cudaError_t ret;
+    
+    
+    float *total_amount, *h_total, *d_miles, h_miles;
+    h_total = (float *) malloc(sizeof(float));
+
+    // Step 1: Read CSV into a single buffer
+    // if (read_csv(file, buffer, &count) != 0) {
+    //     return -1;
+    // }
+
+    printf("count: %llu\n", count);
+
+    auto start = std::chrono::steady_clock::now();                
+    cudaEventRecord(event1, (cudaStream_t)1);
+
+    // Step 2: Allocate device memory
+    // check_cuda_error(cudaMalloc((void **)&d_buffer, count * LINE_LENGTH * sizeof(char)));
+    check_cuda_error(cudaMalloc((void **)&d_miles, sizeof(float)));
+    check_cuda_error(cudaMalloc((void **)&total_amount, sizeof(float)));
+    check_cuda_error(cudaMemset(total_amount, 0, sizeof(float)));
+
+    // Step 3: Copy data to device
+    // check_cuda_error(cudaMemcpy(d_buffer, buffer, count * LINE_LENGTH * sizeof(char), cudaMemcpyHostToDevice));
+
+    // Step 4: Launch kernel
+    int threadsPerBlock = 1024;
+    int blocksPerGrid = (count + threadsPerBlock - 1) / threadsPerBlock;
+    ret = cudaDeviceSynchronize();
+    printf("ret: %d cudaGetLastError(): %d\n", ret, cudaGetLastError());
+    process_trips_rdma<<<blocksPerGrid, threadsPerBlock>>>(rdma_buffer, count, total_amount, d_miles);
+    ret = cudaDeviceSynchronize();
+    printf("ret: %d cudaGetLastError(): %d\n", ret, cudaGetLastError());
+
+    check_cuda_error(cudaMemcpy(h_total, total_amount, sizeof(float), cudaMemcpyDeviceToHost));
+    check_cuda_error(cudaMemcpy(&h_miles, d_miles, sizeof(float), cudaMemcpyDeviceToHost));
+    cudaDeviceSynchronize();
+
+    cudaEventRecord(event2, (cudaStream_t) 1);
+            
+    cudaEventSynchronize(event1); //optional
+    cudaEventSynchronize(event2); //wait for the event to be executed!
+
+    auto end = std::chrono::steady_clock::now();
+    long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    printf("Elapsed time for rdma transfer  ms : %li ms.\n\n", duration);
+    
+    float dt_ms;
+    cudaEventElapsedTime(&dt_ms, event1, event2);
+    printf("The cudaEvent execution time with rdma on GPU: %f ms\n", dt_ms);
+
+    printf("h_total: %f\n", *h_total);
+    printf("h_miles: %f\n", h_miles);
+
+    // Step 5: Free memory
+    // free(buffer);
+    // cudaFree(d_buffer);
+
+    return 0;
+}
+
 // Main program
 int main(int argc, char **argv)
 {   
     init_gpu(0);
+    cudaSetDevice(0);
+    // printf("hello from rapid\n");
+    char *file = argv[7];
 
-    
+    // rapids_CUDA(file);
 
     bool rdma_flag = true;
-    cudaError_t ret1;
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
-
+    cudaError_t ret1;
     if(rdma_flag){
-        
+        init_gpu(0);
         int num_msg = (unsigned long) atoi(argv[4]);
         int mesg_size = (unsigned long) atoi(argv[5]);
         int num_bufs = (unsigned long) atoi(argv[6]);
-        int ret;
+
         
         struct post_content post_cont, *d_post, host_post;
         struct poll_content poll_cont, *d_poll, host_poll;
@@ -454,17 +879,15 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
-        s_ctx->gpu_buf_size = 16*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
 
         // local connect
         char *mlx_name = "mlx5_0";
-        // ret = local_connect_cpu_benchmark(mlx_name, s_ctx, mesg_size, num_msg);
-        // exit(0);
+        int ret = local_connect(mlx_name, s_ctx);
 
-        ret = local_connect(mlx_name, s_ctx);
         ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont, &post_cont2, \
                                         &host_post, &host_poll, &keys);
         if(ret == -1) {
@@ -485,10 +908,10 @@ int main(int argc, char **argv)
             return -1;
         }
 
-        size_t restricted_gpu_mem = 26*1024*1024*1024llu;
+        size_t restricted_gpu_mem = 16*1024*1024*1024; // 18*1024*1024*1024llu; // sizeof(unsigned int)*G.numEdges;
         // restricted_gpu_mem = restricted_gpu_mem / 3;
         const size_t page_size = REQUEST_SIZE;
-        // const size_t numPages = ceil((double)restricted_gpu_mem/page_size);
+        const size_t numPages = restricted_gpu_mem/page_size;
 
         printf("function: %s line: %d\n", __FILE__, __LINE__);
         alloc_global_host_content(host_post, host_poll, keys);
@@ -510,20 +933,26 @@ int main(int argc, char **argv)
         start_page_queue<<<1, 1>>>(/*s_ctx->gpu_buf_size*/restricted_gpu_mem, page_size);
         ret1 = cudaDeviceSynchronize();
         printf("ret: %d\n", ret1);
-        if(cudaSuccess != ret1){    
+        if(cudaSuccess != ret1){  
             return -1;
         }
     }
+
 
     
     
 
     if(rdma_flag){
-        compute_benchmark();
+        rapids_RDMA(file);
         // transfer_benchmark();
         cudaFree(s_ctx->gpu_buffer);
     }
 
+    // rapids_CUDA(file);
+
+    // rapids_CUDA(file);
+
+    // rapids_CUDA(file);
     
     // printf("oversubs ratio: %d\n", oversubs_ratio_macro-1);
     

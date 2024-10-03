@@ -101,7 +101,7 @@ extern struct rdma_content main_content;
 #define MAX_POST 3 
 // request size
 
-#define REQUEST_SIZE 16*1024 // bytes
+#define REQUEST_SIZE (8*1024) // bytes
 extern __device__ int GLOBAL_REQUEST_SIZE;
 
 // define globale vaiable to save the number of post requests
@@ -129,6 +129,8 @@ struct rdma_tlb{
 
     }
 };
+
+#define oversubs_ratio_macro  1
 
 // Function to busy-wait for a specified number of nanoseconds
 __device__ void sleep_nanoseconds(int nanoseconds) {
@@ -1229,14 +1231,14 @@ struct rdma_buf {
                 //     printf("id: %llu che: %llu dev_buffer: %p index: %d\n", id, che, dev_buffer, (int) index);
 
                 
-                    if(/*d_TLB[che].state == 2*/d_tlb[che] == 2){ // page completely on gpu or dirty on gpu
-                        // T *tmp_array =  (T *) d_TLB[che].device_address;
-                        // // LRU is incremented
-                        // // printf(" tlb: 2 ");
-                        // return tmp_array[index%request_size];
+                    // if(/*d_TLB[che].state == 2*/d_tlb[che] == 2){ // page completely on gpu or dirty on gpu
+                    //     // T *tmp_array =  (T *) d_TLB[che].device_address;
+                    //     // // LRU is incremented
+                    //     // // printf(" tlb: 2 ");
+                    //     // return tmp_array[index%request_size];
                         
-                        return dev_buffer[index];
-                    }
+                    //     return dev_buffer[index];
+                    // }
                     if(/*d_TLB[che].state == 0 || d_TLB[che].state == 5*/d_tlb[che] == 0){ // page completely on cpu or dirty on cpu
                     
                         // unsigned int mask1 = __activemask(); // __match_any_sync(__activemask(), (unsigned long long)qp_index);

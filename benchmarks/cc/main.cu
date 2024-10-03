@@ -849,7 +849,7 @@ unsigned long long *runCC_rdma(uint startVertex, size_t numVertices, size_t numE
 
         auto start = std::chrono::steady_clock::now();
         // check_cuda_error(cudaMemAdvise(d_edgeList, numEdges*sizeof(unsigned int), cudaMemAdviseSetAccessedBy, 0));
-        // check_cuda_error(cudaMemAdvise(d_edgeList, numEdges*sizeof(unsigned int), cudaMemAdviseSetReadMostly, 0));
+        check_cuda_error(cudaMemAdvise(d_edgeList, numEdges*sizeof(unsigned int), cudaMemAdviseSetReadMostly, 0));
         auto end = std::chrono::steady_clock::now();
         long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         printf("Elapsed time in milliseconds for cudaMemAdviseSetReadMostly : %li ms. data: %f\n", 
@@ -878,7 +878,7 @@ unsigned long long *runCC_rdma(uint startVertex, size_t numVertices, size_t numE
 
     check_cuda_error(cudaEventRecord(start, 0));
     ret = cudaDeviceSynchronize();
-    // oversubs(10, numEdges);
+    oversubs(11, numEdges);
     do {
         changed_h = false;
         check_cuda_error(cudaMemcpy(changed_d, &changed_h, sizeof(bool), cudaMemcpyHostToDevice));
@@ -1064,7 +1064,7 @@ int main(int argc, char **argv)
 
     readfile(G, G_m, argc, argv, tmp_edgesOffset, tmp_edgesSize, tmp_adjacencyList);
 
-    bool rdma_flag = true;
+    bool rdma_flag = false;
     cudaError_t ret1;
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
     if(rdma_flag){
