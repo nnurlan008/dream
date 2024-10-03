@@ -42,11 +42,18 @@ readGraph.o: readGraph.cpp graph.h
 main: main.o bfsCPU.o bfs.o  $(SRC_DIR)/rdma_utils.o readGraph.o
 	$(NVCC) $^ -libverbs -lrdmacm -lcuda -lcudart -o $@  $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
 # --maxrregcount=32
-main.o: main.cu bfsCPU.h  graph.h 
-	$(NVCC)  -dc main.cu -o main.o $(CUDA_LIBS) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+# main.o: main.cu bfsCPU.h  graph.h 
+# 	$(NVCC)  -dc main.cu -o main.o $(CUDA_LIBS) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+
+main.o: main.cu bfsCPU.h graph.h
+	$(NVCC) -dc main.cu -o main.o $(CUDA_LIBS) $(CXXFLAGS) -Xptxas -v -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+
+	
 # --maxrregcount=256
 bfs.o: bfs.cu bfs.cuh
 	$(NVCC) -dc bfs.cu -o bfs.o -libverbs -lrdmacm -lcuda -lcudart  $(CUDA_LIBS) 
+
+
 
 clean:
 	rm -f *.o ${APPS}

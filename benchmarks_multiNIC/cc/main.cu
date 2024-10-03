@@ -1119,7 +1119,7 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
-        s_ctx->gpu_buf_size = 27*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        s_ctx->gpu_buf_size = 25*1024*1024*1024llu; // N*sizeof(int)*3llu;
         s_ctx->gpu_buffer = NULL;
 
         // // remote connection:

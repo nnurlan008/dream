@@ -616,6 +616,7 @@ struct rdma_buf {
 
         // constructor for pointer declaration:
         void start(size_t user_size){
+            
             uint64_t offset = (uint64_t) Address_Offset;
             // gpu_address = user_address + Address_Offset;
             host_address = remote_address + Address_Offset;

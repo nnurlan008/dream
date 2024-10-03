@@ -140,8 +140,8 @@ __device__ void sleep_nanoseconds(int nanoseconds) {
     }
 }
 
-#define oversubs_ratio_macro  1
-#define rest_memory 5*1024*1024*1024llu // restricted memory
+#define oversubs_ratio_macro  2
+#define rest_memory 16*1024*1024*1024llu // restricted memory
 
 unsigned long long closestUpperDivisible(unsigned long long num, unsigned long long divisor) {
     return ((num + divisor - 1) / divisor) * divisor;
@@ -661,6 +661,13 @@ struct rdma_buf {
             return *this;
         }
 
+        void reset(){
+            if(update_device_tlb() == -1){
+                printf("error on reset, file: %s, line: %d\n", __FILE__, __LINE__);
+                exit(-1);
+            }
+        }
+
         // constructor for pointer declaration:
         void start(size_t user_size, int gpu_number, void *shared_host_address){
             gpu = gpu_number;
@@ -788,8 +795,8 @@ struct rdma_buf {
             printf("line: %d\n", __LINE__);
             
             if(update_device_tlb() == -1) return -1;
-            free(h_page_number);
-            free(h_page_map);
+            // free(h_page_number);
+            // free(h_page_map);
             // printf("tlb_buffer: %p\n", tlb_buffer);
             return 0;
         }
@@ -805,7 +812,7 @@ struct rdma_buf {
                 return -1;
             printf("line: %d\n", __LINE__);
             cudaSetDevice(gpu);
-            if(cudaSuccess != cudaMemcpy(d_TLB, host_TLB, tlb_size*sizeof(tlb_entry), cudaMemcpyHostToDevice))
+            if(cudaSuccess != cudaMemcpy(d_tlb, h_tlb, tlb_size*sizeof(uint), cudaMemcpyHostToDevice))
                 return -1;
             printf("line: %d\n", __LINE__);
             if(cudaSuccess != cudaMemcpy(page_number, h_page_number, tlb_size*sizeof(int), cudaMemcpyHostToDevice))

@@ -459,6 +459,12 @@ __device__ void post_opt(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,
                         int cur_post, int qp_index);
 
 __device__ 
+void post_opt_write(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
+                        uint64_t wr_sg_addr,
+                        int cur_post,
+                        int qp_index);
+
+__device__ 
 void post_opt_2nic(uint64_t wr_rdma_remote_addr, uint32_t wr_rdma_rkey,            
                         uint64_t wr_sg_addr,
                         int cur_post,

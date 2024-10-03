@@ -309,7 +309,7 @@ void compute_benchmark(){
     rdma_array->start(num_elements *sizeof(unsigned int), GPU, NULL);
     for(size_t i = 0; i < num_elements; i++){
         rdma_array->local_buffer[i] = 14;
-    // }
+    }
 
     check_cuda_error(cudaEventCreate(&start));
     check_cuda_error(cudaEventCreate(&end));

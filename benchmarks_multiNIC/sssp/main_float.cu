@@ -2177,7 +2177,7 @@ int main(int argc, char **argv)
     }
 
     WeightT *rdma_result;
-    int number_of_vertices = 0;
+    int number_of_vertices = 200;
     int active_vertices = 0;
     time_total = 0;
     size_t min_page_fault = 10000000, *d_pf;
@@ -2188,31 +2188,31 @@ int main(int argc, char **argv)
     gpuErrorcheck(cudaMemset(min_source, 0, sizeof(uint)));
     if(rdma_flag){
         printf("RDMA Cuda Starts here..\n");
-        rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
-                                    new_offset, new_vertex_list, u_weights, 1);
-        cudaFree(s_ctx->gpu_buffer);
-
-        // for (size_t i = 0; i < number_of_vertices; i++)
-        // {
-        //     sourceNode = i;
-        //     printf("vertex %d has degree of %d\n", sourceNode, u_edgeoffset[i+1] - u_edgeoffset[i]);
-        //     if(u_edgeoffset[i+1] - u_edgeoffset[i] == 0)
-        //         continue;
-        //     active_vertices++;
-        //     rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
+        // rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
         //                             new_offset, new_vertex_list, u_weights, 1);
+        // cudaFree(s_ctx->gpu_buffer);
+
+        for (size_t i = 0; i < number_of_vertices; i++)
+        {
+            sourceNode = i;
+            printf("vertex %d has degree of %d\n", sourceNode, u_edgeoffset[i+1] - u_edgeoffset[i]);
+            if(u_edgeoffset[i+1] - u_edgeoffset[i] == 0)
+                continue;
+            active_vertices++;
+            rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
+                                    new_offset, new_vertex_list, u_weights, 1);
         
-        //     rdma_edgeList->reset();
+            rdma_edgeList->reset();
 
-        //     gpuErrorcheck(cudaMemcpy(d_pf, &min_page_fault, sizeof(size_t), cudaMemcpyHostToDevice));
-        //     // gpuErrorcheck(cudaMemcpy(min_source, &startVertex, sizeof(uint), cudaMemcpyHostToDevice));
-        //     gpuErrorcheck(cudaDeviceSynchronize());
-        //     copy_page_fault_number<<< 1,1 >>>(d_pf, min_source, sourceNode);
-        //     gpuErrorcheck(cudaMemcpy(&min_page_fault, d_pf, sizeof(size_t), cudaMemcpyDeviceToHost));
-        //     gpuErrorcheck(cudaMemcpy(&h_min_source, min_source, sizeof(uint), cudaMemcpyDeviceToHost));
+            gpuErrorcheck(cudaMemcpy(d_pf, &min_page_fault, sizeof(size_t), cudaMemcpyHostToDevice));
+            // gpuErrorcheck(cudaMemcpy(min_source, &startVertex, sizeof(uint), cudaMemcpyHostToDevice));
+            gpuErrorcheck(cudaDeviceSynchronize());
+            copy_page_fault_number<<< 1,1 >>>(d_pf, min_source, sourceNode);
+            gpuErrorcheck(cudaMemcpy(&min_page_fault, d_pf, sizeof(size_t), cudaMemcpyDeviceToHost));
+            gpuErrorcheck(cudaMemcpy(&h_min_source, min_source, sizeof(uint), cudaMemcpyDeviceToHost));
 
-        //     printf("average time: %.2f active_vertices: %d\n", time_total/active_vertices, active_vertices);
-        // }
+            printf("average time: %.2f active_vertices: %d\n", time_total/active_vertices, active_vertices);
+        }
         
         // printf("average time: %.2f\n", time_total/active_vertices);
     }
