@@ -362,7 +362,11 @@ __global__ void mvt_kernel1(DATA_TYPE *a, DATA_TYPE *x1, DATA_TYPE *y_1)
 }
 
 
+<<<<<<< HEAD
 __global__ void mvt_kernel2(DATA_TYPE *a, DATA_TYPE *x2, DATA_TYPE *y_2)
+=======
+__global__ void mvt_kernel2(DATA_TYPE *a, DATA_TYPE *x2, DATA_TYPE *y_2, DATA_TYPE *a_gpu)
+>>>>>>> origin/cloudlab
 {
 	size_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -374,10 +378,17 @@ __global__ void mvt_kernel2(DATA_TYPE *a, DATA_TYPE *x2, DATA_TYPE *y_2)
             size_t index = j * N + i;
             DATA_TYPE tmp = a[index]; 
 			// x2[i] += tmp * y_2[j];
+<<<<<<< HEAD
             // if(tmp != a_gpu[index]){
             //     printf("tmp: %f %f ", tmp, a_gpu[index]);
             // }	
 			x2[i] += tmp * y_2[j];	
+=======
+            if(tmp != a_gpu[index]){
+                printf("tmp: %f %f ", tmp, a_gpu[index]);
+            }	
+			x2[i] += a_gpu[index] * y_2[j];	
+>>>>>>> origin/cloudlab
 		}
 	}
 }
@@ -427,9 +438,15 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
         check_cuda_error(cudaMalloc(&a_gpu, sizeof(DATA_TYPE) * N * N));
         check_cuda_error(cudaMemcpy(a_gpu, a, sizeof(DATA_TYPE) * N * N, cudaMemcpyHostToDevice));
     }
+<<<<<<< HEAD
     // DATA_TYPE* a_direct;
     // check_cuda_error(cudaMalloc(&a_direct, sizeof(DATA_TYPE) * N * N));
     // check_cuda_error(cudaMemcpy(a_direct, a, sizeof(DATA_TYPE) * N * N, cudaMemcpyHostToDevice));
+=======
+    DATA_TYPE* a_direct;
+    check_cuda_error(cudaMalloc(&a_direct, sizeof(DATA_TYPE) * N * N));
+    check_cuda_error(cudaMemcpy(a_direct, a, sizeof(DATA_TYPE) * N * N, cudaMemcpyHostToDevice));
+>>>>>>> origin/cloudlab
 
 	double t_start, t_end;
 	dim3 block(DIM_THREAD_BLOCK_X, DIM_THREAD_BLOCK_Y);
@@ -437,8 +454,13 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
 
     printf("Starting Kernels\n");
 	auto start = std::chrono::steady_clock::now();
+<<<<<<< HEAD
 	mvt_kernel2<<<grid,block>>>(a_gpu,x2_gpu,y_2_gpu);
     mvt_kernel1<<<grid,block>>>(a_gpu,x1_gpu,y_1_gpu);
+=======
+	mvt_kernel1<<<grid,block>>>(a_gpu,x1_gpu,y_1_gpu);
+	mvt_kernel2<<<grid,block>>>(a_gpu,x2_gpu,y_2_gpu, a_direct);
+>>>>>>> origin/cloudlab
 	cudaDeviceSynchronize();
 	auto end = std::chrono::steady_clock::now();
     long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -453,7 +475,11 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
     check_cuda_error(cudaFree(y_1_gpu));
     check_cuda_error(cudaFree(y_2_gpu));
 
+<<<<<<< HEAD
     // check_cuda_error(cudaFree(a_direct));
+=======
+    check_cuda_error(cudaFree(a_direct));
+>>>>>>> origin/cloudlab
 
     // //run the algorithm on the CPU
     // printf("Running on CPU\n");
@@ -468,6 +494,7 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
 
 
 /******************************* RDMA Imlementation BEGIN ***************************************/
+<<<<<<< HEAD
 // __global__ __launch_bounds__(1024,2) 
 // void
 // mvt_kernel1_rdma(size_t n, size_t size, rdma_buf<DATA_TYPE> *a, DATA_TYPE *x1, DATA_TYPE *y_1) {
@@ -543,6 +570,9 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
 
 __global__ // __launch_bounds__(1024,2)
 void mvt_kernel1_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x1, DATA_TYPE *y_1)
+=======
+__global__ void mvt_kernel1_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x1, DATA_TYPE *y_1)
+>>>>>>> origin/cloudlab
 {
 	size_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -557,12 +587,19 @@ void mvt_kernel1_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x1, DATA_TYPE *y_1)
 }
 
 
+<<<<<<< HEAD
 
 __global__ // __launch_bounds__(1024,2)
 void mvt_kernel2_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x2, DATA_TYPE *y_2)
 {
 	size_t i = blockIdx.x * blockDim.x + threadIdx.x;
  
+=======
+__global__ void mvt_kernel2_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x2, DATA_TYPE *y_2, DATA_TYPE *a_gpu)
+{
+	size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+
+>>>>>>> origin/cloudlab
 	if (i < N)
 	{
 		size_t j;
@@ -611,10 +648,16 @@ void mvtCuda_rdma(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, 
 
 	dim3 block(DIM_THREAD_BLOCK_X/2, DIM_THREAD_BLOCK_Y);
 	dim3 grid((size_t)ceil((float)N/ ((float)DIM_THREAD_BLOCK_X/2)), 1);
+<<<<<<< HEAD
     rdma_buf<DATA_TYPE> *rdma_a, *rdma_a_d;
 
     rdma_a = (rdma_buf<DATA_TYPE> *) malloc(sizeof(rdma_buf<DATA_TYPE>));
     check_cuda_error(cudaMalloc((void **) &rdma_a_d, sizeof(rdma_buf<unsigned int>)));
+=======
+    rdma_buf<DATA_TYPE> *rdma_a;
+
+    check_cuda_error(cudaMallocManaged((void **) &rdma_a, sizeof(rdma_buf<unsigned int>)));
+>>>>>>> origin/cloudlab
     
     rdma_a->start(N*N*sizeof(DATA_TYPE), GPU, NULL);
 
@@ -622,8 +665,11 @@ void mvtCuda_rdma(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, 
         rdma_a->local_buffer[i] = a[i];
     }
 
+<<<<<<< HEAD
     check_cuda_error(cudaMemcpy(rdma_a_d, rdma_a, sizeof(rdma_buf<DATA_TYPE>), cudaMemcpyHostToDevice));    
 
+=======
+>>>>>>> origin/cloudlab
     // transfer<<<2048, 512>>>(rdma_a->size/sizeof(DATA_TYPE), rdma_a);
     cudaError_t ret = cudaDeviceSynchronize();
     // check<<<2048, 512>>>(rdma_a->size/sizeof(DATA_TYPE), rdma_a, a_gpu);
@@ -631,6 +677,7 @@ void mvtCuda_rdma(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, 
 
     printf("Starting Kernels\n");
 	auto start = std::chrono::steady_clock::now();
+<<<<<<< HEAD
 
     // size_t size = N*N;
     // size_t n_pages = (size*sizeof(DATA_TYPE))/(REQUEST_SIZE/4);
@@ -641,6 +688,11 @@ void mvtCuda_rdma(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, 
 	mvt_kernel1_rdma<<<grid,block>>>(rdma_a_d, x1_gpu, y_1_gpu);
     printf("ret: %d cudaGetLastError: %d for kernel1\n", ret, cudaGetLastError());
     mvt_kernel2_rdma<<<grid,block>>>(rdma_a_d, x2_gpu, y_2_gpu);
+=======
+	mvt_kernel1_rdma<<<grid,block>>>(rdma_a, x1_gpu, y_1_gpu);
+    printf("ret: %d cudaGetLastError: %d for kernel1\n", ret, cudaGetLastError());
+    mvt_kernel2_rdma<<<grid,block>>>(rdma_a, x2_gpu, y_2_gpu, y_2_gpu);
+>>>>>>> origin/cloudlab
 	ret = cudaDeviceSynchronize();
     printf("ret: %d cudaGetLastError: %d\n", ret, cudaGetLastError());
 	auto end = std::chrono::steady_clock::now();

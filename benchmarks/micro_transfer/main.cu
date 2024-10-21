@@ -359,6 +359,7 @@ void compute_benchmark(){
 
 }
 
+<<<<<<< HEAD
 __global__ // __launch_bounds__(1024,2) 
 void
 calculate_opt_uvm(size_t n, size_t size, unsigned int *uvm_array, unsigned int *array) {
@@ -467,6 +468,8 @@ void compute_benchmark_uvm(){
 
 }
 
+=======
+>>>>>>> origin/cloudlab
 void transfer_benchmark(){
     cudaError_t ret;
     
@@ -541,7 +544,11 @@ int main(int argc, char **argv)
 {   
     init_gpu(0);
 
+<<<<<<< HEAD
     bool rdma_flag = false;
+=======
+    bool rdma_flag = true;
+>>>>>>> origin/cloudlab
     cudaError_t ret1;
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
     if(rdma_flag){
@@ -629,8 +636,11 @@ int main(int argc, char **argv)
         cudaFree(s_ctx->gpu_buffer);
     }
 
+<<<<<<< HEAD
     compute_benchmark_uvm();
 
+=======
+>>>>>>> origin/cloudlab
     
     // printf("oversubs ratio: %d\n", oversubs_ratio_macro-1);
     

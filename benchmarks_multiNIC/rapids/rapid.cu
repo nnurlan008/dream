@@ -17,7 +17,11 @@ using namespace std;
 
 // extern "C"{
 //   #include "rdma_utils.h"
+<<<<<<< HEAD
 // } 
+=======
+// }
+>>>>>>> origin/cloudlab
 
 // #include "../../src/rdma_utils.cuh"
 #include <time.h>
@@ -27,8 +31,13 @@ using namespace std;
 
 // #include "../../include/runtime_micro.h"
 
+<<<<<<< HEAD
 #define MAX_TRIPS 1000000000llu  // Set a maximum number of trips
 #define LINE_LENGTH 256   // Set the maximum line length
+=======
+#define MAX_TRIPS 10000000llu  // Set a maximum number of trips
+#define LINE_LENGTH 512   // Set the maximum line length
+>>>>>>> origin/cloudlab
 
 //define the error threshold for the results "not matching"
 #define PERCENT_DIFF_ERROR_THRESHOLD 0.05
@@ -47,8 +56,11 @@ using namespace std;
 #define WARP_SHIFT 5
 #define WARP_SIZE 32
 
+<<<<<<< HEAD
 #define THRESHOLD_SECONDS 9000
 
+=======
+>>>>>>> origin/cloudlab
 typedef float DATA_TYPE;
 
 /* Thread block dimensions */
@@ -648,15 +660,22 @@ void process_trips_rdma(rdma_buf<char> *buffer, int count, float *total_amount, 
     }
 }
 
+<<<<<<< HEAD
 void trips_seconds(char *file){
 
 }
 
+=======
+>>>>>>> origin/cloudlab
 // Function to read CSV data into a single buffer
 int read_csv(const char *filename, char *&buffer, size_t *count) {
     FILE *file = fopen(filename, "r");
     if (!file) {
+<<<<<<< HEAD
         perror("Failed to open file read_csv");
+=======
+        perror("Failed to open file");
+>>>>>>> origin/cloudlab
         return -1;
     }
 
@@ -774,7 +793,11 @@ int rapids_RDMA(char *filename){
     // char *buffer;
     FILE *file = fopen(filename, "r");
     if (!file) {
+<<<<<<< HEAD
         perror("Failed to open file rapids_RDMA");
+=======
+        perror("Failed to open file");
+>>>>>>> origin/cloudlab
         return -1;
     }
     size_t size = MAX_TRIPS * LINE_LENGTH * sizeof(char);
@@ -865,6 +888,7 @@ int rapids_RDMA(char *filename){
     return 0;
 }
 
+<<<<<<< HEAD
 // __global__ __launch_bounds__(1024,2)
 // void process_trips_uvm_direct(float *uvm_file, int count, float *total_amount, float *total_miles) {
 //     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -2089,11 +2113,14 @@ int rapids_RDMA_direct(char *filename){
 }
 
 
+=======
+>>>>>>> origin/cloudlab
 // Main program
 int main(int argc, char **argv)
 {   
     init_gpu(0);
     cudaSetDevice(0);
+<<<<<<< HEAD
     printf("hello from rapid\n");
     char *file = argv[7];
     printf("hello from rapid file : %s\n", file);
@@ -2105,6 +2132,14 @@ int main(int argc, char **argv)
 
     // printf("Binary file is written\n");
 
+=======
+    // printf("hello from rapid\n");
+    char *file = argv[7];
+
+    rapids_CUDA(file);
+
+    
+>>>>>>> origin/cloudlab
     bool rdma_flag = false;
     cudaError_t ret1;
     struct context_2nic *s_ctx = (struct context_2nic *)malloc(sizeof(struct context_2nic));
@@ -2130,7 +2165,11 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
+<<<<<<< HEAD
         s_ctx->gpu_buf_size = 26*1024*1024*1024llu; // N*sizeof(int)*3llu;
+=======
+        s_ctx->gpu_buf_size = 16*1024*1024*1024llu; // N*sizeof(int)*3llu;
+>>>>>>> origin/cloudlab
         s_ctx->gpu_buffer = NULL;
 
         // // remote connection:
@@ -2202,6 +2241,7 @@ int main(int argc, char **argv)
     
 
     if(rdma_flag){
+<<<<<<< HEAD
         // the follwoing for directly reading file in rdma
         // rapids_RDMA(file);
         // following for reading buffers separately
@@ -2214,6 +2254,12 @@ int main(int argc, char **argv)
     }
 
     filter_bin(file);
+=======
+        rapids_RDMA(file);
+        // transfer_benchmark();
+        cudaFree(s_ctx->gpu_buffer);
+    }
+>>>>>>> origin/cloudlab
 
     // rapids_CUDA(file);
 

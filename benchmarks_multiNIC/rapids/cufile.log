@@ -150,6 +150,7 @@
  27-09-2024 19:45:42:165 [pid=2716959 tid=2716959] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
  27-09-2024 20:19:36:138 [pid=2723265 tid=2723265] NOTICE  cufio-drv:720 running in compatible mode
  27-09-2024 20:19:37:609 [pid=2723265 tid=2723265] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
+<<<<<<< HEAD
  05-10-2024 22:12:47:814 [pid=4111597 tid=4111597] NOTICE  cufio-drv:720 running in compatible mode
  05-10-2024 22:12:49:503 [pid=4111597 tid=4111597] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
  05-10-2024 22:14:34:501 [pid=4112259 tid=4112259] NOTICE  cufio-drv:720 running in compatible mode
@@ -306,3 +307,5 @@
  07-10-2024 23:49:17:343 [pid=229030 tid=229030] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
  07-10-2024 23:49:38:96 [pid=229368 tid=229368] NOTICE  cufio-drv:720 running in compatible mode
  07-10-2024 23:49:39:612 [pid=229368 tid=229368] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
+=======
+>>>>>>> origin/cloudlab

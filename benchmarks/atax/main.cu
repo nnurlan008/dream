@@ -16,9 +16,14 @@ using namespace std;
 
 // #include "../../src/rdma_utils.cuh"
 #include <time.h>
+<<<<<<< HEAD
 #include "../../include/runtime_prefetching.h"
 // #include "../../include/runtime_eviction.h"
 // #include "../../include/runtime_prefetching_2nic.h"
+=======
+// #include "../../include/runtime_prefetching.h"
+#include "../../include/runtime_eviction.h"
+>>>>>>> origin/cloudlab
 
 //define the error threshold for the results "not matching"
 #define PERCENT_DIFF_ERROR_THRESHOLD 0.05
@@ -37,8 +42,11 @@ using namespace std;
 #define WARP_SHIFT 5
 #define WARP_SIZE 32
 
+<<<<<<< HEAD
 #define GPU 0
 
+=======
+>>>>>>> origin/cloudlab
 typedef float DATA_TYPE;
 
 /* Thread block dimensions */
@@ -585,10 +593,17 @@ int main(int argc, char **argv)
 
 
     bool rdma_flag = true;
+<<<<<<< HEAD
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
     cudaError_t ret1;
     if(rdma_flag){
         init_gpu(0);
+=======
+    cudaError_t ret1;
+    struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
+    if(rdma_flag){
+        
+>>>>>>> origin/cloudlab
         int num_msg = (unsigned long) atoi(argv[4]);
         int mesg_size = (unsigned long) atoi(argv[5]);
         int num_bufs = (unsigned long) atoi(argv[6]);
@@ -602,13 +617,21 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
+<<<<<<< HEAD
         s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
+=======
+        s_ctx->gpu_buf_size = 16*1024*1024*1024llu; // N*sizeof(int)*3llu;
+>>>>>>> origin/cloudlab
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
 
         // local connect
+<<<<<<< HEAD
         char *mlx_name = "mlx5_0";
+=======
+        char *mlx_name = "mlx5_2";
+>>>>>>> origin/cloudlab
         int ret = local_connect(mlx_name, s_ctx);
 
         ret = prepare_post_poll_content(s_ctx, &post_cont, &poll_cont, &post_cont2, \
@@ -631,10 +654,17 @@ int main(int argc, char **argv)
             return -1;
         }
 
+<<<<<<< HEAD
         size_t restricted_gpu_mem = 16*1024*1024*1024; // 18*1024*1024*1024llu; // sizeof(unsigned int)*G.numEdges;
         // restricted_gpu_mem = restricted_gpu_mem / 3;
         const size_t page_size = REQUEST_SIZE;
         const size_t numPages = restricted_gpu_mem/page_size;
+=======
+        size_t restricted_gpu_mem = rest_memory;// 16*1024*1024*1024llu;
+        // restricted_gpu_mem = restricted_gpu_mem / 3;
+        const size_t page_size = REQUEST_SIZE;
+        // const size_t numPages = ceil((double)restricted_gpu_mem/page_size);
+>>>>>>> origin/cloudlab
 
         printf("function: %s line: %d\n", __FILE__, __LINE__);
         alloc_global_host_content(host_post, host_poll, keys);

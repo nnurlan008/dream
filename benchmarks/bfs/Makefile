@@ -46,7 +46,11 @@ main: main.o bfsCPU.o bfs.o  $(SRC_DIR)/rdma_utils.o readGraph.o
 # 	$(NVCC)  -dc main.cu -o main.o $(CUDA_LIBS) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
 
 main.o: main.cu bfsCPU.h graph.h
+<<<<<<< HEAD
 	$(NVCC) -dc --maxrregcount=128 main.cu -o main.o $(CUDA_LIBS) $(CXXFLAGS) -Xptxas -v -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+=======
+	$(NVCC) -dc main.cu -o main.o $(CUDA_LIBS) $(CXXFLAGS) -Xptxas -v -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+>>>>>>> origin/cloudlab
 
 	
 # --maxrregcount=256

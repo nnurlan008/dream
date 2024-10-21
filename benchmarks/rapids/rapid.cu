@@ -17,6 +17,7 @@ using namespace std;
 
 // extern "C"{
 //   #include "rdma_utils.h"
+<<<<<<< HEAD
 // } 
 
 // #include "../../src/rdma_utils.cuh"
@@ -29,6 +30,18 @@ using namespace std;
 
 #define MAX_TRIPS 1000000000llu  // Set a maximum number of trips
 #define LINE_LENGTH 256   // Set the maximum line length
+=======
+// }
+
+// #include "../../src/rdma_utils.cuh"
+#include <time.h>
+#include "../../include/runtime_prefetching.h"
+// #include "../../include/runtime_eviction.h"
+// #include "../../include/runtime_micro.h"
+
+#define MAX_TRIPS 10000000llu  // Set a maximum number of trips
+#define LINE_LENGTH 512   // Set the maximum line length
+>>>>>>> origin/cloudlab
 
 //define the error threshold for the results "not matching"
 #define PERCENT_DIFF_ERROR_THRESHOLD 0.05
@@ -47,16 +60,22 @@ using namespace std;
 #define WARP_SHIFT 5
 #define WARP_SIZE 32
 
+<<<<<<< HEAD
 #define THRESHOLD_SECONDS 9000
 
+=======
+>>>>>>> origin/cloudlab
 typedef float DATA_TYPE;
 
 /* Thread block dimensions */
 #define DIM_THREAD_BLOCK_X 1024
 #define DIM_THREAD_BLOCK_Y 1
 
+<<<<<<< HEAD
 #define GPU 0
 
+=======
+>>>>>>> origin/cloudlab
 #ifndef M_PI
 #define M_PI 3.14159
 #endif
@@ -232,7 +251,10 @@ int alloc_global_cont(struct post_content *post_cont, struct poll_content *poll_
     return 0;
 }
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/cloudlab
 __device__ size_t sum_page_faults = 0;
 
 __global__ void
@@ -558,7 +580,11 @@ __device__ void parse_trip(const char *line, float &trip_seconds, float &trip_mi
     }
 }
 
+<<<<<<< HEAD
 __global__ __launch_bounds__(1024,2)
+=======
+__global__ 
+>>>>>>> origin/cloudlab
 void process_trips(const char *buffer, int count, float *total_amount, float *total_miles) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < count) {
@@ -583,7 +609,11 @@ void process_trips(const char *buffer, int count, float *total_amount, float *to
         if(idx == 0 || idx == 1 || idx == 2) printf("first line: %s\n", line);
         parse_trip(line, trip_seconds, trip_miles, fare_amount, tip_amount, tolls, extra);
 
+<<<<<<< HEAD
         if(trip_seconds > 1000 && trip_miles < 1050) {
+=======
+        if(trip_seconds > 1000) {
+>>>>>>> origin/cloudlab
             float local_total = fare_amount - extra - tolls + tip_amount;
             // size_t value = (size_t) local_total;
             // printf("local_total : %llu\n", value);
@@ -646,15 +676,22 @@ void process_trips_rdma(rdma_buf<char> *buffer, int count, float *total_amount, 
     }
 }
 
+<<<<<<< HEAD
 void trips_seconds(char *file){
 
 }
 
+=======
+>>>>>>> origin/cloudlab
 // Function to read CSV data into a single buffer
 int read_csv(const char *filename, char *&buffer, size_t *count) {
     FILE *file = fopen(filename, "r");
     if (!file) {
+<<<<<<< HEAD
         perror("Failed to open file read_csv");
+=======
+        perror("Failed to open file");
+>>>>>>> origin/cloudlab
         return -1;
     }
 
@@ -716,14 +753,22 @@ int rapids_CUDA(char *file){
     cudaEventRecord(event1, (cudaStream_t)1);
 
     // Step 2: Allocate device memory
+<<<<<<< HEAD
     check_cuda_error(cudaMallocManaged((void **)&d_buffer, count * LINE_LENGTH * sizeof(char)));
     memcpy(d_buffer, buffer, count * LINE_LENGTH * sizeof(char));
+=======
+    check_cuda_error(cudaMalloc((void **)&d_buffer, count * LINE_LENGTH * sizeof(char)));
+>>>>>>> origin/cloudlab
     check_cuda_error(cudaMalloc((void **)&total_amount, sizeof(float)));
     check_cuda_error(cudaMalloc((void **)&d_miles, sizeof(float)));
     check_cuda_error(cudaMemset(total_amount, 0, sizeof(float)));
 
     // Step 3: Copy data to device
+<<<<<<< HEAD
     // check_cuda_error(cudaMemcpy(d_buffer, buffer, count * LINE_LENGTH * sizeof(char), cudaMemcpyHostToDevice));
+=======
+    check_cuda_error(cudaMemcpy(d_buffer, buffer, count * LINE_LENGTH * sizeof(char), cudaMemcpyHostToDevice));
+>>>>>>> origin/cloudlab
 
     // Step 4: Launch kernel
     int threadsPerBlock = 1024;
@@ -772,7 +817,11 @@ int rapids_RDMA(char *filename){
     // char *buffer;
     FILE *file = fopen(filename, "r");
     if (!file) {
+<<<<<<< HEAD
         perror("Failed to open file rapids_RDMA");
+=======
+        perror("Failed to open file");
+>>>>>>> origin/cloudlab
         return -1;
     }
     size_t size = MAX_TRIPS * LINE_LENGTH * sizeof(char);
@@ -863,6 +912,7 @@ int rapids_RDMA(char *filename){
     return 0;
 }
 
+<<<<<<< HEAD
 // __global__ __launch_bounds__(1024,2)
 // void process_trips_uvm_direct(float *uvm_file, int count, float *total_amount, float *total_miles) {
 //     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -2091,11 +2141,14 @@ int rapids_RDMA_direct(char *filename){
 }
 
 
+=======
+>>>>>>> origin/cloudlab
 // Main program
 int main(int argc, char **argv)
 {   
     init_gpu(0);
     cudaSetDevice(0);
+<<<<<<< HEAD
     printf("hello from rapid\n");
     char *file = argv[7];
     printf("hello from rapid file : %s\n", file);
@@ -2112,6 +2165,18 @@ int main(int argc, char **argv)
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
     if(rdma_flag){
         
+=======
+    // printf("hello from rapid\n");
+    char *file = argv[7];
+
+    // rapids_CUDA(file);
+
+    bool rdma_flag = true;
+    struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
+    cudaError_t ret1;
+    if(rdma_flag){
+        init_gpu(0);
+>>>>>>> origin/cloudlab
         int num_msg = (unsigned long) atoi(argv[4]);
         int mesg_size = (unsigned long) atoi(argv[5]);
         int num_bufs = (unsigned long) atoi(argv[6]);
@@ -2125,7 +2190,11 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
+<<<<<<< HEAD
         s_ctx->gpu_buf_size = 16*1024*1024*1024llu; // N*sizeof(int)*3llu;
+=======
+        s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
+>>>>>>> origin/cloudlab
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
@@ -2154,10 +2223,17 @@ int main(int argc, char **argv)
             return -1;
         }
 
+<<<<<<< HEAD
         size_t restricted_gpu_mem = 16*1024*1024*1024llu;
         // restricted_gpu_mem = restricted_gpu_mem / 3;
         const size_t page_size = REQUEST_SIZE;
         // const size_t numPages = ceil((double)restricted_gpu_mem/page_size);
+=======
+        size_t restricted_gpu_mem = 16*1024*1024*1024; // 18*1024*1024*1024llu; // sizeof(unsigned int)*G.numEdges;
+        // restricted_gpu_mem = restricted_gpu_mem / 3;
+        const size_t page_size = REQUEST_SIZE;
+        const size_t numPages = restricted_gpu_mem/page_size;
+>>>>>>> origin/cloudlab
 
         printf("function: %s line: %d\n", __FILE__, __LINE__);
         alloc_global_host_content(host_post, host_poll, keys);
@@ -2179,15 +2255,24 @@ int main(int argc, char **argv)
         start_page_queue<<<1, 1>>>(/*s_ctx->gpu_buf_size*/restricted_gpu_mem, page_size);
         ret1 = cudaDeviceSynchronize();
         printf("ret: %d\n", ret1);
+<<<<<<< HEAD
         if(cudaSuccess != ret1){    
+=======
+        if(cudaSuccess != ret1){  
+>>>>>>> origin/cloudlab
             return -1;
         }
     }
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/cloudlab
     
     
 
     if(rdma_flag){
+<<<<<<< HEAD
         // the follwoing for directly reading file in rdma
         // rapids_RDMA(file);
         // following for reading buffers separately
@@ -2200,6 +2285,12 @@ int main(int argc, char **argv)
     }
 
     filter_bin(file);
+=======
+        rapids_RDMA(file);
+        // transfer_benchmark();
+        cudaFree(s_ctx->gpu_buffer);
+    }
+>>>>>>> origin/cloudlab
 
     // rapids_CUDA(file);
 

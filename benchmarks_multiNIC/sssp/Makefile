@@ -49,6 +49,7 @@ main: main.o graph.o argument_parser.o  $(SRC_DIR)/rdma_utils.o  global.o readGr
 	$(NVCC) $^ -libverbs -lrdmacm -lcuda -lcudart -o $@ $(add_flags)  $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
 
 main.o: main.cu argument_parser.hpp  graph.hpp
+<<<<<<< HEAD
 	$(NVCC) -dc -Xptxas -v main.cu -o main.o $(CUDA_LIBS) $(add_flags) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
 
 # main_float: main_float.o graph.o argument_parser.o  $(SRC_DIR)/rdma_utils.o  global.o readGraph.o
@@ -56,6 +57,15 @@ main.o: main.cu argument_parser.hpp  graph.hpp
 
 # main_float.o: main_float.cu argument_parser.hpp  graph.hpp
 # 	$(NVCC) -dc main_float.cu -o main_float.o $(CUDA_LIBS) $(add_flags) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+=======
+	$(NVCC) -dc main.cu -o main.o $(CUDA_LIBS) $(add_flags) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+
+main_float: main_float.o graph.o argument_parser.o  $(SRC_DIR)/rdma_utils.o  global.o readGraph.o
+	$(NVCC) $^ -libverbs -lrdmacm -lcuda -lcudart -o $@ $(add_flags)  $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+
+main_float.o: main_float.cu argument_parser.hpp  graph.hpp
+	$(NVCC) -dc main_float.cu -o main_float.o $(CUDA_LIBS) $(add_flags) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+>>>>>>> origin/cloudlab
 # --maxrregcount=256
   
 

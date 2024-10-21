@@ -16,8 +16,11 @@
 using namespace std;
 // using namespace std;
 
+<<<<<<< HEAD
 #define WEIGHT_ON_GPU 0
 
+=======
+>>>>>>> origin/cloudlab
 #define BLOCK_SIZE 1024
 #define WARP_SHIFT 5
 #define WARP_SIZE (1 << WARP_SHIFT)
@@ -116,6 +119,7 @@ __global__ void
 emogi_rdma_bfs_new_repr(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, uint64_t *new_offset, 
                                   unsigned int *new_vertex_list, unsigned int *edgeList, float *weightList, bool *d_changed);
 
+<<<<<<< HEAD
 __global__ // __launch_bounds__(1024,2) 
 void kernel_coalesce_new_repr_rdma_weight(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, uint64_t *new_offset, 
                                 unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, rdma_buf<float> *weightList);
@@ -124,6 +128,8 @@ __global__ void __launch_bounds__(1024,2)
 kernel_coalesce_rdma_weights(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, uint64_t *vertexList, 
                                 /*EdgeT*/ rdma_buf<unsigned int> *edgeList, rdma_buf<WeightT> *weightList);
 
+=======
+>>>>>>> origin/cloudlab
 __global__
 void check_edgeList(rdma_buf<unsigned int> *a, unsigned int *b, size_t size);
 
@@ -1167,8 +1173,11 @@ uint* sssp_GPU(Graph *graph, int source) {
 }
 
 __device__ size_t diff = 0;
+<<<<<<< HEAD
 void *tmp_ptr = NULL;
 void *over_ptr = NULL;
+=======
+>>>>>>> origin/cloudlab
 
 void oversubs(float os, size_t size){
     cudaDeviceProp devProp;
@@ -1186,12 +1195,20 @@ void oversubs(float os, size_t size){
 
     printf("Workload size: %.2f\n", workload_size/1024/1024);
     float oversubs_ratio = (float) os;
+<<<<<<< HEAD
     
+=======
+    void *tmp_ptr;
+>>>>>>> origin/cloudlab
     cudaMalloc(&tmp_ptr, (size_t) (freeMemory - workload_size));
     cudaMemGetInfo(&freeMemory, &totalMemory);
     printf("Free GPU Memory: %.2f MiB\n", (float) freeMemory / (1024 * 1024));
     if(oversubs_ratio > 0){
         
+<<<<<<< HEAD
+=======
+        void *over_ptr;
+>>>>>>> origin/cloudlab
         long long unsigned int os_size = freeMemory - workload_size /(1 + oversubs_ratio);
         printf("workload: %.2f\n",  workload_size);
         printf("workload: %llu\n",  os_size);
@@ -1299,7 +1316,11 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
             // gpuErrorcheck(cudaMemAdvise(d_edgeList, edge_size, cudaMemAdviseSetAccessedBy, 0));
             auto end = std::chrono::steady_clock::now();
             long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+<<<<<<< HEAD
             printf("Elapsed time for cudaMemAdviseSetReadMostly in milliseconds : %li ms.\n\n", duration);
+=======
+            printf("Elapsed time for setAccessedBy in milliseconds : %li ms.\n\n", duration);
+>>>>>>> origin/cloudlab
 
             cudaDeviceProp devProp;
             cudaGetDeviceProperties(&devProp, 0);
@@ -1307,7 +1328,11 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
             size_t totalMemory = devProp.totalGlobalMem;
             size_t freeMemory;
             size_t usedMemory;
+<<<<<<< HEAD
             float workload_size = (float) numEdges*sizeof(uint) + numEdges*sizeof(float);
+=======
+            float workload_size = (float) numEdges*sizeof(uint);
+>>>>>>> origin/cloudlab
             cudaMemGetInfo(&freeMemory, &totalMemory);
             usedMemory = totalMemory - freeMemory;
             printf("Total GPU Memory: %.2f MiB\n", (float) totalMemory / (1024 * 1024));
@@ -1366,6 +1391,7 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
 
     // Initialize values
     // gpuErrorcheck(cudaMemcpy(d_vertexList, h_vertexList, vertex_size, cudaMemcpyHostToDevice));
+<<<<<<< HEAD
 
     if(WEIGHT_ON_GPU){
         gpuErrorcheck(cudaMalloc((void **) &weightList_d, weight_size));
@@ -1375,6 +1401,11 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
         gpuErrorcheck(cudaMallocManaged((void **) &weightList_d, weight_size));
         memcpy(weightList_d, u_weights, weight_size);
     }
+=======
+    gpuErrorcheck(cudaMalloc((void **) &weightList_d, weight_size));
+    
+    gpuErrorcheck(cudaMemcpy(weightList_d, u_weights, weight_size, cudaMemcpyHostToDevice));
+>>>>>>> origin/cloudlab
 
     cudaDeviceSynchronize();
     if (mem == 0) {
@@ -1426,9 +1457,15 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
 
 
     avg_milliseconds = 0.0f;
+<<<<<<< HEAD
     int oversubs_uvm = 1;
     printf("Initialization done oversubscription: %d\n", oversubs_uvm);
     oversubs(oversubs_uvm, 32*1024*1024*1024llu);
+=======
+    int oversubs_uvm = 7;
+    printf("Initialization done oversubscription: %d\n", oversubs_uvm);
+    // oversubs(oversubs_uvm, edge_size);
+>>>>>>> origin/cloudlab
     fflush(stdout);
 
     // Set root
@@ -1538,6 +1575,7 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
         if(u_case == 0){
             gpuErrorcheck(cudaFree(d_vertexList));
         }
+<<<<<<< HEAD
 
         
 
@@ -1549,6 +1587,8 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
             gpuErrorcheck(cudaFree(tmp_ptr));
         }
 
+=======
+>>>>>>> origin/cloudlab
         gpuErrorcheck(cudaFree(label_d));
         gpuErrorcheck(cudaFree(changed_d));
         gpuErrorcheck(cudaFree(costList_d));
@@ -1615,9 +1655,13 @@ void runBaseline(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
 }
 
 __device__ uint64_t edgeCounter = 0;
+<<<<<<< HEAD
 rdma_buf<unsigned int> *rdma_edgeList = NULL;
 rdma_buf<WeightT> *rdma_weightList = NULL;
 
+=======
+rdma_buf<unsigned int> *rdma_edgeList;
+>>>>>>> origin/cloudlab
 WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset,
                  unsigned int *edgeList, int representation, size_t new_size, uint64_t *new_offset, 
                 unsigned int *new_vertex_list, WeightT *u_weights, int u_case){
@@ -1656,6 +1700,7 @@ WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
     
 
     if(rdma_edgeList == NULL){
+<<<<<<< HEAD
 
         if(WEIGHT_ON_GPU){
             gpuErrorcheck(cudaMallocManaged((void **) &rdma_edgeList, sizeof(rdma_buf<unsigned int>)));
@@ -1674,6 +1719,14 @@ WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
                 rdma_weightList->local_buffer[2*i] = (float) edgeList[i];
                 rdma_weightList->local_buffer[2*i+1] = (float) u_weights[i];
             }
+=======
+        gpuErrorcheck(cudaMallocManaged((void **) &rdma_edgeList, sizeof(rdma_buf<unsigned int>)));
+
+        rdma_edgeList->start(numEdges *sizeof(unsigned int));
+
+        for(size_t i = 0; i < numEdges; i++){
+            rdma_edgeList->local_buffer[i] = edgeList[i];
+>>>>>>> origin/cloudlab
         }
     }
     // rdma_edgeList->memcpyHostToServer();
@@ -1780,11 +1833,17 @@ WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
     printf("Allocation finished\n");
     fflush(stdout);
 
+<<<<<<< HEAD
     if(WEIGHT_ON_GPU){
         // Initialize values
         gpuErrorcheck(cudaMalloc((void**) &weightList_d, weight_size));
         gpuErrorcheck(cudaMemcpy(weightList_d, u_weights, weight_size, cudaMemcpyHostToDevice));
     }
+=======
+    // Initialize values
+    gpuErrorcheck(cudaMalloc((void**) &weightList_d, weight_size));
+    gpuErrorcheck(cudaMemcpy(weightList_d, u_weights, weight_size, cudaMemcpyHostToDevice));
+>>>>>>> origin/cloudlab
     
 
     if (mem == 0) {
@@ -1856,12 +1915,17 @@ WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
 
                 case 1:{
                     printf("new representation\n");
+<<<<<<< HEAD
                     printf("representation is %d WEIGHT_ON_GPU: %d\n", representation, WEIGHT_ON_GPU);
+=======
+                    printf("representation is %d\n", representation);
+>>>>>>> origin/cloudlab
                     size_t n_pages; // = numVertex*sizeof(uint64_t)/(8*1024);
                     
                     if(representation){
 
                         n_pages = new_size*sizeof(uint64_t)/(8*1024);
+<<<<<<< HEAD
                         numthreads = BLOCK_SIZE;
                         numblocks_kernel = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
                         dim3 blockDim_kernel1(numthreads, (numblocks_kernel+numthreads)/numthreads);
@@ -1874,12 +1938,21 @@ WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
                             kernel_coalesce_new_repr_rdma_weight<<<blockDim_kernel1, numthreads/*(new_size/512)*(1 << WARP_SHIFT)+1, 512*/>>>
                             (label_d, n_pages, costList_d, newCostList_d, new_size, d_new_offset, d_new_vertexList, rdma_edgeList, rdma_weightList);
                         }
+=======
+                        numthreads = BLOCK_SIZE/2;
+                        numblocks_kernel = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
+                        dim3 blockDim_kernel1(numthreads, (numblocks_kernel+numthreads)/numthreads);
+
+                        kernel_coalesce_new_repr_rdma<<<blockDim_kernel1, numthreads/*(new_size/512)*(1 << WARP_SHIFT)+1, 512*/>>>
+                        (label_d, n_pages, costList_d, newCostList_d, new_size, d_new_offset, d_new_vertexList, rdma_edgeList, weightList_d);
+>>>>>>> origin/cloudlab
 
                         // kernel_coalesce_rdma_bfs_new_repr<<</*blockDim_kernel1, numthreads*/ (n_pages*32)/numthreads+1, numthreads>>>
                         // (label_d, n_pages, costList_d, newCostList_d, new_size, d_new_offset, d_new_vertexList, rdma_edgeList, weightList_d, changed_d);
                     }
                     else {
                         n_pages = numVertex*sizeof(uint64_t)/(8*1024);
+<<<<<<< HEAD
                         numthreads = BLOCK_SIZE/2;
                         numblocks_kernel = ((numVertex * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
                         dim3 blockDim_kernel1(numthreads, (numblocks_kernel+numthreads)/numthreads);
@@ -1892,11 +1965,22 @@ WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
                             kernel_coalesce_rdma_weights<<<blockDim_kernel1, numthreads/*(numVertex/512)*(1 << WARP_SHIFT)+1, 512*/>>>
                                 (label_d, costList_d, newCostList_d, numVertex, d_vertexList, rdma_edgeList, rdma_weightList);
                         }
+=======
+                        numthreads = BLOCK_SIZE;
+                        numblocks_kernel = ((numVertex * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
+                        dim3 blockDim_kernel1(numthreads, (numblocks_kernel+numthreads)/numthreads);
+                        kernel_coalesce_rdma<<<blockDim_kernel1, numthreads/*(numVertex/512)*(1 << WARP_SHIFT)+1, 512*/>>>
+                            (label_d, costList_d, newCostList_d, numVertex, d_vertexList, rdma_edgeList, weightList_d);
+
+>>>>>>> origin/cloudlab
                         // kernel_coalesce_rdma_opt<<< (n_pages*32)/512+1, 512 >>>
                         // (label_d, n_pages, costList_d, newCostList_d, numVertex, d_vertexList, rdma_edgeList, weightList_d);
                         
                     }
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/cloudlab
                     ret = cudaDeviceSynchronize();
                     update<<<blockDim_update, BLOCK_SIZE>>>(label_d, costList_d, newCostList_d, numVertex, changed_d);
                     break;
@@ -2124,8 +2208,13 @@ int main(int argc, char **argv)
 
     int mem = 1;
     WeightT *emogi_result;
+<<<<<<< HEAD
     emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
                                     new_offset, new_vertex_list, u_weights, 1);
+=======
+    // emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+    //                                 new_offset, new_vertex_list, u_weights, 1);
+>>>>>>> origin/cloudlab
     
     // emogi_result = (float *) malloc(sizeof(float)*G.numVertices);
 
@@ -2134,7 +2223,11 @@ int main(int argc, char **argv)
     //     emogi_result[i] = 0;
     // }
 
+<<<<<<< HEAD
     int number_of_vertices = 0;
+=======
+    int number_of_vertices = 200;
+>>>>>>> origin/cloudlab
     int active_vertices = 0;
     time_total = 0;
     time_total_pinning = 0;
@@ -2147,7 +2240,11 @@ int main(int argc, char **argv)
             continue;
         active_vertices++;
         emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+<<<<<<< HEAD
                                     new_offset, new_vertex_list, u_weights, 0);
+=======
+                                    new_offset, new_vertex_list, u_weights, 1);
+>>>>>>> origin/cloudlab
 
         printf("average time: %.2f pinning time: %.2f active_vertices: %d\n", time_total/active_vertices, time_total_pinning/active_vertices, active_vertices);
     }
@@ -2155,7 +2252,11 @@ int main(int argc, char **argv)
     printf("end: average time: %.2f pinning time: %.2f active_vertices: %d\n", time_total/active_vertices, time_total_pinning/active_vertices, active_vertices);
     
     
+<<<<<<< HEAD
     bool rdma_flag = true;
+=======
+    bool rdma_flag = false;
+>>>>>>> origin/cloudlab
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
     if(rdma_flag){
         
@@ -2172,7 +2273,11 @@ int main(int argc, char **argv)
 
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
+<<<<<<< HEAD
         s_ctx->gpu_buf_size = 16*1024*1024*1024llu; // N*sizeof(int)*3llu;
+=======
+        s_ctx->gpu_buf_size = 5*1024*1024*1024llu; // N*sizeof(int)*3llu;
+>>>>>>> origin/cloudlab
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
@@ -2227,7 +2332,11 @@ int main(int argc, char **argv)
     }
 
     WeightT *rdma_result;
+<<<<<<< HEAD
     number_of_vertices = 0;
+=======
+    number_of_vertices = 200;
+>>>>>>> origin/cloudlab
     active_vertices = 0;
     time_total = 0;
     size_t min_page_fault = 10000000, *d_pf;
@@ -2238,9 +2347,15 @@ int main(int argc, char **argv)
     gpuErrorcheck(cudaMemset(min_source, 0, sizeof(uint)));
     if(rdma_flag){
         printf("RDMA Cuda Starts here..\n");
+<<<<<<< HEAD
         rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
                                     new_offset, new_vertex_list, u_weights, 1);
         cudaFree(s_ctx->gpu_buffer);
+=======
+        // rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
+        //                             new_offset, new_vertex_list, u_weights, 1);
+        // cudaFree(s_ctx->gpu_buffer);
+>>>>>>> origin/cloudlab
 
         for (size_t i = 0; i < number_of_vertices; i++)
         {
@@ -2873,6 +2988,7 @@ void kernel_coalesce_new_repr_rdma(bool *label, size_t n, const WeightT *costLis
     // }
 }
 
+<<<<<<< HEAD
 
 __global__ // __launch_bounds__(1024,2) 
 void kernel_coalesce_new_repr_rdma_weight(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, uint64_t *new_offset, 
@@ -2917,6 +3033,8 @@ void kernel_coalesce_new_repr_rdma_weight(bool *label, size_t n, const WeightT *
 }
 
 
+=======
+>>>>>>> origin/cloudlab
 __global__ void __launch_bounds__(1024,2) 
 emogi_rdma_bfs_new_repr(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, uint64_t *new_offset, 
                                   unsigned int *new_vertex_list, unsigned int *edgeList, float *weightList, bool *d_changed) {
@@ -3044,6 +3162,7 @@ kernel_coalesce_rdma(bool *label, const WeightT *costList, WeightT *newCostList,
 }
 
 
+<<<<<<< HEAD
 __global__ // __launch_bounds__(1024,2)
 void kernel_coalesce_rdma_weights(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, uint64_t *vertexList, 
                                 /*EdgeT*/ rdma_buf<unsigned int> *edgeList, rdma_buf<WeightT> *weightList) {
@@ -3112,6 +3231,8 @@ void kernel_coalesce_rdma_weights(bool *label, const WeightT *costList, WeightT 
     }
 }
 
+=======
+>>>>>>> origin/cloudlab
 #define PAGE_SIZE (64 * 1024)  // 64KB page size
 #define PAGE_MASK (PAGE_SIZE - 1)
 

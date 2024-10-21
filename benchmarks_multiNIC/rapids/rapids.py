@@ -4,6 +4,7 @@ import time
 import glob
 import os
 import dask_cudf
+<<<<<<< HEAD
 import numpy as np
 import dask.array as da
 import sys
@@ -11,11 +12,17 @@ import cupy as cp
 
 
 
+=======
+>>>>>>> origin/cloudlab
 
 # Define the path to your data directory
 data_directory = "/mydata/"
 file_pattern = os.path.join(data_directory, "chicago.csv")
+<<<<<<< HEAD
 file_path = '/mydata/chicago_10m.parquet'
+=======
+file_path = '/mydata/chicago.csv'
+>>>>>>> origin/cloudlab
 filenames = glob.glob(file_pattern)
 # file_size = os.path.getsize(file_path)  # File size in bytes
 
@@ -28,6 +35,7 @@ filenames = glob.glob(file_pattern)
 
 # df = cudf.read_csv('/mydata/chicago.csv', nrows=200000000)
 
+<<<<<<< HEAD
 # Read the first 10 rows of the CSV
 # Load a sample of the DataFrame
 # df = pd.read_csv("/mydata/chicago.csv")
@@ -56,6 +64,10 @@ print(df.columns)
 
 # # Compute and print the result
 # print(selected_columns.compute())
+=======
+# # Read the CSV file
+# df = dask_cudf.read_csv("/mydata/chicago.csv", nrows=10)
+>>>>>>> origin/cloudlab
 
 # # Print the column names
 # print("Column names:", df['Fare'].head(10))
@@ -67,7 +79,11 @@ else:
     print("Files found:", filenames)
 
 # Start timing
+<<<<<<< HEAD
 # start_time = time.time()
+=======
+start_time = time.time()
+>>>>>>> origin/cloudlab
 
 df_filtered_miles = 1
 
@@ -135,6 +151,7 @@ df_filtered_extras = 0
 # filtered_indices = df_filtered_seconds.index.compute()
 
 
+<<<<<<< HEAD
 
 threshold_seconds = 8500  # for example, 10 minutes
 
@@ -361,6 +378,17 @@ df_miles = dask_cudf.read_parquet(
 
 
 
+=======
+threshold_seconds = 1000  # for example, 10 minutes
+nrows=10000000
+# Step 4: Read both Trip Seconds and Trip Miles columns together to allow filtering
+df_miles = dask_cudf.read_csv(
+    "/mydata/chicago.csv", 
+    usecols=['Trip Seconds', 'Trip Miles'], 
+    nrows=nrows
+)
+
+>>>>>>> origin/cloudlab
 # Step 5: Filter the full DataFrame based on the same condition
 df_filtered_miles = df_miles[df_miles['Trip Seconds'] > threshold_seconds]
 
@@ -372,9 +400,23 @@ elapsed_time = end_time - start_time
 print(f"Query 1 trip miles: {elapsed_time:.2f} seconds")
 
 
+<<<<<<< HEAD
 # Step 4: Read both Trip Seconds and Trip Miles columns together to allow filtering
 df_fare = dask_cudf.read_parquet(
     file, 
+=======
+
+# Step 6: Find the maximum value in the 'Trip Miles' column
+max_trip_miles = df_filtered_miles['Trip Miles'].max().compute()
+
+# Print the result
+print(f"Maximum Trip Miles: {max_trip_miles}")
+
+
+# Step 4: Read both Trip Seconds and Trip Miles columns together to allow filtering
+df_fare = dask_cudf.read_csv(
+    "/mydata/chicago.csv", 
+>>>>>>> origin/cloudlab
     usecols=['Trip Seconds', 'Fare'], 
     nrows=nrows
 )
@@ -388,13 +430,22 @@ total_fare_sum = df_filtered_fare['Fare'].sum().compute()  # Compute the total m
 end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Query 2 fare: {elapsed_time:.2f} seconds")
+<<<<<<< HEAD
 # del df_fare, df_filtered_fare
+=======
+
+>>>>>>> origin/cloudlab
 
 
 
 # Step 4: Read both Trip Seconds and Trip Miles columns together to allow filtering
+<<<<<<< HEAD
 df_extras = dask_cudf.read_parquet(
     file, 
+=======
+df_extras = dask_cudf.read_csv(
+    "/mydata/chicago.csv", 
+>>>>>>> origin/cloudlab
     usecols=['Trip Seconds', 'Extras'], 
     nrows=nrows
 )
@@ -409,11 +460,20 @@ end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Query 3 Extras: {elapsed_time:.2f} seconds")
 
+<<<<<<< HEAD
 # # del df_extras, df_filtered_extras
 
 # Step 4: Read both Trip Seconds and Trip Miles columns together to allow filtering
 df_tips = dask_cudf.read_parquet(
     file, 
+=======
+
+
+
+# Step 4: Read both Trip Seconds and Trip Miles columns together to allow filtering
+df_tips = dask_cudf.read_csv(
+    "/mydata/chicago.csv", 
+>>>>>>> origin/cloudlab
     usecols=['Trip Seconds', 'Tips'], 
     nrows=nrows
 )
@@ -428,12 +488,21 @@ end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Query 4 Tips: {elapsed_time:.2f} seconds")
 
+<<<<<<< HEAD
 # # del df_tips, df_filtered_tips
 
 
 # Step 4: Read both Trip Seconds and Trip Miles columns together to allow filtering
 df_tolls = dask_cudf.read_parquet(
     file, 
+=======
+
+
+
+# Step 4: Read both Trip Seconds and Trip Miles columns together to allow filtering
+df_tolls = dask_cudf.read_csv(
+    "/mydata/chicago.csv", 
+>>>>>>> origin/cloudlab
     usecols=['Trip Seconds', 'Tolls'], 
     nrows=nrows
 )
@@ -448,7 +517,28 @@ end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Query 5 Tolls: {elapsed_time:.2f} seconds")
 
+<<<<<<< HEAD
 # del df_tolls, df_filtered_tolls
+=======
+
+
+
+
+# # Step 4: Read both Trip Seconds and Trip Miles columns together to allow filtering
+# df_trip_total = dask_cudf.read_csv(
+#     "/mydata/chicago.csv", 
+#     usecols=['Trip Seconds', 'Trip Total'], 
+#     nrows=10000000
+# )
+
+# # Step 5: Filter the full DataFrame based on the same condition
+# df_filtered_trip_total = df_trip_total[df_trip_total['Trip Seconds'] > threshold_seconds]
+
+# # Step 6: Calculate the total miles sum directly
+# total_trip_total_sum = df_filtered_trip_total['Trip Total'].sum().compute()  # Compute the total miles sum
+
+
+>>>>>>> origin/cloudlab
 
 
 # Print results
@@ -467,6 +557,7 @@ print(f"total_result: {total_result}")
 print(f"dollar_per_mile: {dollar_per_mile}")
 
 
+<<<<<<< HEAD
 # # Measure end time
 # end_time = time.time()
 
@@ -616,4 +707,13 @@ print(f"dollar_per_mile: {dollar_per_mile}")
 # elapsed_time = end_time - start_time
 
 # print(f"Elapsed Time: {elapsed_time:.2f} seconds")
+=======
+# Measure end time
+end_time = time.time()
+
+# Calculate elapsed time
+elapsed_time = end_time - start_time
+
+print(f"Elapsed Time: {elapsed_time:.2f} seconds")
+>>>>>>> origin/cloudlab
 

@@ -26,7 +26,11 @@ using namespace std;
 #define SMALL_FLOAT_VAL 0.00000001f
 
 // Size of array
+<<<<<<< HEAD
 #define N 2*1024*1024*1024llu
+=======
+#define N 1024*1024*1024llu
+>>>>>>> origin/cloudlab
 
 #define BLOCK_NUM 1024ULL
 #define MYINFINITY 2147483647llu
@@ -584,16 +588,24 @@ void mvtCuda_rdma(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, 
 
 
 // cuda Kernel
+<<<<<<< HEAD
 __global__ 
 void add_vectors_uvm(DATA_TYPE *a, DATA_TYPE *b, DATA_TYPE *c, size_t size, size_t n)
 {
 	size_t id = blockDim.x * blockIdx.x + threadIdx.x;
 	if(id < N) {
+=======
+__global__ void add_vectors_uvm(DATA_TYPE *a, DATA_TYPE *b, DATA_TYPE *c, size_t size)
+{
+	size_t id = blockDim.x * blockIdx.x + threadIdx.x;
+	if(id < size) {
+>>>>>>> origin/cloudlab
 		c[id] = a[id] + b[id];
 		// printf("c[%d]: %d\n", id, c[id]);
 	}
 }
 
+<<<<<<< HEAD
 // __global__ __launch_bounds__(1024,2)
 // void add_vectors_uvm(DATA_TYPE *a, DATA_TYPE *b, DATA_TYPE *c, size_t size, size_t n)
 // {
@@ -636,6 +648,8 @@ void add_vectors_uvm(DATA_TYPE *a, DATA_TYPE *b, DATA_TYPE *c, size_t size, size
 //     }
 // }
 
+=======
+>>>>>>> origin/cloudlab
 void add_uvm()
 {
     DATA_TYPE* a_gpu;
@@ -678,12 +692,16 @@ void add_uvm()
     cudaError_t ret = cudaDeviceSynchronize();
     // check<<<2048, 512>>>(rdma_a->size/sizeof(DATA_TYPE), rdma_a, a_gpu);
     printf("ret: %d cudaGetLastError: %d for transfer\n", ret, cudaGetLastError());
+<<<<<<< HEAD
     add_vectors_uvm<<<N/1024+1, 1024>>>(a_gpu, b_gpu, d_result, N, 100);
 
     // size_t n_pages = (N*sizeof(DATA_TYPE))/(64*1024llu);
     // add_vectors_uvm<<< /*N/1024+1, 1024*/(n_pages*32)/1024+1, 1024 >>>(a_gpu, b_gpu, d_result, N, n_pages);
 
 
+=======
+    add_vectors_uvm<<<N/1024+1, 1024>>>(a_gpu, b_gpu, d_result, N);
+>>>>>>> origin/cloudlab
     printf("Starting Kernels\n");
 	auto start = std::chrono::steady_clock::now();
 	
@@ -692,7 +710,11 @@ void add_uvm()
 	auto end = std::chrono::steady_clock::now();
     long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     
+<<<<<<< HEAD
     printf("Elapsed time for GPU UVM in milliseconds: %li ms.d\n\n", duration);
+=======
+    printf("Elapsed time for GPU RDMA in milliseconds: %li ms.d\n\n", duration);
+>>>>>>> origin/cloudlab
 
     ret = cudaDeviceSynchronize();
     // print_retires<<<1,1>>>();
@@ -716,6 +738,7 @@ void add_uvm()
 
 
 
+<<<<<<< HEAD
 // // rdma kernel
 // __global__ __launch_bounds__(1024,2)
 // void add_vectors_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *b, size_t size, size_t n)
@@ -759,13 +782,54 @@ void add_uvm()
 //     }
 // }
 
+=======
+>>>>>>> origin/cloudlab
 // rdma kernel
 __global__ __launch_bounds__(1024,2)
 void add_vectors_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *b, size_t size, size_t n)
 {
+<<<<<<< HEAD
 	size_t id = blockDim.x * blockIdx.x + threadIdx.x;
 	if(id < N){
         b[id] = (*a)[id] + (*a)[id + N];
+=======
+	// size_t id = blockDim.x * blockIdx.x + threadIdx.x;
+	// if(id < size) {
+    //     // DATA_TYPE value = 
+    //     b[id] = (*a)[id] + (*a)[id + N];
+	// 	// a->rvalue(id, value);
+	// 	// printf("c[%d]: %d\n", id, c[id]);
+	// }
+
+    // Page size in elements (64KB / 4 bytes per unsigned int)
+    const size_t pageSize = 8*1024 / sizeof(unsigned int);
+    // Elements per warp
+    const size_t elementsPerWarp = pageSize / warpSize;
+
+    // Global thread ID
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    // if(tid == 0) printf("warpSize: %d\n", warpSize);
+    // Warp ID within the block
+    size_t warpId = tid / warpSize;
+
+    // Thread lane within the warp
+    size_t lane = threadIdx.x % warpSize;
+
+    // Determine which page this warp will process
+    size_t pageStart = warpId * pageSize;
+
+    // Ensure we don't process out-of-bounds pages
+    if (pageStart < n * pageSize) {
+        
+        // Process elements within the page
+        // for (size_t i = 0; i < elementsPerWarp; ++i) {
+        //     size_t elementIdx = pageStart + lane + i * warpSize;
+            uint end = (warpId + 1)*pageSize > size ? size : (warpId + 1)*pageSize;
+            for(size_t j = warpId*pageSize + lane; j < end; j += warpSize) {
+                b[j] = (*a)[j] + (*a)[j + N];
+            }
+        // }
+>>>>>>> origin/cloudlab
     }
 }
 
@@ -805,10 +869,17 @@ void add_rdma()
 
     // transfer<<<2048, 512>>>(rdma_a->size/sizeof(DATA_TYPE), rdma_a);
     cudaError_t ret = cudaDeviceSynchronize();
+<<<<<<< HEAD
     size_t n_pages = (2*N*sizeof(DATA_TYPE))/(8*1024llu);
     // check<<<2048, 512>>>(rdma_a->size/sizeof(DATA_TYPE), rdma_a, a_gpu);
     printf("ret: %d cudaGetLastError: %d for transfer\n", ret, cudaGetLastError());
     add_vectors_rdma<<< /*(n_pages*32)/1024+1, 1024*/ N/1024 + 1, 1024 >>>(rdma_a, d_result, N, n_pages);
+=======
+    size_t n_pages = (4*1024*1024*1024llu)/(8*1024llu);
+    // check<<<2048, 512>>>(rdma_a->size/sizeof(DATA_TYPE), rdma_a, a_gpu);
+    printf("ret: %d cudaGetLastError: %d for transfer\n", ret, cudaGetLastError());
+    add_vectors_rdma<<< (n_pages*32)/1024+1, 1024>>>(rdma_a, d_result, N, n_pages);
+>>>>>>> origin/cloudlab
     printf("Starting Kernels\n");
 	auto start = std::chrono::steady_clock::now();
 	

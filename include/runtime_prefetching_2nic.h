@@ -1173,7 +1173,11 @@ struct rdma_buf {
             // post_m(/*d_TLB[che].host_address*/ rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*5], data_size, lkey /*gpost_cont.wr_sg_lkey*/, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpu_qp_num[warpId] + (qp_index-84*warpId), 
             //         cur_post, &value_ctrl, /*gpost_cont.qp_buf*/ qp_buf + 8192*(qp_index-84*warpId), (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
             
+<<<<<<< HEAD
             post_opt_2nic(rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*8],            
+=======
+            post_opt_2nic(rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*5],            
+>>>>>>> origin/cloudlab
                         dev_addr + che*request_size*sizeof(T),
                         cur_post, qp_index-84*warpId, warpId);
 
@@ -1193,11 +1197,19 @@ struct rdma_buf {
             while(*op_flag == 240){
                     
                     // retries++;
+<<<<<<< HEAD
                     // // if(retries > 5){
                     // //     post_m(/*d_TLB[che].host_address*/ rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*5], data_size, lkey /*gpost_cont.wr_sg_lkey*/, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpu_qp_num[warpId] + (qp_index-84*warpId), 
                     // //         cur_post, &value_ctrl, /*gpost_cont.qp_buf*/ qp_buf + 8192*(qp_index-84*warpId), (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
                     // //     retries = -1;
                     // // }
+=======
+                    // if(retries > 5){
+                    //     post_m(/*d_TLB[che].host_address*/ rem_addr, server_content.wr_rdma_rkey[rkey_index+warpId*5], data_size, lkey /*gpost_cont.wr_sg_lkey*/, dev_addr + che*request_size*sizeof(T)/*d_TLB[che].device_address*/, 4, gpu_qp_num[warpId] + (qp_index-84*warpId), 
+                    //         cur_post, &value_ctrl, /*gpost_cont.qp_buf*/ qp_buf + 8192*(qp_index-84*warpId), (void *) gpost_cont.bf_reg[qp_index], gpost_cont.qp_db[qp_index], gpost_cont.dev_qp_sq[qp_index], 0);
+                    //     retries = -1;
+                    // }
+>>>>>>> origin/cloudlab
                     // if(retries>100000) {
                     //     printf("stuck in completion of single gpu and 2 nic\n");
                     //     // printf("rkey_index: %d nic: %d d_remote_address[nic]: %p rem_addr: %p qp_index: %d\n", rkey_index, warpId, d_remote_address[warpId], rem_addr, qp_index);

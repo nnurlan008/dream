@@ -18,9 +18,15 @@ using namespace std;
 
 // #include "../../src/rdma_utils.cuh"
 #include <time.h>
+<<<<<<< HEAD
 #include "../../include/runtime_eviction_2nic.h"
 // #include "../../include/runtime_prefetching.h"
 // #include "../../include/runtime_prefetching_2nic.h"
+=======
+// #include "../../include/runtime_eviction.h"
+// #include "../../include/runtime_prefetching.h"
+#include "../../include/runtime_prefetching_2nic.h"
+>>>>>>> origin/cloudlab
 
 
 // Size of array
@@ -30,13 +36,21 @@ using namespace std;
 #define MYINFINITY 2147483647llu
 
 #define BLOCK_SIZE 1024
+<<<<<<< HEAD
 #define WARP_SHIFT 5
+=======
+#define WARP_SHIFT 1
+>>>>>>> origin/cloudlab
 #define WARP_SIZE (1 << WARP_SHIFT)
 
 #define MEM_ALIGN_64 (~(0xfULL))
 #define MEM_ALIGN MEM_ALIGN_64
 
+<<<<<<< HEAD
 #define CHUNK_SHIFT 3
+=======
+#define CHUNK_SHIFT WARP_SHIFT
+>>>>>>> origin/cloudlab
 #define CHUNK_SIZE (1 << CHUNK_SHIFT)
 
 #define GPU 0
@@ -903,7 +917,10 @@ unsigned int *runCudaSimpleBfs_emogi(int startVertex, Graph &G)
 }
 
 __device__ size_t sum_page_faults = 0;
+<<<<<<< HEAD
 __device__ size_t correct_results = 0;
+=======
+>>>>>>> origin/cloudlab
 
 __global__ void
 print_retires(void){
@@ -924,12 +941,15 @@ print_retires(void){
     // g_qp_index = 0;
 }
 
+<<<<<<< HEAD
 __global__ void
 correct_retires(void){
     printf("correct results: %llu\n", correct_results);
 
 }
 
+=======
+>>>>>>> origin/cloudlab
 void runCudaSimpleBfs_optimized(int startVertex, Graph &G, std::vector<int> &distance,
                       std::vector<int> &parent, bool rdma, bool uvm) 
 {
@@ -1320,7 +1340,11 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
     printf("fuction: %s, line: %d\n", __func__, __LINE__);
 
     
+<<<<<<< HEAD
     if(u_case == 6 || u_case == 7){
+=======
+    if(u_case == 6){
+>>>>>>> origin/cloudlab
         if(!uvm_adjacencyList)
             checkError(cudaMallocManaged(&uvm_adjacencyList, G.numEdges*sizeof(unsigned int)));
 
@@ -1417,8 +1441,11 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         case 6:
             printf("uvm transfer\n");
             break;
+<<<<<<< HEAD
         case 7:
             printf("veryfing rdma transfer\n");
+=======
+>>>>>>> origin/cloudlab
         default:
             break;
         }
@@ -1456,10 +1483,17 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         }
         case 2: {// new representation{
             // printf("rdma new representation\n");
+<<<<<<< HEAD
             numthreads = 512;
             numblocks = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
             dim3 blockDim(numthreads, (numblocks+numthreads)/numthreads);
             size_t n_pages = (new_size*sizeof(uint64_t))/(8*1024);
+=======
+            numthreads = 256;
+            numblocks = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
+            dim3 blockDim(numthreads, (numblocks+numthreads)/numthreads);
+            size_t n_pages = new_size*sizeof(unsigned int)/(8*1024);
+>>>>>>> origin/cloudlab
             kernel_coalesce_new_repr_rdma<<< /*blockDim, numthreads*/ (n_pages*32)/numthreads + 1, numthreads >>>
             (level, n_pages, G.numVertices, new_size, d_distance, d_new_offset, d_new_vertexList, rdma_adjacencyList,
             d_changed);
@@ -1468,7 +1502,11 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         }
         case 3:{
             // printf("direct new representation\n");
+<<<<<<< HEAD
             size_t n_pages = new_size*sizeof(unsigned int)/(8*1024)+1;
+=======
+            size_t n_pages = new_size*sizeof(unsigned int)/(4*1024)+1;
+>>>>>>> origin/cloudlab
             kernel_coalesce_new_repr<<<(n_pages*32)/512 + 1, 512>>>
             (level, n_pages, G.numVertices, new_size, d_distance, d_new_offset, d_new_vertexList, d_adjacencyList,
             d_changed);
@@ -1510,12 +1548,15 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
             ret1 = cudaDeviceSynchronize();
             break;
         }
+<<<<<<< HEAD
         case 7:{
             numthreads = 512;
             check_edgeList<<< (G.numEdges/numthreads + 1), numthreads>>>(rdma_adjacencyList, uvm_adjacencyList, G.numEdges);
             ret1 = cudaDeviceSynchronize();
             correct_retires<<<1, 1>>>();
         }
+=======
+>>>>>>> origin/cloudlab
         default:
             break;
         }
@@ -1690,10 +1731,16 @@ int main(int argc, char **argv)
     }
     printf("average time: %.2f pinning time: %.2f\n", time_total/active_vertices, time_readmostly_total/active_vertices);
 
+<<<<<<< HEAD
     bool rdma_flag = false;
     cudaError_t ret1;
     struct context_2nic *s_ctx = (struct context_2nic *)malloc(sizeof(struct context_2nic));
 
+=======
+    bool rdma_flag = true;
+    cudaError_t ret1;
+    struct context_2nic *s_ctx = (struct context_2nic *)malloc(sizeof(struct context_2nic));
+>>>>>>> origin/cloudlab
     if(rdma_flag){
         s_ctx->gpu_cq = NULL;
         s_ctx->wqbuf = NULL;
@@ -1716,7 +1763,11 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
+<<<<<<< HEAD
         s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
+=======
+        s_ctx->gpu_buf_size = 25*1024*1024*1024llu; // N*sizeof(int)*3llu;
+>>>>>>> origin/cloudlab
         s_ctx->gpu_buffer = NULL;
 
         // // remote connection:
@@ -1727,7 +1778,11 @@ int main(int argc, char **argv)
         // int ret = local_connect(mlx_name, s_ctx);
         int ret = local_connect_2nic(mlx_name, s_ctx, 0, GPU);
 
+<<<<<<< HEAD
         mlx_name = "mlx5_2";
+=======
+        mlx_name = "mlx5_3";
+>>>>>>> origin/cloudlab
         // int ret = local_connect(mlx_name, s_ctx);
         ret = local_connect_2nic(mlx_name, s_ctx, 1, GPU);
 
@@ -1830,15 +1885,25 @@ int main(int argc, char **argv)
     std::vector<int> expectedParent(parent);
     start = std::chrono::steady_clock::now();
     
+<<<<<<< HEAD
     int u_case = 7;
+=======
+    int u_case = 2;
+>>>>>>> origin/cloudlab
     uint *rdma_distance; //, *direct_distance;
     
     rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
                             u_adjacencyList, u_edgesOffset, u_case);
+<<<<<<< HEAD
     
     rdma_adjacencyList->reset();
 
     number_of_vertices = 0;
+=======
+
+    
+    number_of_vertices = 200;
+>>>>>>> origin/cloudlab
     active_vertices = 0;
     time_total = 0;
     if(rdma_flag){
@@ -1856,7 +1921,11 @@ int main(int argc, char **argv)
             rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
                 u_adjacencyList, u_edgesOffset, u_case);
         
+<<<<<<< HEAD
             rdma_adjacencyList->reset();
+=======
+            // rdma_adjacencyList->reset();
+>>>>>>> origin/cloudlab
 
             printf("average time: %.2f active_vertices: %d\n", time_total/active_vertices, active_vertices);
         }
@@ -2736,7 +2805,11 @@ void simpleBfs_rdma_optimized_thread_different_page(size_t n, size_t numVertices
     }
 }
 
+<<<<<<< HEAD
 __global__ __launch_bounds__(1024,2)
+=======
+__global__
+>>>>>>> origin/cloudlab
 void check_edgeList(rdma_buf<unsigned int> *a, unsigned int *b, size_t size){
     size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
     if(tid == 0) printf("checking edgelist correctness\n");
@@ -2746,9 +2819,12 @@ void check_edgeList(rdma_buf<unsigned int> *a, unsigned int *b, size_t size){
         if(a_here != b[tid]){
             printf("tid: %llu, a_here: %d b[tid]: %d\n", tid, a_here, b[tid]);
         } 
+<<<<<<< HEAD
         else if(a_here == b[tid]){
             atomicAdd((unsigned long long *)&correct_results, 1);
         }
+=======
+>>>>>>> origin/cloudlab
     }
 }
 
@@ -2758,7 +2834,11 @@ kernel_coalesce_new_repr(uint level, size_t n, size_t numVertex, const uint64_t 
 
 
     // Page size in elements (64KB / 4 bytes per unsigned int)
+<<<<<<< HEAD
     const size_t pageSize = 8*1024 / sizeof(unsigned int);
+=======
+    const size_t pageSize = 4*1024 / sizeof(unsigned int);
+>>>>>>> origin/cloudlab
     // Elements per warp
     const size_t elementsPerWarp = pageSize / warpSize;
 
@@ -2804,7 +2884,11 @@ kernel_coalesce_new_repr(uint level, size_t n, size_t numVertex, const uint64_t 
 
 }
 
+<<<<<<< HEAD
 __global__ // __launch_bounds__(1024,2)
+=======
+__global__  // __launch_bounds__(1024,2)
+>>>>>>> origin/cloudlab
 void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t numVertex, const uint64_t new_size, unsigned int *d_distance, 
                                 uint64_t *new_offset, unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, unsigned int *changed) {
 
@@ -2870,7 +2954,11 @@ void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t numVertex, const
 
 
     // Page size in elements (64KB / 4 bytes per unsigned int)
+<<<<<<< HEAD
     const size_t pageSize = 8*1024 / sizeof(uint64_t);
+=======
+    const size_t pageSize = 8*1024 / sizeof(unsigned int);
+>>>>>>> origin/cloudlab
     // Elements per warp
     const size_t elementsPerWarp = pageSize / warpSize;
 
@@ -2908,10 +2996,18 @@ void kernel_coalesce_new_repr_rdma(uint level, size_t n, size_t numVertex, const
                             *changed = 1;
                         }
                     }
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/cloudlab
                 }
             }
         }
     }
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/cloudlab
 }
 
 __global__
