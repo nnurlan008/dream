@@ -362,7 +362,7 @@ __global__ void mvt_kernel1(DATA_TYPE *a, DATA_TYPE *x1, DATA_TYPE *y_1)
 }
 
 
-__global__ void mvt_kernel2(DATA_TYPE *a, DATA_TYPE *x2, DATA_TYPE *y_2, DATA_TYPE *a_gpu)
+__global__ void mvt_kernel2(DATA_TYPE *a, DATA_TYPE *x2, DATA_TYPE *y_2)
 {
 	size_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -374,10 +374,10 @@ __global__ void mvt_kernel2(DATA_TYPE *a, DATA_TYPE *x2, DATA_TYPE *y_2, DATA_TY
             size_t index = j * N + i;
             DATA_TYPE tmp = a[index]; 
 			// x2[i] += tmp * y_2[j];
-            if(tmp != a_gpu[index]){
-                printf("tmp: %f %f ", tmp, a_gpu[index]);
-            }	
-			x2[i] += a_gpu[index] * y_2[j];	
+            // if(tmp != a_gpu[index]){
+            //     printf("tmp: %f %f ", tmp, a_gpu[index]);
+            // }	
+			x2[i] += tmp * y_2[j];	
 		}
 	}
 }
@@ -427,9 +427,9 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
         check_cuda_error(cudaMalloc(&a_gpu, sizeof(DATA_TYPE) * N * N));
         check_cuda_error(cudaMemcpy(a_gpu, a, sizeof(DATA_TYPE) * N * N, cudaMemcpyHostToDevice));
     }
-    DATA_TYPE* a_direct;
-    check_cuda_error(cudaMalloc(&a_direct, sizeof(DATA_TYPE) * N * N));
-    check_cuda_error(cudaMemcpy(a_direct, a, sizeof(DATA_TYPE) * N * N, cudaMemcpyHostToDevice));
+    // DATA_TYPE* a_direct;
+    // check_cuda_error(cudaMalloc(&a_direct, sizeof(DATA_TYPE) * N * N));
+    // check_cuda_error(cudaMemcpy(a_direct, a, sizeof(DATA_TYPE) * N * N, cudaMemcpyHostToDevice));
 
 	double t_start, t_end;
 	dim3 block(DIM_THREAD_BLOCK_X, DIM_THREAD_BLOCK_Y);
@@ -437,8 +437,8 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
 
     printf("Starting Kernels\n");
 	auto start = std::chrono::steady_clock::now();
-	mvt_kernel1<<<grid,block>>>(a_gpu,x1_gpu,y_1_gpu);
-	mvt_kernel2<<<grid,block>>>(a_gpu,x2_gpu,y_2_gpu, a_direct);
+	mvt_kernel2<<<grid,block>>>(a_gpu,x2_gpu,y_2_gpu);
+    mvt_kernel1<<<grid,block>>>(a_gpu,x1_gpu,y_1_gpu);
 	cudaDeviceSynchronize();
 	auto end = std::chrono::steady_clock::now();
     long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -453,7 +453,7 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
     check_cuda_error(cudaFree(y_1_gpu));
     check_cuda_error(cudaFree(y_2_gpu));
 
-    check_cuda_error(cudaFree(a_direct));
+    // check_cuda_error(cudaFree(a_direct));
 
     // //run the algorithm on the CPU
     // printf("Running on CPU\n");
@@ -468,7 +468,81 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
 
 
 /******************************* RDMA Imlementation BEGIN ***************************************/
-__global__ void mvt_kernel1_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x1, DATA_TYPE *y_1)
+// __global__ __launch_bounds__(1024,2) 
+// void
+// mvt_kernel1_rdma(size_t n, size_t size, rdma_buf<DATA_TYPE> *a, DATA_TYPE *x1, DATA_TYPE *y_1) {
+
+
+//     // Page size in elements (64KB / 4 bytes per unsigned int)
+//     const size_t pageSize = REQUEST_SIZE/4 / sizeof(DATA_TYPE);
+//     // Elements per warp
+//     const size_t elementsPerWarp = pageSize / warpSize;
+
+//     // Global thread ID
+//     size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+//     // if(tid == 0) printf("warpSize: %d\n", warpSize);
+//     // Warp ID within the block
+//     size_t warpId = tid / warpSize;
+
+//     // Thread lane within the warp
+//     size_t lane = threadIdx.x % warpSize;
+
+//     // Determine which page this warp will process
+//     size_t pageStart = warpId * pageSize;
+
+//     // Ensure we don't process out-of-bounds pages
+//     if (pageStart < n * pageSize) {
+        
+//         // Process elements within the page
+//         // for (size_t i = 0; i < elementsPerWarp; ++i) {
+//         //     size_t elementIdx = pageStart + lane + i * warpSize;
+//             size_t end = (warpId + 1)*pageSize > size ? size : (warpId + 1)*pageSize;
+//             for(size_t j = warpId*pageSize + lane; j < end; j += warpSize) {
+//                 DATA_TYPE element_a = (*a)[j]; // (*a)[i * N + j]
+//                 size_t div = j/N;
+//                 x1[div] += element_a * y_1[N - N*div];
+//                 // rest ?
+//             }
+//         // }
+//     }
+// }
+
+// __global__ __launch_bounds__(1024,2)
+// void mvt_kernel1_rdma(size_t n, size_t size, rdma_buf<DATA_TYPE> *a, DATA_TYPE *x1, DATA_TYPE *y_1)
+// {
+//     // Calculate the number of elements in one page (8KB)
+//     const size_t elements_per_page = 8192/4 / sizeof(DATA_TYPE);
+    
+//     // Warp ID
+//     size_t warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+    
+//     // Each warp works on one 8KB page, so calculate the starting element
+//     size_t page_start_idx = warp_id * elements_per_page;
+    
+//     // Ensure the warp processes valid pages within the matrix size
+//     if (page_start_idx < N * N)
+//     {
+//         // Each thread in the warp processes a different element within the page
+//         size_t lane_id = threadIdx.x % warpSize;
+        
+//         // Loop over the elements in the page
+//         for (size_t i = lane_id; i < elements_per_page; i += warpSize)
+//         {
+//             size_t matrix_idx = page_start_idx + i;
+//             size_t row = matrix_idx / N;
+//             size_t col = matrix_idx % N;
+            
+//             // Ensure we're within matrix bounds
+//             if (row < N && col < N)
+//             {
+//                 atomicAdd(&x1[row], (*a)[matrix_idx] * y_1[col]);
+//             }
+//         }
+//     }
+// }
+
+__global__ // __launch_bounds__(1024,2)
+void mvt_kernel1_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x1, DATA_TYPE *y_1)
 {
 	size_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -483,10 +557,12 @@ __global__ void mvt_kernel1_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x1, DATA_TYP
 }
 
 
-__global__ void mvt_kernel2_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x2, DATA_TYPE *y_2, DATA_TYPE *a_gpu)
+
+__global__ // __launch_bounds__(1024,2)
+void mvt_kernel2_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *x2, DATA_TYPE *y_2)
 {
 	size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-
+ 
 	if (i < N)
 	{
 		size_t j;
@@ -535,15 +611,18 @@ void mvtCuda_rdma(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, 
 
 	dim3 block(DIM_THREAD_BLOCK_X/2, DIM_THREAD_BLOCK_Y);
 	dim3 grid((size_t)ceil((float)N/ ((float)DIM_THREAD_BLOCK_X/2)), 1);
-    rdma_buf<DATA_TYPE> *rdma_a;
+    rdma_buf<DATA_TYPE> *rdma_a, *rdma_a_d;
 
-    check_cuda_error(cudaMallocManaged((void **) &rdma_a, sizeof(rdma_buf<unsigned int>)));
+    rdma_a = (rdma_buf<DATA_TYPE> *) malloc(sizeof(rdma_buf<DATA_TYPE>));
+    check_cuda_error(cudaMalloc((void **) &rdma_a_d, sizeof(rdma_buf<unsigned int>)));
     
     rdma_a->start(N*N*sizeof(DATA_TYPE), GPU, NULL);
 
     for(size_t i = 0; i < N*N; i++){
         rdma_a->local_buffer[i] = a[i];
     }
+
+    check_cuda_error(cudaMemcpy(rdma_a_d, rdma_a, sizeof(rdma_buf<DATA_TYPE>), cudaMemcpyHostToDevice));    
 
     // transfer<<<2048, 512>>>(rdma_a->size/sizeof(DATA_TYPE), rdma_a);
     cudaError_t ret = cudaDeviceSynchronize();
@@ -552,9 +631,16 @@ void mvtCuda_rdma(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, 
 
     printf("Starting Kernels\n");
 	auto start = std::chrono::steady_clock::now();
-	mvt_kernel1_rdma<<<grid,block>>>(rdma_a, x1_gpu, y_1_gpu);
+
+    // size_t size = N*N;
+    // size_t n_pages = (size*sizeof(DATA_TYPE))/(REQUEST_SIZE/4);
+    // size_t numthreads = 1024;
+
+	// mvt_kernel1_rdma<<< (n_pages*32)/numthreads+1, numthreads /*grid,block*/ >>>(n_pages, size, rdma_a, x1_gpu, y_1_gpu);
+
+	mvt_kernel1_rdma<<<grid,block>>>(rdma_a_d, x1_gpu, y_1_gpu);
     printf("ret: %d cudaGetLastError: %d for kernel1\n", ret, cudaGetLastError());
-    mvt_kernel2_rdma<<<grid,block>>>(rdma_a, x2_gpu, y_2_gpu, y_2_gpu);
+    mvt_kernel2_rdma<<<grid,block>>>(rdma_a_d, x2_gpu, y_2_gpu);
 	ret = cudaDeviceSynchronize();
     printf("ret: %d cudaGetLastError: %d\n", ret, cudaGetLastError());
 	auto end = std::chrono::steady_clock::now();

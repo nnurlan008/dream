@@ -674,47 +674,57 @@ void add_uvm()
 
 
 
-// rdma kernel
-__global__ __launch_bounds__(1024,2)
+// // rdma kernel
+// __global__ __launch_bounds__(1024,2)
+// void add_vectors_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *b, size_t size, size_t n)
+// {
+// 	// size_t id = blockDim.x * blockIdx.x + threadIdx.x;
+// 	// if(id < size) {
+//     //     // DATA_TYPE value = 
+//     //     b[id] = (*a)[id] + (*a)[id + N];
+// 	// 	// a->rvalue(id, value);
+// 	// 	// printf("c[%d]: %d\n", id, c[id]);
+// 	// }
+
+//     // Page size in elements (64KB / 4 bytes per unsigned int)
+//     const size_t pageSize = 8*1024/(4 * sizeof(unsigned int));
+//     // Elements per warp
+//     const size_t elementsPerWarp = pageSize / warpSize;
+
+//     // Global thread ID
+//     size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+//     // if(tid == 0) printf("warpSize: %d\n", warpSize);
+//     // Warp ID within the block
+//     size_t warpId = tid / warpSize;
+
+//     // Thread lane within the warp
+//     size_t lane = threadIdx.x % warpSize;
+
+//     // Determine which page this warp will process
+//     size_t pageStart = warpId * pageSize;
+
+//     // Ensure we don't process out-of-bounds pages
+//     if (pageStart < n * pageSize) {
+        
+//         // Process elements within the page
+//         // for (size_t i = 0; i < elementsPerWarp; ++i) {
+//         //     size_t elementIdx = pageStart + lane + i * warpSize;
+//             uint end = (warpId + 1)*pageSize > size ? size : (warpId + 1)*pageSize;
+//             for(size_t j = warpId*pageSize + lane; j < end; j += warpSize) {
+//                 b[j] = (*a)[j] + (*a)[j + N];
+//             }
+//         // }
+//     }
+// }
+
+__global__ // __launch_bounds__(1024,2)
 void add_vectors_rdma(rdma_buf<DATA_TYPE> *a, DATA_TYPE *b, size_t size, size_t n)
 {
-	// size_t id = blockDim.x * blockIdx.x + threadIdx.x;
-	// if(id < size) {
-    //     // DATA_TYPE value = 
-    //     b[id] = (*a)[id] + (*a)[id + N];
-	// 	// a->rvalue(id, value);
-	// 	// printf("c[%d]: %d\n", id, c[id]);
-	// }
-
-    // Page size in elements (64KB / 4 bytes per unsigned int)
-    const size_t pageSize = 8*1024 / sizeof(unsigned int);
-    // Elements per warp
-    const size_t elementsPerWarp = pageSize / warpSize;
-
     // Global thread ID
-    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
-    // if(tid == 0) printf("warpSize: %d\n", warpSize);
-    // Warp ID within the block
-    size_t warpId = tid / warpSize;
-
-    // Thread lane within the warp
-    size_t lane = threadIdx.x % warpSize;
-
-    // Determine which page this warp will process
-    size_t pageStart = warpId * pageSize;
-
-    // Ensure we don't process out-of-bounds pages
-    if (pageStart < n * pageSize) {
-        
-        // Process elements within the page
-        // for (size_t i = 0; i < elementsPerWarp; ++i) {
-        //     size_t elementIdx = pageStart + lane + i * warpSize;
-            uint end = (warpId + 1)*pageSize > size ? size : (warpId + 1)*pageSize;
-            for(size_t j = warpId*pageSize + lane; j < end; j += warpSize) {
-                b[j] = (*a)[j] + (*a)[j + N];
-            }
-        // }
-    }
+    size_t j = blockIdx.x * blockDim.x + threadIdx.x;
+    if(j < size){
+        b[j] = (*a)[j] + (*a)[j + N];
+    } 
 }
 
 void add_rdma()
@@ -737,7 +747,7 @@ void add_rdma()
     printf("Transferring them to GPU...\n"); 
 	// check_cuda_error(cudaMemcpy(a_gpu, a, sizeof(DATA_TYPE) * N * N, cudaMemcpyHostToDevice));
 	// check_cuda_error(cudaMemcpy(d_result, h_result, sizeof(DATA_TYPE) * N, cudaMemcpyHostToDevice));  
-	    
+	     
 
 	dim3 block(DIM_THREAD_BLOCK_X/2, DIM_THREAD_BLOCK_Y);
 	dim3 grid((size_t)ceil((float)N/ ((float)DIM_THREAD_BLOCK_X/2)), 1);
@@ -753,10 +763,10 @@ void add_rdma()
 
     // transfer<<<2048, 512>>>(rdma_a->size/sizeof(DATA_TYPE), rdma_a);
     cudaError_t ret = cudaDeviceSynchronize();
-    size_t n_pages = (2*N*sizeof(DATA_TYPE))/(8*1024llu);
+    size_t n_pages = (2*N*sizeof(DATA_TYPE))/(8*1024/4); 
     // check<<<2048, 512>>>(rdma_a->size/sizeof(DATA_TYPE), rdma_a, a_gpu);
     printf("ret: %d cudaGetLastError: %d for transfer\n", ret, cudaGetLastError());
-    add_vectors_rdma<<< (n_pages*32)/1024+1, 1024>>>(rdma_a, d_result, N, n_pages);
+    add_vectors_rdma<<< /*(n_pages*32)/1024+1, 1024*/ N/1024+1, 1024 >>>(rdma_a, d_result, N, n_pages);
     printf("Starting Kernels\n");
 	auto start = std::chrono::steady_clock::now();
 	

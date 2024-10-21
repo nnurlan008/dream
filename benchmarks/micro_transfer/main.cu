@@ -359,6 +359,114 @@ void compute_benchmark(){
 
 }
 
+__global__ // __launch_bounds__(1024,2) 
+void
+calculate_opt_uvm(size_t n, size_t size, unsigned int *uvm_array, unsigned int *array) {
+
+
+    // Page size in elements (64KB / 4 bytes per unsigned int)
+    const size_t pageSize = 64*1024 / sizeof(unsigned int);
+    // Elements per warp
+    const size_t elementsPerWarp = pageSize / warpSize;
+
+    // Global thread ID
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    // if(tid == 0) printf("warpSize: %d\n", warpSize);
+    // Warp ID within the block
+    size_t warpId = tid / warpSize;
+
+    // Thread lane within the warp
+    size_t lane = threadIdx.x % warpSize;
+
+    // Determine which page this warp will process
+    size_t pageStart = warpId * pageSize;
+
+    // Ensure we don't process out-of-bounds pages
+    if (pageStart < n * pageSize) {
+        
+        // Process elements within the page
+        // for (size_t i = 0; i < elementsPerWarp; ++i) {
+        //     size_t elementIdx = pageStart + lane + i * warpSize;
+            uint end = (warpId + 1)*pageSize > size ? size : (warpId + 1)*pageSize;
+            for(size_t j = warpId*pageSize + lane; j < end; j += warpSize) {
+                uint end_edge = uvm_array[j]; // shared_data[j - pageStart];
+                array[j] = end_edge;
+            }
+        // }
+    }
+}
+
+void compute_benchmark_uvm(){
+
+    cudaError_t ret;
+    unsigned int *cuda_array, *h_cuda_array;
+    uint64_t numblocks_update, numthreads, numblocks_kernel;
+    double avg_milliseconds;
+    float milliseconds;
+    size_t num_elements, size = 12*1024*1024*1024llu; 
+    num_elements = size/sizeof(uint);
+    cudaEvent_t start, end;
+
+    unsigned int *uvm_array;
+    check_cuda_error(cudaMallocManaged((void **) &uvm_array, num_elements*sizeof(unsigned int)));
+    check_cuda_error(cudaMemAdvise(uvm_array, sizeof(unsigned int)*num_elements, cudaMemAdviseSetReadMostly, 0));
+    // rdma_array->start(num_elements *sizeof(unsigned int));
+    for(size_t i = 0; i < num_elements; i++){
+        uvm_array[i] = 14;
+    }
+
+    check_cuda_error(cudaEventCreate(&start));
+    check_cuda_error(cudaEventCreate(&end));
+
+    h_cuda_array = new uint[num_elements];
+    check_cuda_error(cudaMalloc((void **) &cuda_array, size));
+
+    // numblocks_update = ((numVertex + numthreads) / numthreads);
+    dim3 blockDim_kernel(numthreads, (numblocks_kernel+numthreads)/numthreads);
+    // dim3 blockDim_kernel(BLOCK_SIZE, (numblocks_kernel+BLOCK_SIZE)/BLOCK_SIZE);
+    numthreads = BLOCK_SIZE;
+    // numblocks_update = ((numVertex + numthreads) / numthreads);
+    dim3 blockDim_update(BLOCK_SIZE, (numblocks_update+BLOCK_SIZE)/BLOCK_SIZE);
+
+    avg_milliseconds = 0.0f;
+
+    ret = cudaDeviceSynchronize();
+    printf("ret: %d cudaGetLastError: %d\n", ret, cudaGetLastError());
+    auto start_chrono = std::chrono::steady_clock::now();
+    printf("starting kernel\n");
+    size_t n_pages = size/(64*1024);
+
+    check_cuda_error(cudaEventRecord(start, (cudaStream_t) 1));
+    numthreads = 1024;
+    calculate_opt_uvm<<<(n_pages*32)/numthreads+1, numthreads>>>(num_elements, num_elements, uvm_array, cuda_array);
+    check_cuda_error(cudaEventRecord(end, (cudaStream_t) 1));
+
+    ret = cudaDeviceSynchronize();               
+    auto end_chrono = std::chrono::steady_clock::now();
+    long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_chrono - start_chrono).count();
+    printf("ret: %d cudaGetLastError: %d\n", ret, cudaGetLastError());
+    printf("Elapsed time in milliseconds : %li ms\n\n", duration);
+    // printf("ret: %d cudaGetLastError: %d\n", ret, cudaGetLastError());
+    
+    check_cuda_error(cudaMemcpy(h_cuda_array, cuda_array, size, cudaMemcpyDeviceToHost));
+    size_t num_errs = 0;
+    for (size_t i = 0; i < num_elements; i++)
+    {
+        if(h_cuda_array[i] != 14){
+            num_errs++;
+            // printf("i: %d h_cuda_array[i]: %d\n", i, h_cuda_array[i]);
+        }
+    }
+    
+
+    
+    check_cuda_error(cudaEventSynchronize(start));
+    check_cuda_error(cudaEventSynchronize(end));
+    check_cuda_error(cudaEventElapsedTime(&milliseconds, start, end));
+    printf("CUDA elapsed time in milliseconds : %0.3f ms num_errs: %llu bw: %.2f REQUEST_SIZE: %d\n\n", milliseconds, num_errs, (float) size/(milliseconds*0.001*1024*1024*1024), REQUEST_SIZE/1024);
+
+}
+
 void transfer_benchmark(){
     cudaError_t ret;
     
@@ -433,7 +541,7 @@ int main(int argc, char **argv)
 {   
     init_gpu(0);
 
-    bool rdma_flag = true;
+    bool rdma_flag = false;
     cudaError_t ret1;
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
     if(rdma_flag){
@@ -520,6 +628,8 @@ int main(int argc, char **argv)
         // transfer_benchmark();
         cudaFree(s_ctx->gpu_buffer);
     }
+
+    compute_benchmark_uvm();
 
     
     // printf("oversubs ratio: %d\n", oversubs_ratio_macro-1);

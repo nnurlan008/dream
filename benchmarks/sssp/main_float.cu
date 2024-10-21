@@ -16,6 +16,8 @@
 using namespace std;
 // using namespace std;
 
+#define WEIGHT_ON_GPU 0
+
 #define BLOCK_SIZE 1024
 #define WARP_SHIFT 5
 #define WARP_SIZE (1 << WARP_SHIFT)
@@ -113,6 +115,14 @@ kernel_coalesce_rdma_bfs_new_repr(bool *label, size_t n, const WeightT *costList
 __global__ void
 emogi_rdma_bfs_new_repr(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, uint64_t *new_offset, 
                                   unsigned int *new_vertex_list, unsigned int *edgeList, float *weightList, bool *d_changed);
+
+__global__ // __launch_bounds__(1024,2) 
+void kernel_coalesce_new_repr_rdma_weight(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, uint64_t *new_offset, 
+                                unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, rdma_buf<float> *weightList);
+
+__global__ void __launch_bounds__(1024,2) 
+kernel_coalesce_rdma_weights(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, uint64_t *vertexList, 
+                                /*EdgeT*/ rdma_buf<unsigned int> *edgeList, rdma_buf<WeightT> *weightList);
 
 __global__
 void check_edgeList(rdma_buf<unsigned int> *a, unsigned int *b, size_t size);
@@ -1157,6 +1167,8 @@ uint* sssp_GPU(Graph *graph, int source) {
 }
 
 __device__ size_t diff = 0;
+void *tmp_ptr = NULL;
+void *over_ptr = NULL;
 
 void oversubs(float os, size_t size){
     cudaDeviceProp devProp;
@@ -1174,13 +1186,12 @@ void oversubs(float os, size_t size){
 
     printf("Workload size: %.2f\n", workload_size/1024/1024);
     float oversubs_ratio = (float) os;
-    void *tmp_ptr;
+    
     cudaMalloc(&tmp_ptr, (size_t) (freeMemory - workload_size));
     cudaMemGetInfo(&freeMemory, &totalMemory);
     printf("Free GPU Memory: %.2f MiB\n", (float) freeMemory / (1024 * 1024));
     if(oversubs_ratio > 0){
         
-        void *over_ptr;
         long long unsigned int os_size = freeMemory - workload_size /(1 + oversubs_ratio);
         printf("workload: %.2f\n",  workload_size);
         printf("workload: %llu\n",  os_size);
@@ -1288,7 +1299,7 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
             // gpuErrorcheck(cudaMemAdvise(d_edgeList, edge_size, cudaMemAdviseSetAccessedBy, 0));
             auto end = std::chrono::steady_clock::now();
             long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-            printf("Elapsed time for setAccessedBy in milliseconds : %li ms.\n\n", duration);
+            printf("Elapsed time for cudaMemAdviseSetReadMostly in milliseconds : %li ms.\n\n", duration);
 
             cudaDeviceProp devProp;
             cudaGetDeviceProperties(&devProp, 0);
@@ -1296,7 +1307,7 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
             size_t totalMemory = devProp.totalGlobalMem;
             size_t freeMemory;
             size_t usedMemory;
-            float workload_size = (float) numEdges*sizeof(uint);
+            float workload_size = (float) numEdges*sizeof(uint) + numEdges*sizeof(float);
             cudaMemGetInfo(&freeMemory, &totalMemory);
             usedMemory = totalMemory - freeMemory;
             printf("Total GPU Memory: %.2f MiB\n", (float) totalMemory / (1024 * 1024));
@@ -1355,9 +1366,15 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
 
     // Initialize values
     // gpuErrorcheck(cudaMemcpy(d_vertexList, h_vertexList, vertex_size, cudaMemcpyHostToDevice));
-    gpuErrorcheck(cudaMalloc((void **) &weightList_d, weight_size));
-    
-    gpuErrorcheck(cudaMemcpy(weightList_d, u_weights, weight_size, cudaMemcpyHostToDevice));
+
+    if(WEIGHT_ON_GPU){
+        gpuErrorcheck(cudaMalloc((void **) &weightList_d, weight_size));
+        gpuErrorcheck(cudaMemcpy(weightList_d, u_weights, weight_size, cudaMemcpyHostToDevice));
+    }
+    else{
+        gpuErrorcheck(cudaMallocManaged((void **) &weightList_d, weight_size));
+        memcpy(weightList_d, u_weights, weight_size);
+    }
 
     cudaDeviceSynchronize();
     if (mem == 0) {
@@ -1409,9 +1426,9 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
 
 
     avg_milliseconds = 0.0f;
-    int oversubs_uvm = 7;
+    int oversubs_uvm = 1;
     printf("Initialization done oversubscription: %d\n", oversubs_uvm);
-    // oversubs(oversubs_uvm, edge_size);
+    oversubs(oversubs_uvm, 32*1024*1024*1024llu);
     fflush(stdout);
 
     // Set root
@@ -1521,6 +1538,17 @@ WeightT* runEmogi(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *
         if(u_case == 0){
             gpuErrorcheck(cudaFree(d_vertexList));
         }
+
+        
+
+        if(over_ptr != NULL){
+            gpuErrorcheck(cudaFree(over_ptr));
+        }
+
+        if(tmp_ptr != NULL){
+            gpuErrorcheck(cudaFree(tmp_ptr));
+        }
+
         gpuErrorcheck(cudaFree(label_d));
         gpuErrorcheck(cudaFree(changed_d));
         gpuErrorcheck(cudaFree(costList_d));
@@ -1587,7 +1615,9 @@ void runBaseline(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
 }
 
 __device__ uint64_t edgeCounter = 0;
-rdma_buf<unsigned int> *rdma_edgeList;
+rdma_buf<unsigned int> *rdma_edgeList = NULL;
+rdma_buf<WeightT> *rdma_weightList = NULL;
+
 WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *edgeOffset,
                  unsigned int *edgeList, int representation, size_t new_size, uint64_t *new_offset, 
                 unsigned int *new_vertex_list, WeightT *u_weights, int u_case){
@@ -1626,12 +1656,24 @@ WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
     
 
     if(rdma_edgeList == NULL){
-        gpuErrorcheck(cudaMallocManaged((void **) &rdma_edgeList, sizeof(rdma_buf<unsigned int>)));
 
-        rdma_edgeList->start(numEdges *sizeof(unsigned int));
+        if(WEIGHT_ON_GPU){
+            gpuErrorcheck(cudaMallocManaged((void **) &rdma_edgeList, sizeof(rdma_buf<unsigned int>)));
+            rdma_edgeList->start(numEdges *sizeof(unsigned int));
 
-        for(size_t i = 0; i < numEdges; i++){
-            rdma_edgeList->local_buffer[i] = edgeList[i];
+            for(size_t i = 0; i < numEdges; i++){
+                rdma_edgeList->local_buffer[i] = edgeList[i];
+            }
+        }
+
+        if(WEIGHT_ON_GPU == 0){
+            gpuErrorcheck(cudaMallocManaged((void **) &rdma_weightList, sizeof(rdma_buf<WeightT>)));
+            rdma_weightList->start(numEdges * sizeof(WeightT) * 2);
+
+            for(size_t i = 0; i < numEdges; i++){
+                rdma_weightList->local_buffer[2*i] = (float) edgeList[i];
+                rdma_weightList->local_buffer[2*i+1] = (float) u_weights[i];
+            }
         }
     }
     // rdma_edgeList->memcpyHostToServer();
@@ -1738,9 +1780,11 @@ WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
     printf("Allocation finished\n");
     fflush(stdout);
 
-    // Initialize values
-    gpuErrorcheck(cudaMalloc((void**) &weightList_d, weight_size));
-    gpuErrorcheck(cudaMemcpy(weightList_d, u_weights, weight_size, cudaMemcpyHostToDevice));
+    if(WEIGHT_ON_GPU){
+        // Initialize values
+        gpuErrorcheck(cudaMalloc((void**) &weightList_d, weight_size));
+        gpuErrorcheck(cudaMemcpy(weightList_d, u_weights, weight_size, cudaMemcpyHostToDevice));
+    }
     
 
     if (mem == 0) {
@@ -1812,34 +1856,47 @@ WeightT* runRDMA(uint source, uint64_t numEdges, uint64_t numVertex, uint64_t *e
 
                 case 1:{
                     printf("new representation\n");
-                    printf("representation is %d\n", representation);
+                    printf("representation is %d WEIGHT_ON_GPU: %d\n", representation, WEIGHT_ON_GPU);
                     size_t n_pages; // = numVertex*sizeof(uint64_t)/(8*1024);
                     
                     if(representation){
 
                         n_pages = new_size*sizeof(uint64_t)/(8*1024);
-                        numthreads = BLOCK_SIZE/2;
+                        numthreads = BLOCK_SIZE;
                         numblocks_kernel = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
                         dim3 blockDim_kernel1(numthreads, (numblocks_kernel+numthreads)/numthreads);
 
-                        kernel_coalesce_new_repr_rdma<<<blockDim_kernel1, numthreads/*(new_size/512)*(1 << WARP_SHIFT)+1, 512*/>>>
-                        (label_d, n_pages, costList_d, newCostList_d, new_size, d_new_offset, d_new_vertexList, rdma_edgeList, weightList_d);
+                        if(WEIGHT_ON_GPU){
+                            kernel_coalesce_new_repr_rdma<<<blockDim_kernel1, numthreads/*(new_size/512)*(1 << WARP_SHIFT)+1, 512*/>>>
+                            (label_d, n_pages, costList_d, newCostList_d, new_size, d_new_offset, d_new_vertexList, rdma_edgeList, weightList_d);
+                        }
+                        else{
+                            kernel_coalesce_new_repr_rdma_weight<<<blockDim_kernel1, numthreads/*(new_size/512)*(1 << WARP_SHIFT)+1, 512*/>>>
+                            (label_d, n_pages, costList_d, newCostList_d, new_size, d_new_offset, d_new_vertexList, rdma_edgeList, rdma_weightList);
+                        }
 
                         // kernel_coalesce_rdma_bfs_new_repr<<</*blockDim_kernel1, numthreads*/ (n_pages*32)/numthreads+1, numthreads>>>
                         // (label_d, n_pages, costList_d, newCostList_d, new_size, d_new_offset, d_new_vertexList, rdma_edgeList, weightList_d, changed_d);
                     }
                     else {
                         n_pages = numVertex*sizeof(uint64_t)/(8*1024);
-                        numthreads = BLOCK_SIZE;
+                        numthreads = BLOCK_SIZE/2;
                         numblocks_kernel = ((numVertex * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
                         dim3 blockDim_kernel1(numthreads, (numblocks_kernel+numthreads)/numthreads);
-                        kernel_coalesce_rdma<<<blockDim_kernel1, numthreads/*(numVertex/512)*(1 << WARP_SHIFT)+1, 512*/>>>
-                            (label_d, costList_d, newCostList_d, numVertex, d_vertexList, rdma_edgeList, weightList_d);
 
+                        if(WEIGHT_ON_GPU){
+                            kernel_coalesce_rdma<<<blockDim_kernel1, numthreads/*(numVertex/512)*(1 << WARP_SHIFT)+1, 512*/>>>
+                                (label_d, costList_d, newCostList_d, numVertex, d_vertexList, rdma_edgeList, weightList_d);
+                        }
+                        else{
+                            kernel_coalesce_rdma_weights<<<blockDim_kernel1, numthreads/*(numVertex/512)*(1 << WARP_SHIFT)+1, 512*/>>>
+                                (label_d, costList_d, newCostList_d, numVertex, d_vertexList, rdma_edgeList, rdma_weightList);
+                        }
                         // kernel_coalesce_rdma_opt<<< (n_pages*32)/512+1, 512 >>>
                         // (label_d, n_pages, costList_d, newCostList_d, numVertex, d_vertexList, rdma_edgeList, weightList_d);
                         
                     }
+
                     ret = cudaDeviceSynchronize();
                     update<<<blockDim_update, BLOCK_SIZE>>>(label_d, costList_d, newCostList_d, numVertex, changed_d);
                     break;
@@ -2067,8 +2124,8 @@ int main(int argc, char **argv)
 
     int mem = 1;
     WeightT *emogi_result;
-    // emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
-    //                                 new_offset, new_vertex_list, u_weights, 1);
+    emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
+                                    new_offset, new_vertex_list, u_weights, 1);
     
     // emogi_result = (float *) malloc(sizeof(float)*G.numVertices);
 
@@ -2077,7 +2134,7 @@ int main(int argc, char **argv)
     //     emogi_result[i] = 0;
     // }
 
-    int number_of_vertices = 200;
+    int number_of_vertices = 0;
     int active_vertices = 0;
     time_total = 0;
     time_total_pinning = 0;
@@ -2090,7 +2147,7 @@ int main(int argc, char **argv)
             continue;
         active_vertices++;
         emogi_result = runEmogi(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 0, mem, new_size,
-                                    new_offset, new_vertex_list, u_weights, 1);
+                                    new_offset, new_vertex_list, u_weights, 0);
 
         printf("average time: %.2f pinning time: %.2f active_vertices: %d\n", time_total/active_vertices, time_total_pinning/active_vertices, active_vertices);
     }
@@ -2098,7 +2155,7 @@ int main(int argc, char **argv)
     printf("end: average time: %.2f pinning time: %.2f active_vertices: %d\n", time_total/active_vertices, time_total_pinning/active_vertices, active_vertices);
     
     
-    bool rdma_flag = false;
+    bool rdma_flag = true;
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
     if(rdma_flag){
         
@@ -2115,7 +2172,7 @@ int main(int argc, char **argv)
 
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
-        s_ctx->gpu_buf_size = 5*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        s_ctx->gpu_buf_size = 16*1024*1024*1024llu; // N*sizeof(int)*3llu;
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
@@ -2170,7 +2227,7 @@ int main(int argc, char **argv)
     }
 
     WeightT *rdma_result;
-    number_of_vertices = 200;
+    number_of_vertices = 0;
     active_vertices = 0;
     time_total = 0;
     size_t min_page_fault = 10000000, *d_pf;
@@ -2181,9 +2238,9 @@ int main(int argc, char **argv)
     gpuErrorcheck(cudaMemset(min_source, 0, sizeof(uint)));
     if(rdma_flag){
         printf("RDMA Cuda Starts here..\n");
-        // rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
-        //                             new_offset, new_vertex_list, u_weights, 1);
-        // cudaFree(s_ctx->gpu_buffer);
+        rdma_result = runRDMA(sourceNode, G.numEdges, G.numVertices, u_edgeoffset, u_edgeList, 1, new_size,
+                                    new_offset, new_vertex_list, u_weights, 1);
+        cudaFree(s_ctx->gpu_buffer);
 
         for (size_t i = 0; i < number_of_vertices; i++)
         {
@@ -2816,6 +2873,50 @@ void kernel_coalesce_new_repr_rdma(bool *label, size_t n, const WeightT *costLis
     // }
 }
 
+
+__global__ // __launch_bounds__(1024,2) 
+void kernel_coalesce_new_repr_rdma_weight(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, uint64_t *new_offset, 
+                                unsigned int *new_vertex_list, rdma_buf<unsigned int> *edgeList, rdma_buf<float> *weightList) {
+
+    const uint64_t tid = blockDim.x * 1024 * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    const uint64_t warpIdx = tid >> WARP_SHIFT;
+    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+    const uint64_t chunkIdx = warpIdx * CHUNK_SIZE;
+    uint64_t chunk_size = CHUNK_SIZE;
+
+    if((chunkIdx + CHUNK_SIZE) > new_size) {
+        if ( new_size > chunkIdx )
+            chunk_size = new_size - chunkIdx;
+        else
+            return;
+    }
+
+    for(uint32_t i = chunkIdx; i < chunk_size + chunkIdx; i++) {
+        unsigned int start_vertex = new_vertex_list[i];
+        if (label[start_vertex]) {
+            uint64_t start = new_offset[i];
+            const uint64_t shift_start = start & MEM_ALIGN;
+            uint64_t end = new_offset[i+1];
+
+            WeightT cost = newCostList[start_vertex];
+
+            for(uint64_t j = shift_start + laneIdx; j < end; j += WARP_SIZE) {
+                if (newCostList[start_vertex] != cost)
+                    break;
+                uint end_node = (uint) (*weightList)[2*j];
+                float w = (*weightList)[2*j + 1];
+                if (newCostList[end_node] > cost + w && j >= start){
+                    AtomicMin(&(newCostList[end_node]), cost + w);
+                    // newCostList[end_node] = cost + weightList[j];
+                }
+            }
+
+            label[start_vertex] = false;
+        }
+    }
+}
+
+
 __global__ void __launch_bounds__(1024,2) 
 emogi_rdma_bfs_new_repr(bool *label, size_t n, const WeightT *costList, WeightT *newCostList, const uint64_t new_size, uint64_t *new_offset, 
                                   unsigned int *new_vertex_list, unsigned int *edgeList, float *weightList, bool *d_changed) {
@@ -2942,6 +3043,74 @@ kernel_coalesce_rdma(bool *label, const WeightT *costList, WeightT *newCostList,
     }
 }
 
+
+__global__ // __launch_bounds__(1024,2)
+void kernel_coalesce_rdma_weights(bool *label, const WeightT *costList, WeightT *newCostList, const uint64_t vertex_count, uint64_t *vertexList, 
+                                /*EdgeT*/ rdma_buf<unsigned int> *edgeList, rdma_buf<WeightT> *weightList) {
+
+    // const uint64_t tid = blockIdx.x * blockDim.x + threadIdx.x; // 
+    // // const uint64_t tid = blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    
+    // const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+
+    // // // Warp ID within the block
+    // size_t warpId = tid / (1 << WARP_SHIFT);
+
+    // // // Determine which page this warp will process
+    // // size_t pageStart = warpId * pageSize;
+
+    // if(warpId < vertex_count && label[warpId]) {
+    //     uint64_t start = vertexList[warpId];
+    //     uint64_t end = vertexList[warpId+1];
+
+    //     WeightT cost = newCostList[warpId];
+
+    //     for(uint64_t i = start + laneIdx; i < end; i += (1 << WARP_SHIFT)) {
+    //         if (newCostList[warpId] != cost)
+    //             break;
+    //         unsigned int end_edge = (*edgeList)[i];
+    //         if (newCostList[end_edge] > cost + /*weightList[i]*/1 && i >= start)
+    //             atomicMin(&(newCostList[end_edge]), cost + /*weightList[i]*/1);
+    //     }
+
+    //     label[warpId] = false;
+    // }
+
+    const uint64_t tid = blockDim.x * 512 * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;
+    const uint64_t warpIdx = tid >> WARP_SHIFT;
+    const uint64_t laneIdx = tid & ((1 << WARP_SHIFT) - 1);
+    const uint64_t chunkIdx = warpIdx * CHUNK_SIZE;
+    uint64_t chunk_size = CHUNK_SIZE;
+
+    if((chunkIdx + CHUNK_SIZE) > vertex_count) {
+        if ( vertex_count > chunkIdx )
+            chunk_size = vertex_count - chunkIdx;
+        else
+            return;
+    }
+
+    for(uint32_t i = chunkIdx; i < chunk_size + chunkIdx; i++) {
+        if (label[i]) {
+            uint64_t start = vertexList[i];
+            const uint64_t shift_start = start & MEM_ALIGN;
+            uint64_t end = vertexList[i+1];
+
+            WeightT cost = newCostList[i];
+
+            for(uint64_t j = shift_start + laneIdx; j < end; j += WARP_SIZE) {
+                if (newCostList[i] != cost)
+                    break;
+                uint end_node = (uint) (*weightList)[2*j];
+                float w = (*weightList)[2*j+1];
+                // printf("end_node; %d, w: %f\n", end_node, w);
+                if (newCostList[end_node] > cost + w /*1*/ && j >= start)
+                    AtomicMin(&(newCostList[end_node]), cost + /*1*/ w);
+            }
+
+            label[i] = false;
+        }
+    }
+}
 
 #define PAGE_SIZE (64 * 1024)  // 64KB page size
 #define PAGE_MASK (PAGE_SIZE - 1)

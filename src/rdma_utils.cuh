@@ -9,7 +9,7 @@
 // static int N_BUFs = 256;
 
 enum { 
-  N_8GB_Region = 5,
+  N_8GB_Region = 8,
   Region_Size = 8*1024*1024*1024llu
  };
   

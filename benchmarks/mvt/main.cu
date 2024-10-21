@@ -16,8 +16,9 @@ using namespace std;
 
 // #include "../../src/rdma_utils.cuh"
 #include <time.h>
-#include "../../include/runtime_prefetching.h"
-// #include "../../include/runtime_eviction.h"
+// #include "../../include/runtime_prefetching.h"
+#include "../../include/runtime_eviction.h"
+// #include "../../include/runtime_prefetching_2nic.h"
 
 //define the error threshold for the results "not matching"
 #define PERCENT_DIFF_ERROR_THRESHOLD 0.05
@@ -34,6 +35,9 @@ using namespace std;
 #define BLOCK_SIZE 1024
 #define WARP_SHIFT 5
 #define WARP_SIZE 32
+
+
+#define GPU 0
 
 typedef float DATA_TYPE;
 
@@ -413,6 +417,8 @@ void mvtCuda(DATA_TYPE* a, DATA_TYPE* &x1, DATA_TYPE* &x2, DATA_TYPE* y_1, DATA_
         memcpy(a_gpu, a, sizeof(DATA_TYPE) * N * N);
 
         check_cuda_error(cudaMemAdvise(a_gpu, sizeof(DATA_TYPE) * N * N, cudaMemAdviseSetReadMostly, 0));
+        // check_cuda_error(cudaMemAdvise(a_gpu, sizeof(DATA_TYPE) * N * N, cudaMemAdviseSetAccessedBy, 0));
+
         // oversubs(0.33, sizeof(DATA_TYPE) * N * N);
     }
     else{
@@ -682,10 +688,10 @@ int main(int argc, char **argv)
     init_gpu(0);
 
     bool rdma_flag = true;
-    cudaError_t ret1;
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
+    cudaError_t ret1;
     if(rdma_flag){
-        
+        init_gpu(0);
         int num_msg = (unsigned long) atoi(argv[4]);
         int mesg_size = (unsigned long) atoi(argv[5]);
         int num_bufs = (unsigned long) atoi(argv[6]);
@@ -699,7 +705,7 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
-        s_ctx->gpu_buf_size = 29*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        s_ctx->gpu_buf_size = 16*1024*1024*1024llu; // N*sizeof(int)*3llu;
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
@@ -728,10 +734,10 @@ int main(int argc, char **argv)
             return -1;
         }
 
-        size_t restricted_gpu_mem = 16*1024*1024*1024llu;
+        size_t restricted_gpu_mem = 16*1024*1024*1024; // 18*1024*1024*1024llu; // sizeof(unsigned int)*G.numEdges;
         // restricted_gpu_mem = restricted_gpu_mem / 3;
         const size_t page_size = REQUEST_SIZE;
-        // const size_t numPages = ceil((double)restricted_gpu_mem/page_size);
+        const size_t numPages = restricted_gpu_mem/page_size;
 
         printf("function: %s line: %d\n", __FILE__, __LINE__);
         alloc_global_host_content(host_post, host_poll, keys);

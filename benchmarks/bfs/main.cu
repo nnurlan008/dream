@@ -1318,7 +1318,7 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
     level = 0;
     printf("fuction: %s, line: %d\n", __func__, __LINE__);
 
-    
+    void *over_ptr = NULL, *tmp_ptr = NULL;
     if(u_case == 6){
         if(!uvm_adjacencyList)
             checkError(cudaMallocManaged(&uvm_adjacencyList, G.numEdges*sizeof(unsigned int)));
@@ -1329,7 +1329,7 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         ret1 = cudaDeviceSynchronize();
         auto start1 = std::chrono::steady_clock::now();
         cudaEventRecord(event1, (cudaStream_t)1);
-        // checkError(cudaMemAdvise(uvm_adjacencyList, G.numEdges*sizeof(unsigned int), cudaMemAdviseSetReadMostly, 0));
+        checkError(cudaMemAdvise(uvm_adjacencyList, G.numEdges*sizeof(unsigned int), cudaMemAdviseSetReadMostly, 0));
         ret1 = cudaDeviceSynchronize();
         cudaEventRecord(event2, (cudaStream_t) 1);
         cudaEventSynchronize(event1); //optional
@@ -1356,13 +1356,13 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         printf("Used GPU Memory: %.2f MiB\n", (float) usedMemory / (1024 * 1024));
 
         printf("Workload size: %.2f\n", workload_size/1024/1024);
-        float oversubs_ratio = 0;
-        void *tmp_ptr;
-        // cudaMalloc(&tmp_ptr, (size_t) (freeMemory - workload_size));
+        float oversubs_ratio = 10;
+        
+        cudaMalloc(&tmp_ptr, (size_t) (freeMemory - workload_size));
         cudaMemGetInfo(&freeMemory, &totalMemory);
         printf("Free GPU Memory: %.2f MiB\n", (float) freeMemory / (1024 * 1024));
         if(oversubs_ratio > 0){
-            void *over_ptr;
+            
             long long unsigned int os_size = freeMemory - workload_size /(1 + oversubs_ratio);
             printf("workload: %.2f\n",  workload_size);
             printf("workload: %llu\n",  os_size);
@@ -1453,7 +1453,7 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         }
         case 2: {// new representation{
             // printf("rdma new representation\n");
-            numthreads = 512;
+            numthreads = 128;
             numblocks = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
             dim3 blockDim(numthreads, (numblocks+numthreads)/numthreads);
             size_t n_pages = new_size*sizeof(uint64_t)/(8*1024);
@@ -1568,6 +1568,9 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
     checkError(cudaFree(d_edgesSize));
     checkError(cudaFree(uvm_adjacencyList));
 
+    if(tmp_ptr) checkError(cudaFree(tmp_ptr));
+    if(over_ptr) checkError(cudaFree(over_ptr));
+
     uvm_adjacencyList = NULL;
 
     return return_distance;
@@ -1662,8 +1665,8 @@ int main(int argc, char **argv)
     /***********************************************************/
 
     uint *direct_distance;
-    direct_distance  = runRDMA(startVertex, G, false, new_vertex_list, new_offset, new_size,
-             u_adjacencyList, u_edgesOffset, 6);
+    // direct_distance  = runRDMA(startVertex, G, false, new_vertex_list, new_offset, new_size,
+    //          u_adjacencyList, u_edgesOffset, 6);
 
     int number_of_vertices = 0;
     int active_vertices = 0;
@@ -1682,7 +1685,7 @@ int main(int argc, char **argv)
     }
     printf("average time: %.2f pinning time: %.2f\n", time_total/active_vertices, time_readmostly_total/active_vertices);
 
-    bool rdma_flag = true;
+    bool rdma_flag = false;
     struct context *s_ctx = (struct context *)malloc(sizeof(struct context));
     cudaError_t ret1;
     if(rdma_flag){
@@ -1700,7 +1703,7 @@ int main(int argc, char **argv)
         int num_iteration = num_msg;
         s_ctx->n_bufs = num_bufs;
 
-        s_ctx->gpu_buf_size = 28*1024*1024*1024llu; // N*sizeof(int)*3llu;
+        s_ctx->gpu_buf_size = 20*1024*1024*1024llu; // N*sizeof(int)*3llu;
 
         // // remote connection:
         // int ret = connect(argv[2], s_ctx);
@@ -1807,7 +1810,7 @@ int main(int argc, char **argv)
     int u_case = 2;
     
     uint *rdma_distance; //, *direct_distance;
-    number_of_vertices = 200;
+    number_of_vertices = 0;
     active_vertices = 0;
     time_total = 0;
     size_t min_page_fault = 10000000, *d_pf;
@@ -1824,7 +1827,7 @@ int main(int argc, char **argv)
         {
             startVertex = i;
             printf("vertex %d has degree of %d\n", startVertex, u_edgesOffset[i+1] - u_edgesOffset[i]);
-            if(u_edgesOffset[i+1] - u_edgesOffset[i] == 0)
+            if(u_edgesOffset[i+1] - u_edgesOffset[i] < 2)
                 continue;
             active_vertices++;
             rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,

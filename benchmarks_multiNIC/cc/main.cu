@@ -1749,7 +1749,7 @@ __global__ void kernel_coalesce_rdma(bool *curr_visit, bool *next_visit, uint64_
     }
 }
 
-__global__ __launch_bounds__(1024,2)
+__global__ // __launch_bounds__(1024,2)
 void kernel_coalesce_chunk(bool *curr_visit, bool *next_visit, uint64_t vertex_count, uint64_t *vertexList, unsigned int *edgeList,
                      unsigned long long *comp, bool *changed) {
     const uint64_t tid = blockDim.x * BLOCK_SIZE * blockIdx.y + blockDim.x * blockIdx.x + threadIdx.x;

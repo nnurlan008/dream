@@ -2694,7 +2694,7 @@ int local_connect_2nic(const char *mlx_name, struct context_2nic *s_ctx, int nic
 
     // I assume first nic=0 will be called
     if(nic == 0)
-        memoryPool = (void *) malloc(RDMA_BUFFER_SIZE/2);
+        memoryPool = (void *) malloc(RDMA_BUFFER_SIZE);
     else
         memoryPool = (void *) remote_address_2nic[0];
     if(memoryPool == NULL) {

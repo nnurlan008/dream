@@ -43,7 +43,7 @@ main: main.o   $(SRC_DIR)/rdma_utils.o
 	$(NVCC) $^ -libverbs -lrdmacm -lcuda -lcudart -o $@ $(add_flags)  $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
 
 main.o: main.cu 
-	$(NVCC) -dc main.cu -o main.o $(CUDA_LIBS) $(add_flags) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
+	$(NVCC) -dc -Xptxas -v main.cu -o main.o $(CUDA_LIBS) $(add_flags) $(CXXFLAGS)  -I $(INCLUDE_DIR) -I $(SRC_DIR) -I $(free_standing1)
 
 # bfs.o: bfs.cu bfs.cuh
 # 	$(NVCC) -dc bfs.cu -o bfs.o -libverbs -lrdmacm -lcuda -lcudart $(add_flags) $(CUDA_LIBS) 

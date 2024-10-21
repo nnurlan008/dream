@@ -358,7 +358,7 @@ void compute_benchmark(){
 
     check_cuda_error(cudaEventRecord(start, (cudaStream_t) 1));
     numthreads = 1024;
-    calculate_opt<<<(n_pages*32)/numthreads+1, numthreads>>>(num_elements, num_elements, rdma_array, cuda_array);
+    calculate_opt<<< (n_pages*32)/numthreads+1, numthreads >>>(num_elements, num_elements, rdma_array, cuda_array);
     check_cuda_error(cudaEventRecord(end, (cudaStream_t) 1));
 
     ret = cudaDeviceSynchronize();               

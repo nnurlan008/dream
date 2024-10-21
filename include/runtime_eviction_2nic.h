@@ -140,8 +140,8 @@ __device__ void sleep_nanoseconds(int nanoseconds) {
     }
 }
 
-#define oversubs_ratio_macro  2
-#define rest_memory 16*1024*1024*1024llu // restricted memory
+#define oversubs_ratio_macro  1
+#define rest_memory 25*1024*1024*1024llu // restricted memory
 
 unsigned long long closestUpperDivisible(unsigned long long num, unsigned long long divisor) {
     return ((num + divisor - 1) / divisor) * divisor;

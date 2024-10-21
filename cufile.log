@@ -250,3 +250,15 @@
  27-09-2024 17:34:22:992 [pid=2697990 tid=2698224] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
  27-09-2024 17:36:56:637 [pid=2698738 tid=2698738] NOTICE  cufio-drv:720 running in compatible mode
  27-09-2024 17:36:58:119 [pid=2698738 tid=2698738] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
+ 07-10-2024 12:37:25:334 [pid=175626 tid=175626] NOTICE  cufio-drv:720 running in compatible mode
+ 07-10-2024 12:37:26:880 [pid=175626 tid=175626] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
+ 07-10-2024 12:37:58:143 [pid=176043 tid=176043] NOTICE  cufio-drv:720 running in compatible mode
+ 07-10-2024 12:37:59:661 [pid=176043 tid=176043] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
+ 07-10-2024 12:38:54:314 [pid=176484 tid=176484] NOTICE  cufio-drv:720 running in compatible mode
+ 07-10-2024 12:38:55:836 [pid=176484 tid=176484] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
+ 07-10-2024 12:39:40:715 [pid=176999 tid=176999] NOTICE  cufio-drv:720 running in compatible mode
+ 07-10-2024 12:39:42:247 [pid=176999 tid=176999] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
+ 07-10-2024 12:41:06:741 [pid=177881 tid=177881] NOTICE  cufio-drv:720 running in compatible mode
+ 07-10-2024 12:41:08:275 [pid=177881 tid=177881] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
+ 07-10-2024 12:41:30:505 [pid=178219 tid=178219] NOTICE  cufio-drv:720 running in compatible mode
+ 07-10-2024 12:41:32:32 [pid=178219 tid=178219] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/sda4
