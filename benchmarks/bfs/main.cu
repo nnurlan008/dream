@@ -262,7 +262,7 @@ rdma_buf<unsigned int> *rdma_adjacencyList;
 // rdma_buf<unsigned int> *u_edgesSize;
 // rdma_buf<unsigned int> *u_distance;
 unsigned int *u_adjacencyList;
-unsigned int *uvm_adjacencyList;
+unsigned int *uvm_adjacencyList = NULL;
 uint64_t *u_edgesOffset;
 unsigned int *u_edgesSize;
 unsigned int *u_distance;
@@ -1320,27 +1320,30 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
 
     void *over_ptr = NULL, *tmp_ptr = NULL;
     if(u_case == 6){
-        if(!uvm_adjacencyList)
+        float dt_ms;
+        if(!uvm_adjacencyList){
             checkError(cudaMallocManaged(&uvm_adjacencyList, G.numEdges*sizeof(unsigned int)));
 
-        for(size_t i = 0; i < G.numEdges; i++){
-            uvm_adjacencyList[i] = u_adjacencyList[i];
+            for(size_t i = 0; i < G.numEdges; i++){
+                uvm_adjacencyList[i] = u_adjacencyList[i];
+            }
+            ret1 = cudaDeviceSynchronize();
+            auto start1 = std::chrono::steady_clock::now();
+            cudaEventRecord(event1, (cudaStream_t)1);
+            // checkError(cudaMemAdvise(uvm_adjacencyList, G.numEdges*sizeof(unsigned int), cudaMemAdviseSetReadMostly, 0));
+            checkError(cudaMemAdvise(uvm_adjacencyList, G.numEdges*sizeof(unsigned int), cudaMemAdviseSetAccessedBy, 0));
+            ret1 = cudaDeviceSynchronize();
+            cudaEventRecord(event2, (cudaStream_t) 1);
+            cudaEventSynchronize(event1); //optional
+            cudaEventSynchronize(event2); //wait for the event to be executed!
+            // calculate time
+            
+            cudaEventElapsedTime(&dt_ms, event1, event2);
+            printf("Elapsed time for cudaMemAdviseSetReadMostly with cudaEvent: %f startVertex: %d\n", dt_ms, startVertex);
+            auto end1 = std::chrono::steady_clock::now();
+            long duration1 = std::chrono::duration_cast<std::chrono::milliseconds>(end1 - start1).count();
+            printf("Elapsed time for cudaMemAdviseSetReadMostly in milliseconds : %li ms.\n\n", duration1);
         }
-        ret1 = cudaDeviceSynchronize();
-        auto start1 = std::chrono::steady_clock::now();
-        cudaEventRecord(event1, (cudaStream_t)1);
-        checkError(cudaMemAdvise(uvm_adjacencyList, G.numEdges*sizeof(unsigned int), cudaMemAdviseSetReadMostly, 0));
-        ret1 = cudaDeviceSynchronize();
-        cudaEventRecord(event2, (cudaStream_t) 1);
-        cudaEventSynchronize(event1); //optional
-        cudaEventSynchronize(event2); //wait for the event to be executed!
-        // calculate time
-        float dt_ms;
-        cudaEventElapsedTime(&dt_ms, event1, event2);
-        printf("Elapsed time for cudaMemAdviseSetReadMostly with cudaEvent: %f startVertex: %d\n", dt_ms, startVertex);
-        auto end1 = std::chrono::steady_clock::now();
-        long duration1 = std::chrono::duration_cast<std::chrono::milliseconds>(end1 - start1).count();
-        printf("Elapsed time for cudaMemAdviseSetReadMostly in milliseconds : %li ms.\n\n", duration1);
         time_readmostly_total += dt_ms;
         cudaDeviceProp devProp;
         cudaGetDeviceProperties(&devProp, 0);
@@ -1356,9 +1359,9 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         printf("Used GPU Memory: %.2f MiB\n", (float) usedMemory / (1024 * 1024));
 
         printf("Workload size: %.2f\n", workload_size/1024/1024);
-        float oversubs_ratio = 10;
+        float oversubs_ratio = 0;
         
-        cudaMalloc(&tmp_ptr, (size_t) (freeMemory - workload_size));
+        // cudaMalloc(&tmp_ptr, (size_t) (freeMemory - workload_size));
         cudaMemGetInfo(&freeMemory, &totalMemory);
         printf("Free GPU Memory: %.2f MiB\n", (float) freeMemory / (1024 * 1024));
         if(oversubs_ratio > 0){
@@ -1453,7 +1456,7 @@ uint *runRDMA(int startVertex, Graph &G, bool rdma, unsigned int *new_vertex_lis
         }
         case 2: {// new representation{
             // printf("rdma new representation\n");
-            numthreads = 1024;
+            numthreads = 512;
             numblocks = ((new_size * (WARP_SIZE / CHUNK_SIZE) + numthreads) / numthreads);
             dim3 blockDim(numthreads, (numblocks+numthreads)/numthreads);
             size_t n_pages = new_size*sizeof(uint64_t)/(8*1024);
@@ -1617,7 +1620,7 @@ int main(int argc, char **argv)
     printf("copying Gparh structure done, G.numVertices: %llu G.numEdges: %llu\n", G.numVertices, G.numEdges);
     // ------------------- new representation for rdma only: -----------------//
     auto start = std::chrono::steady_clock::now();                
-    size_t new_size = 0, treshold = 128;
+    size_t new_size = 0, treshold = 64;
     for (size_t i = 0; i < G.numVertices; i++)
     {
         uint64_t degree = u_edgesOffset[i+1] - u_edgesOffset[i];
@@ -1665,6 +1668,9 @@ int main(int argc, char **argv)
     /***********************************************************/
 
     uint *direct_distance;
+    direct_distance  = runRDMA(startVertex, G, false, new_vertex_list, new_offset, new_size,
+             u_adjacencyList, u_edgesOffset, 6);
+
     // direct_distance  = runRDMA(startVertex, G, false, new_vertex_list, new_offset, new_size,
     //          u_adjacencyList, u_edgesOffset, 6);
 
@@ -1820,6 +1826,9 @@ int main(int argc, char **argv)
     checkError(cudaMemset(d_pf, 10000000, sizeof(size_t)));
     checkError(cudaMemset(min_source, 0, sizeof(uint)));
     if(rdma_flag){
+        rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
+                u_adjacencyList, u_edgesOffset, u_case);
+        
         rdma_distance = runRDMA(startVertex, G, rdma_flag, new_vertex_list, new_offset, new_size,
                 u_adjacencyList, u_edgesOffset, u_case);
 

@@ -90,7 +90,7 @@ extern struct rdma_content main_content;
 #define MAX_POST 3 
 // request size
 
-#define REQUEST_SIZE 8*1024 // bytes
+#define REQUEST_SIZE 4*1024 // bytes
 extern __device__ int GLOBAL_REQUEST_SIZE;
 
 // define globale vaiable to save the number of post requests
