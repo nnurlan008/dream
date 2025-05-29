@@ -19,8 +19,8 @@ This code base requires specific type of hardware and specific system configurat
 ### Hardware Requirements ###
 * A x86 system supporting PCIe P2P
 * NIC: Preferrably Mellanox Connectx
-* A NVIDIA Tesla/Datacenter grade GPU that is from the Volta or newer generation. A Tesla V100/A100/H100 fit both of these requirements
-  * A Tesla grade GPU is needed as it can expose all of its memory for P2P accesses over PCIe. (NVIDIA Tesla T4 does not work as it only provides 256M of BAR space)
+* A NVIDIA Tesla/Datacenter grade GPU that is from the Volta or newer generation. A Tesla V100/A100/H100 can be preferred due to the following requirements:
+  * A Tesla GPU is needed to expose all of its memory for P2P accesses over PCIe. (NVIDIA Tesla T4 only provides BAR space of 256 MB)
   * A Volta or newer generation of GPU is needed as we rely on memory synchronization primitives only supported since Volta.
 
 
@@ -35,7 +35,7 @@ This code base requires specific type of hardware and specific system configurat
 * In the system's BIOS, `ACS` must be disabled if the option is available
 * Preferrably new Linux kernel; 5.x. The profile uses Ubuntu 22.04.
   
-#### If you plan to use the Cloudlab profile, the following commands will setup the system
+#### If you plan to use the Cloudlab profile, the following commands will set up the system
 
 ### Commands for System Setup ###
 
