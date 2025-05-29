@@ -33,7 +33,7 @@ This code base requires specific type of hardware and specific system configurat
   * In AMD Systems, this requires disabling `IOMMU` in the BIOS
 * The `iommu` support in Linux must be disabled too, which can be checked and disabled following the instructions [below](#disable-iommu-in-linux).
 * In the system's BIOS, `ACS` must be disabled if the option is available
-* Preferrably new Linux kernel; 5.x
+* Preferrably new Linux kernel; 5.x. The profile uses Ubuntu 22.04.
   
 #### If you plan to use the Cloudlab profile, the following commands will setup the system
 
