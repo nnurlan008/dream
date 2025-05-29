@@ -61,3 +61,19 @@ git clone --recurse-submodules https://github.com/ogiroux/freestanding
 
 
 ```
+
+
+If you use DREAM or concepts or derviate codebase of DREAM in your work, please cite the following articles:
+
+@article{nazaraliyev2024gpuvm,
+  title={GPUVM: GPU-driven Unified Virtual Memory},
+  author={Nazaraliyev, Nurlan and Sadredini, Elaheh and Abu-Ghazaleh, Nael},
+  journal={arXiv preprint arXiv:2411.05309},
+  year={2024}
+}
+
+@article{nazaraliyev2025dream,
+  title={DREAM: Device-Driven Efficient Access to Virtual Memory},
+  author={Nazaraliyev, Nurlan and Sadredini, Elaheh and Abu-Ghazaleh, Nael},
+  year={2025}
+}
