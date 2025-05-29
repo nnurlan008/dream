@@ -81,16 +81,6 @@ To make sure the NIC can access GPU memory (BAR space), the P2P peermem access s
 `sudo modprobe nvidia-peermem`
 
 
-### Compiling Nvidia Driver Kernel Symbols ###
-Typically the Nvidia driver kernel sources are installed in the `/usr/src/` directory.
-So if the Nvidia driver version is `470.141.03`, then they will be in the `/usr/src/nvidia-470.141.03` directory.
-So assuming the driver version is `470.141.03`, to get the kernel symbols you need to do the following commands as the `root` user.
-
-```
-$ cd /usr/src/nvidia-470.141.03/
-$ sudo make
-```
-
 Building the Project
 -------------------------------------------------------------------------------
 ### This part will be updated! ###
