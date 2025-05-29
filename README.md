@@ -22,7 +22,9 @@ This code base requires specific type of hardware and specific system configurat
 * A NVIDIA Tesla/Datacenter grade GPU that is from the Volta or newer generation. A Tesla V100/A100/H100 fit both of these requirements
   * A Tesla grade GPU is needed as it can expose all of its memory for P2P accesses over PCIe. (NVIDIA Tesla T4 does not work as it only provides 256M of BAR space)
   * A Volta or newer generation of GPU is needed as we rely on memory synchronization primitives only supported since Volta.
-We have built our software prototype on Cloudlab r7525 nodes at Clemson. The profile has been provided in the repo.
+
+
+**We have built our software prototype on CloudLab r7525 nodes at Clemson. The CoudLab profile has been provided in the repo.**
 
 ### System Configurations ###
 * As mentioned above, `Above 4G Decoding` needs to be ENABLED in the BIOS
