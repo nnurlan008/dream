@@ -58,6 +58,8 @@ After installation of MLNX-OFED, the interface should be restarted and the syste
 
 `sudo /etc/init.d/openibd restart`
 
+After successful installation of MLNX-OFED driver, the custom rdma-core and mlnx-kernel packages which are provided in this repo should be built and installed. 
+These packages are modified versions of the original packages and enable (1) allocation of *QP* and *CQ* buffers on GPU memory. For installation, please follow the individual READMEs in rdma_core and mlnx-kernel folders.
 
 ### CUDA Installation ###
 
