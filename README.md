@@ -1,8 +1,5 @@
 # DREAM: Device-Driven Efficient Access to Virtual Memory
 
-Sorry for delay. The README will be updated within the week until June 7.
-
-
 
 **This is the open-source implementation of the DREAM system (ICS 2025). Contributions to the codebase are most welcome**
 
