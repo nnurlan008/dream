@@ -1,4 +1,5 @@
 ```
+cd path_to_dream/rdma-core/
 tar xvf rdma-core_2307mlnx47.orig.tar.gz &&
 cd rdma-core-2307mlnx47/ && 
 dpkg-buildpackage -us -uc -Pmodule &&
