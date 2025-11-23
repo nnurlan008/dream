@@ -3,7 +3,7 @@ First, `use sudo /etc/init.d/nv_peer_mem stop`
 	   `sudo /etc/init.d/openibd stop`
 
 ```
-cd Desktop/mlnx-ofed-kernel/
+cd path/to/mlnx-kernel/
 sudo /etc/init.d/nv_peer_mem stop
 sudo /etc/init.d/openibd stop
 tar xvf mlnx-ofed-kernel_23.07.orig.tar.gz &&
