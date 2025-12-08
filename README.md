@@ -82,9 +82,11 @@ To make sure the NIC can access GPU memory (BAR space), the P2P peermem access s
 
 Building the Project
 -------------------------------------------------------------------------------
-### This part will be updated! ###
-
-
+```
+cd path_to_dream/src && make
+cd path_to_benchmark && make
+```
+The build/installation instructions for the driver modules have been indicated in README.md in rdma_core and mlnx-kernel directories.
 
 # Citations 
 
