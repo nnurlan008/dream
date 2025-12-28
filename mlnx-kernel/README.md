@@ -1,6 +1,5 @@
 mlnx ofed kernel build and install commands:
-First, `use sudo /etc/init.d/nv_peer_mem stop`
-	   `sudo /etc/init.d/openibd stop`
+First, run`sudo /etc/init.d/nv_peer_mem stop` and `sudo /etc/init.d/openibd stop` to stop any running infiniband and peer-mem services.
 
 ```
 cd path_to_dream/mlnx-kernel/
